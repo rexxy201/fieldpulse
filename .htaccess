@@ -1,0 +1,22 @@
+Options -Indexes
+Options +FollowSymLinks
+
+RewriteEngine On
+
+# Serve real files and directories directly (CSS, JS, images, etc.)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Route everything else through index.php
+RewriteRule ^ index.php [QSA,L]
+
+# Security: block direct access to sensitive files
+<FilesMatch "\.(sql|log|env|json|md|gitignore)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Allow access to PHP files only through the router
+<FilesMatch "^(index)\.php$">
+    Allow from all
+</FilesMatch>
