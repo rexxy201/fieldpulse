@@ -17,7 +17,7 @@ if ($template) {
     exit;
 }
 
-$customers = dbFetchAll("SELECT account_number,first_name,last_name,name,email,phone,address,mailing_city,mailing_state,plan,status,expiration,created_at FROM customers ORDER BY name");
+$customers = dbFetchAll("SELECT account_number,first_name,last_name,name,email,phone,address,mailing_city,mailing_state,plan,status,expiration FROM customers ORDER BY name");
 
 header('Content-Type: text/csv; charset=utf-8');
 header('Content-Disposition: attachment; filename="customers_' . date('Y-m-d') . '.csv"');
@@ -25,7 +25,7 @@ header('Cache-Control: no-cache');
 header('Pragma: no-cache');
 
 $out = fopen('php://output', 'w');
-fputcsv($out, ['account_number','first_name','last_name','name','email','phone','address','mailing_city','mailing_state','plan','status','expiration','created_at']);
+fputcsv($out, ['account_number','first_name','last_name','name','email','phone','address','mailing_city','mailing_state','plan','status','expiration']);
 foreach ($customers as $c) {
     fputcsv($out, [
         $c['account_number'] ?? '',
@@ -40,7 +40,6 @@ foreach ($customers as $c) {
         $c['plan'] ?? '',
         $c['status'] ?? 'active',
         $c['expiration'] ?? '',
-        $c['created_at'] ?? '',
     ]);
 }
 fclose($out);
