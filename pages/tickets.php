@@ -2,16 +2,32 @@
 require_once __DIR__ . '/../config.php';
 requireAuth();
 
-$user   = currentUser();
-$role   = $user['role'];
-$search = trim($_GET['search'] ?? '');
-$status = $_GET['status'] ?? '';
-$prio   = $_GET['priority'] ?? '';
+$user       = currentUser();
+$search     = trim($_GET['search'] ?? '');
+$status     = $_GET['status'] ?? '';
+$prio       = $_GET['priority'] ?? '';
+$engineerId = $_GET['engineer'] ?? '';
+// Drill-down filters (linked to from /reports — not exposed as visible dropdowns)
+$department = $_GET['department'] ?? '';
+$vendorId   = $_GET['vendor'] ?? '';
+$faultType  = $_GET['faultType'] ?? '';
+$olt        = $_GET['olt'] ?? '';
+$customerId = $_GET['customerId'] ?? '';
+
+$engineers = dbFetchAll("SELECT id, name FROM users WHERE role IN ('engineer','noc_engineer') ORDER BY name");
 
 $where = []; $params = [];
-if ($role === 'engineer') { $where[] = "t.assigned_to = ?"; $params[] = $user['id']; }
-if ($status) { $where[] = "t.status = ?"; $params[] = $status; }
-if ($prio)   { $where[] = "t.priority = ?"; $params[] = $prio; }
+// Scope by permission: view_all (everything), view_department (own dept), else own only
+[$scopeSql, $scopeParams] = ticketScopeSql('t');
+if ($scopeSql !== '') { $where[] = $scopeSql; $params = array_merge($params, $scopeParams); }
+if ($status)     { $where[] = "t.status = ?"; $params[] = $status; }
+if ($prio)       { $where[] = "t.priority = ?"; $params[] = $prio; }
+if ($engineerId) { $where[] = "t.assigned_to = ?"; $params[] = $engineerId; }
+if ($vendorId)   { $where[] = "t.vendor_id = ?"; $params[] = $vendorId; }
+if ($faultType)  { $where[] = "t.fault_type_id = ?"; $params[] = $faultType; }
+if ($olt)        { $where[] = "t.olt = ?"; $params[] = $olt; }
+if ($customerId) { $where[] = "t.customer_id = ?"; $params[] = $customerId; }
+if ($department) { $where[] = "t.fault_type_id IN (SELECT id FROM fault_types WHERE route_to = ?)"; $params[] = $department; }
 if ($search) {
     $like = "%$search%";
     $where[] = "(t.description LIKE ? OR t.ticket_number LIKE ? OR t.customer_name LIKE ? OR t.address LIKE ?)";
@@ -40,7 +56,7 @@ require __DIR__ . '/../includes/header.php';
     <h2 class="fw-bold mb-0">Tickets</h2>
     <div class="text-muted small">Manage and track all service requests.</div>
   </div>
-  <?php if (in_array($role, ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor'])): ?>
+  <?php if (hasPermission('tickets.create')): ?>
   <a href="/create-ticket" class="btn btn-primary">
     <i class="bi bi-plus-lg me-1"></i>New Ticket
   </a>
@@ -56,12 +72,15 @@ require __DIR__ . '/../includes/header.php';
         placeholder="Search tickets by ID, customer, or address…"
         value="<?= htmlspecialchars($search) ?>"
         oninput="debounceSearch(this.value)">
+      <?php
+      $_carryOver = array_filter(['status'=>$status,'priority'=>$prio,'engineer'=>$engineerId,'department'=>$department,'vendor'=>$vendorId,'faultType'=>$faultType,'olt'=>$olt,'customerId'=>$customerId]);
+      ?>
       <?php if ($search): ?>
-      <a href="/tickets<?= ($status||$prio)?'?'.http_build_query(array_filter(['status'=>$status,'priority'=>$prio])):'' ?>" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
+      <a href="/tickets<?= $_carryOver ? '?'.http_build_query($_carryOver) : '' ?>" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
       <?php endif; ?>
     </div>
     <select class="form-select" style="width:auto;min-width:150px" onchange="applyFilter('status',this.value)">
-      <option value="" <?= !$status?'selected':'' ?>>All Statuses</option>
+      <option value="" <?= !$status?'selected':'' ?>>All Status</option>
       <?php foreach(['new'=>'New','open'=>'Open','assigned'=>'Assigned','in_progress'=>'In Progress','pending_confirmation'=>'Pending','resolved'=>'Resolved','closed'=>'Closed'] as $v=>$l): ?>
       <option value="<?=$v?>" <?=$status===$v?'selected':''?>><?=$l?></option>
       <?php endforeach; ?>
@@ -72,7 +91,13 @@ require __DIR__ . '/../includes/header.php';
       <option value="<?=$v?>" <?=$prio===$v?'selected':''?>><?=$l?></option>
       <?php endforeach; ?>
     </select>
-    <a href="/api/tickets-export<?= ($search||$status||$prio)?'?'.http_build_query(array_filter(['search'=>$search,'status'=>$status,'priority'=>$prio])):'' ?>"
+    <select class="form-select" style="width:auto;min-width:160px" onchange="applyFilter('engineer',this.value)">
+      <option value="" <?= !$engineerId?'selected':'' ?>>All Engineers</option>
+      <?php foreach ($engineers as $eng): ?>
+      <option value="<?= $eng['id'] ?>" <?= $engineerId===$eng['id']?'selected':'' ?>><?= htmlspecialchars($eng['name']) ?></option>
+      <?php endforeach; ?>
+    </select>
+    <a href="/api/tickets-export<?= ($search||$_carryOver)?'?'.http_build_query(array_merge($_carryOver, array_filter(['search'=>$search]))):'' ?>"
        class="btn btn-outline-secondary text-nowrap">
       <i class="bi bi-download me-1"></i>Export CSV
     </a>
@@ -142,7 +167,14 @@ require __DIR__ . '/../includes/header.php';
               <?= htmlspecialchars($t['ticket_number'] ?? '') ?>
             </a>
           </td>
-          <td class="fw-semibold"><?= htmlspecialchars($t['customer_name'] ?? '—') ?></td>
+          <td class="fw-semibold">
+            <?php if (($t['ticket_scope'] ?? 'customer') === 'city'): ?>
+              <i class="bi bi-map text-warning me-1" title="City / Area Outage"></i>
+            <?php elseif (($t['ticket_scope'] ?? 'customer') === 'hub'): ?>
+              <i class="bi bi-hdd-network text-primary me-1" title="Hub Outage"></i>
+            <?php endif; ?>
+            <?= htmlspecialchars($t['customer_name'] ?? '—') ?>
+          </td>
           <td class="small text-muted" style="max-width:180px">
             <div class="text-truncate"><?= htmlspecialchars($t['address'] ?? '—') ?></div>
           </td>

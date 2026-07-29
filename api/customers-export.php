@@ -6,12 +6,14 @@ if (!isAdmin()) { http_response_code(403); echo json_encode(['error'=>'Forbidden
 $template = isset($_GET['template']);
 
 if ($template) {
-    // Return blank template with headers only
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="customers_template.csv"');
     header('Cache-Control: no-cache');
-    echo "name,account_number,email,phone,address,plan,status\n";
-    echo "John Smith,ACC-000001,john@example.com,+60123456789,123 Main St Kuala Lumpur,100 Mbps Fast,active\n";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['account_number','first_name','last_name','email','phone','address','mailing_city','mailing_state','plan','status','expiration']);
+    fputcsv($out, ['02_0100','John','Smith','john@example.com','08033065348','12 Adeola Str','Iponri','Lagos','10 Mbps','active','2026-12-31']);
+    fputcsv($out, ['02_0101','Amaka','Obi','amaka@example.com','07011223344','5 Marina Close','Victoria Island','Lagos','5 Mbps','active','2026-11-30']);
+    fclose($out);
     exit;
 }
 

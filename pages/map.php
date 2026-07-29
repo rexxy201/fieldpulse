@@ -1,20 +1,24 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+requirePermission('map.view');
 
 $hubs      = dbFetchAll("SELECT * FROM hubs WHERE lat IS NOT NULL AND lng IS NOT NULL");
+[$_mapScope, $_mapParams] = ticketScopeSql('t');
 $allTickets = dbFetchAll(
     "SELECT t.*, h.lat, h.lng
      FROM tickets t
      JOIN hubs h ON h.id = t.hub_id
      WHERE t.status NOT IN ('closed','resolved')
        AND h.lat IS NOT NULL AND h.lng IS NOT NULL"
+     . ($_mapScope ? " AND $_mapScope" : ''),
+    $_mapParams
 );
 $engineers = dbFetchAll(
     "SELECT u.*, h.lat, h.lng
      FROM users u
      JOIN hubs h ON h.id = u.hub_id
-     WHERE u.role IN ('engineer','vendor')
+     WHERE u.role IN ('engineer','noc_engineer','vendor')
        AND h.lat IS NOT NULL AND h.lng IS NOT NULL"
 );
 

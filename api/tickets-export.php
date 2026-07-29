@@ -5,16 +5,28 @@ header('Content-Type: text/csv; charset=utf-8');
 header('Content-Disposition: attachment; filename="tickets_' . date('Y-m-d') . '.csv"');
 header('Cache-Control: no-cache');
 
-$search = trim($_GET['search'] ?? '');
-$status = $_GET['status'] ?? '';
-$prio   = $_GET['priority'] ?? '';
+$search     = trim($_GET['search'] ?? '');
+$status     = $_GET['status'] ?? '';
+$prio       = $_GET['priority'] ?? '';
+$engineerId = $_GET['engineer'] ?? '';
+$department = $_GET['department'] ?? '';
+$vendorId   = $_GET['vendor'] ?? '';
+$faultType  = $_GET['faultType'] ?? '';
+$olt        = $_GET['olt'] ?? '';
+$customerId = $_GET['customerId'] ?? '';
 $user   = currentUser();
 $role   = $user['role'];
 
 $where = []; $params = [];
-if ($role === 'engineer') { $where[] = "t.assigned_to = ?"; $params[] = $user['id']; }
-if ($status) { $where[] = "t.status = ?"; $params[] = $status; }
-if ($prio)   { $where[] = "t.priority = ?"; $params[] = $prio; }
+if (in_array($role, ['engineer','noc_engineer'])) { $where[] = "t.assigned_to = ?"; $params[] = $user['id']; }
+if ($status)     { $where[] = "t.status = ?"; $params[] = $status; }
+if ($prio)       { $where[] = "t.priority = ?"; $params[] = $prio; }
+if ($engineerId) { $where[] = "t.assigned_to = ?"; $params[] = $engineerId; }
+if ($vendorId)   { $where[] = "t.vendor_id = ?"; $params[] = $vendorId; }
+if ($faultType)  { $where[] = "t.fault_type_id = ?"; $params[] = $faultType; }
+if ($olt)        { $where[] = "t.olt = ?"; $params[] = $olt; }
+if ($customerId) { $where[] = "t.customer_id = ?"; $params[] = $customerId; }
+if ($department) { $where[] = "t.fault_type_id IN (SELECT id FROM fault_types WHERE route_to = ?)"; $params[] = $department; }
 if ($search) {
     $like = "%$search%";
     $where[] = "(t.description LIKE ? OR t.ticket_number LIKE ? OR t.customer_name LIKE ? OR t.address LIKE ?)";

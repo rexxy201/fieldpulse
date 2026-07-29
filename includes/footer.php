@@ -33,7 +33,7 @@
       const isUnread = !n.is_read;
       const link = n.link || '#';
       return `<a class="notif-item ${isUnread ? 'unread' : ''}" href="${link}"
-                 onclick="markRead(${n.id}, event)">
+                 onclick="markRead('${n.id}', event)">
         <div class="notif-item-dot ${isUnread ? '' : 'read'}"></div>
         <div class="flex-grow-1 min-w-0">
           <div class="notif-item-title">${escH(n.title)}</div>
@@ -125,9 +125,11 @@
   // Patch global fetch to always send CSRF header for same-origin requests
   const _origFetch = window.fetch.bind(window);
   window.fetch = function(input, init = {}) {
-    const url = (typeof input === 'string') ? input : input.url;
-    const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin);
-    if (isSameOrigin) {
+    const url = ((typeof input === 'string') ? input : (input && input.url)) || '';
+    // Same-origin = anything that is NOT an absolute URL to a different origin
+    // (covers '', relative paths, '/...', and same-origin absolute URLs).
+    const isCrossOrigin = /^https?:\/\//i.test(url) && !url.startsWith(window.location.origin);
+    if (!isCrossOrigin) {
       init.headers = Object.assign({ 'X-CSRF-Token': token }, init.headers || {});
     }
     return _origFetch(input, init);

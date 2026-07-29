@@ -16,8 +16,8 @@ $stats = dbFetch("
 ");
 
 // Hourly chart (last 24h)
-$_hrFn = DB_TYPE === 'pgsql' ? 'EXTRACT(HOUR FROM created_at)' : 'HOUR(created_at)';
 $_iv24 = dbNowMinusInterval(24, 'HOUR');
+$_hrFn = dbHour('created_at');
 $chart = dbFetchAll("
     SELECT {$_hrFn} AS hour, COUNT(*) AS count
     FROM tickets WHERE created_at >= {$_iv24}

@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 
+// ─── App version ──────────────────────────────────────────────────────────────
+// Bump this on every release. Auto-recorded into app_config (with a deploy
+// timestamp) below once the DB connection is up, so it's queryable/reportable
+// and Admin can show "last deployed" without a manual migration each time.
+define('APP_VERSION', '2.2');
+
 // ─── Composer autoloader ─────────────────────────────────────────────────────
 $_autoload = __DIR__ . '/vendor/autoload.php';
 if (file_exists($_autoload)) require_once $_autoload;
@@ -29,11 +35,38 @@ if ($_dbUrl) {
     $pdo = new PDO(
         sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', DB_HOST, DB_NAME),
         DB_USER, DB_PASS,
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
+        [PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+         PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"]
     );
     define('DB_TYPE', 'mysql');
 }
+
+// ─── Timezone (configurable, default Nigeria / Lagos = WAT, UTC+1) ────────────
+$_tzName = 'Africa/Lagos';
+try {
+    $_kq    = DB_TYPE === 'pgsql' ? 'key' : '`key`';
+    $_tzRow = $pdo->query("SELECT value FROM app_config WHERE $_kq = 'timezone' LIMIT 1")->fetch();
+    if ($_tzRow && !empty($_tzRow['value']) && in_array($_tzRow['value'], DateTimeZone::listIdentifiers())) {
+        $_tzName = $_tzRow['value'];
+    }
+} catch (\Throwable $e) { /* app_config may not exist on first run — keep Lagos default */ }
+
+date_default_timezone_set($_tzName);
+
+// Keep the DB session clock in the same zone so NOW()/CURRENT_TIMESTAMP match PHP
+try {
+    if (DB_TYPE === 'pgsql') {
+        // PostgreSQL: use the named timezone so DST is handled correctly
+        $pdo->exec("SET TIME ZONE '$_tzName'");
+    } else {
+        // MySQL: SET time_zone requires an offset string (+HH:MM)
+        $_off  = (new DateTime('now', new DateTimeZone($_tzName)))->getOffset();
+        $_sign = $_off < 0 ? '-' : '+';
+        $_off  = abs($_off);
+        $pdo->exec(sprintf("SET time_zone = '%s%02d:%02d'", $_sign, intdiv($_off, 3600), intdiv($_off % 3600, 60)));
+    }
+} catch (\Throwable $e) { /* ignore if the host disallows SET time_zone */ }
 
 // ─── Security Headers ────────────────────────────────────────────────────────
 if (!headers_sent()) {
@@ -150,10 +183,11 @@ function dbNowPlusInterval(int $n, string $unit): string {
 function dbNowMinusInterval(int $n, string $unit): string {
     if (DB_TYPE === 'pgsql') {
         $pgUnit = match(strtoupper($unit)) {
-            'HOUR'  => 'hours',
-            'DAY'   => 'days',
-            'MONTH' => 'months',
-            default => strtolower($unit) . 's',
+            'HOUR'   => 'hours',
+            'DAY'    => 'days',
+            'MONTH'  => 'months',
+            'MINUTE' => 'minutes',
+            default  => strtolower($unit) . 's',
         };
         return "NOW() - INTERVAL '$n $pgUnit'";
     }
@@ -179,6 +213,84 @@ function dbDateFormat(string $col, string $mysqlFmt): string {
         return "TO_CHAR($col, '$pgFmt')";
     }
     return "DATE_FORMAT($col, '$mysqlFmt')";
+}
+
+/**
+ * Cast a datetime column to a date.
+ * PostgreSQL: col::date  |  MySQL: DATE(col)
+ */
+function dbDate(string $col): string {
+    return DB_TYPE === 'pgsql' ? "{$col}::date" : "DATE({$col})";
+}
+
+/**
+ * Extract the hour (0-23) from a datetime column.
+ * PostgreSQL: EXTRACT(HOUR FROM col)  |  MySQL: HOUR(col)
+ */
+function dbHour(string $col): string {
+    return DB_TYPE === 'pgsql' ? "EXTRACT(HOUR FROM {$col})" : "HOUR({$col})";
+}
+
+// ─── Installation SLA ──────────────────────────────────────────────────────────
+define('INSTALLATION_SLA_WORKING_DAYS', 7);
+
+/** Add N working days (Mon–Fri) to a datetime string; returns 'Y-m-d H:i:s'. */
+function addWorkingDays(string $fromDateTime, int $days): string {
+    $dt = new DateTime($fromDateTime);
+    $added = 0;
+    while ($added < $days) {
+        $dt->modify('+1 day');
+        if ((int)$dt->format('N') < 6) { $added++; } // Mon(1)–Fri(5)
+    }
+    return $dt->format('Y-m-d H:i:s');
+}
+
+/** SLA badge for an installation_profiles row (['label'=>string,'class'=>bootstrap-color]). */
+function installationSlaBadge(array $p): array {
+    if (empty($p['payment_confirmed_at'])) {
+        return ['label' => 'Awaiting Payment', 'class' => 'secondary'];
+    }
+    $due = !empty($p['sla_due_at']) ? new DateTime($p['sla_due_at']) : null;
+    if (!empty($p['completed_at'])) {
+        $completed = new DateTime($p['completed_at']);
+        if ($due && $completed > $due) {
+            $lateDays = $due->diff($completed)->days;
+            return ['label' => "Completed — {$lateDays}d Late", 'class' => 'danger'];
+        }
+        return ['label' => 'Completed — On Time', 'class' => 'success'];
+    }
+    if (!$due) return ['label' => 'SLA Pending', 'class' => 'secondary'];
+    $now = new DateTime();
+    if ($now > $due) {
+        $lateDays = $due->diff($now)->days;
+        return ['label' => "Overdue {$lateDays}d", 'class' => 'danger'];
+    }
+    $daysLeft = $now->diff($due)->days;
+    return ['label' => $daysLeft === 0 ? 'Due Today' : "Due in {$daysLeft}d", 'class' => $daysLeft <= 1 ? 'warning' : 'info'];
+}
+
+/**
+ * Days pending for an installation: payment_confirmed_at → connection_date
+ * (if connected) or → today (if still pending). Null if payment isn't
+ * confirmed yet, since there's no start date to count from.
+ */
+function installationDaysPending(array $p): ?int {
+    if (empty($p['payment_confirmed_at'])) return null;
+    $start = new DateTime($p['payment_confirmed_at']);
+    $end   = !empty($p['connection_date']) ? new DateTime($p['connection_date']) : new DateTime();
+    return $start->diff($end)->days;
+}
+
+/**
+ * Execute an INSERT that silently skips on unique-constraint violation.
+ * MySQL: INSERT IGNORE INTO …  |  PostgreSQL: INSERT INTO … ON CONFLICT DO NOTHING
+ */
+function dbInsertIgnore(string $sql, array $params = []): void {
+    if (DB_TYPE === 'pgsql') {
+        dbRun($sql . ' ON CONFLICT DO NOTHING', $params);
+    } else {
+        dbRun(preg_replace('/^\s*INSERT\s+INTO\s+/i', 'INSERT IGNORE INTO ', $sql), $params);
+    }
 }
 
 /** Upsert a single app_config row — handles ON DUPLICATE KEY (MySQL) vs ON CONFLICT (PostgreSQL) */
@@ -277,6 +389,18 @@ function generateTicketNumber(string $prefix = 'INC'): string {
 }
 
 // ─── Notification helper ──────────────────────────────────────────────────────
+function notifyUser(string $userId, string $title, string $message, string $link = ''): void {
+    try {
+        if (!$userId) return;
+        dbRun(
+            "INSERT INTO notifications (id, user_id, title, message, link) VALUES (?,?,?,?,?)",
+            [newUuid(), $userId, $title, $message, $link]
+        );
+    } catch (\Throwable $e) {
+        error_log('notifyUser error: ' . $e->getMessage());
+    }
+}
+
 function notifyRoles(array $roles, string $title, string $message, string $link = ''): void {
     try {
         if (empty($roles)) return;
@@ -333,6 +457,8 @@ function sendEmail(string $toEmail, string $toName, string $subject, string $htm
     $mail->Username   = $user;
     $mail->Password   = $pass;
     $mail->CharSet    = 'UTF-8';
+    // Fail fast so a slow/unreachable SMTP server never hangs a user-facing page
+    $mail->Timeout    = 12;
 
     match ($enc) {
         'ssl'  => $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS,
@@ -374,8 +500,349 @@ function newUuid(): string {
         mt_rand(0,0xffff),mt_rand(0,0xffff),mt_rand(0,0xffff));
 }
 
+// ─── Absolute site base URL (for QR codes & public links) ─────────────────────
+function siteBaseUrl(): string {
+    $cfg = getAppConfig();
+    if (!empty($cfg['siteUrl'])) return rtrim($cfg['siteUrl'], '/');
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+           || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https' ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    return $scheme . '://' . $host;
+}
+
+// ─── Inventory upload paths ───────────────────────────────────────────────────
+define('INV_UPLOAD_DIR', __DIR__ . '/uploads/products/');
+define('INV_QR_DIR',     __DIR__ . '/uploads/qrcodes/');
+function invUploadUrl(): string { return siteBaseUrl() . '/uploads/products/'; }
+function invQrUrl(): string     { return siteBaseUrl() . '/uploads/qrcodes/'; }
+
 // ─── Role constants ───────────────────────────────────────────────────────────
-define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','vendor']);
+define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor']);
+
+// ─── Permission definitions ────────────────────────────────────────────────────
+define('ALL_PERMISSIONS', [
+    'tickets.view_all'        => 'View all tickets (not just own)',
+    'tickets.view_department' => 'View own department tickets only',
+    'tickets.create'       => 'Create tickets',
+    'tickets.update'       => 'Update tickets',
+    'tickets.assign'       => 'Assign tickets to team members',
+    'tickets.close'        => 'Close / resolve tickets',
+    'tickets.delete'       => 'Delete tickets',
+    'customers.view'       => 'View customers',
+    'customers.create'     => 'Create customers',
+    'customers.update'     => 'Edit customers',
+    'customers.delete'     => 'Delete customers',
+    'installations.view'   => 'View installations',
+    'installations.create' => 'Create installation profiles',
+    'installations.update' => 'Update installations',
+    'schedule.view'        => 'View schedule',
+    'map.view'             => 'View field map',
+    'team.view'            => 'View team page',
+    'team.manage'          => 'Manage team members & vendors',
+    'analytics.view'       => 'View analytics',
+    'reports.view'          => 'View drill-down reports',
+    'admin.access'         => 'Access admin panel',
+    // ── Inventory module ──
+    'inventory.view'              => 'View inventory dashboard',
+    'inventory.assets.view'       => 'View assets',
+    'inventory.assets.manage'     => 'Add / edit / delete assets',
+    'inventory.items.view'        => 'View stock items',
+    'inventory.items.manage'      => 'Add / edit / delete stock items',
+    'inventory.cabinets.view'     => 'View cabinets',
+    'inventory.cabinets.manage'   => 'Add / edit / delete cabinets',
+    'inventory.categories.view'   => 'View categories',
+    'inventory.categories.manage' => 'Add / edit / delete categories',
+    'inventory.requests.create'   => 'Submit stock requests',
+    'inventory.requests.view'     => 'View stock requests',
+    'inventory.requests.approve'  => 'Approve / reject stock requests',
+    'inventory.movements.view'    => 'View stock movements',
+    'inventory.refill'            => 'Refill / add stock',
+]);
+
+// ─── RBAC helpers ─────────────────────────────────────────────────────────────
+function hasPermission(string $perm): bool {
+    static $cache = null;
+    $u = currentUser();
+    if (!$u) return false;
+    if ($u['role'] === 'admin') return true;
+    if ($cache === null) {
+        try {
+            $rows  = dbFetchAll("SELECT permission FROM role_permissions WHERE role = ?", [$u['role']]);
+            $cache = array_column($rows, 'permission');
+        } catch (\Throwable $e) {
+            $cache = [];
+        }
+    }
+    return in_array($perm, $cache ?? []);
+}
+
+function requirePermission(string $perm): void {
+    if (!hasPermission($perm)) {
+        if (str_contains($_SERVER['REQUEST_URI'] ?? '', '/api/')) {
+            jsonResponse(['error' => 'Access denied'], 403);
+        }
+        header('Location: /dashboard'); exit;
+    }
+}
+
+function getPermissionsForRole(string $role): array {
+    if ($role === 'admin') return array_keys(ALL_PERMISSIONS);
+    try {
+        $rows = dbFetchAll("SELECT permission FROM role_permissions WHERE role = ?", [$role]);
+        return array_column($rows, 'permission');
+    } catch (\Throwable $e) {
+        return [];
+    }
+}
+
+// ─── Role registry (DB-managed roles) ─────────────────────────────────────────
+/** All roles from the `roles` table, keyed by name. Falls back to ROLES constant. */
+function getRoles(): array {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $cache = [];
+    try {
+        foreach (dbFetchAll("SELECT name, label, department, is_system FROM roles ORDER BY is_system DESC, label") as $r) {
+            $cache[$r['name']] = $r;
+        }
+    } catch (\Throwable $e) { /* table may not exist yet */ }
+    if (!$cache) {
+        // Fallback to the built-in constant if the roles table is unavailable
+        foreach (ROLES as $r) {
+            $cache[$r] = ['name'=>$r, 'label'=>ucwords(str_replace(['-','_'],' ',$r)), 'department'=>'', 'is_system'=>1];
+        }
+    }
+    return $cache;
+}
+
+/** List of role name keys. */
+function roleKeys(): array { return array_keys(getRoles()); }
+
+/** Department of a given role name ('' if none). */
+function roleDepartment(string $role): string {
+    return (string)(getRoles()[$role]['department'] ?? '');
+}
+
+/** Department of the current logged-in user's role ('' if none). */
+function userDepartment(): string {
+    $u = currentUser();
+    return $u ? roleDepartment($u['role']) : '';
+}
+
+// ─── Ticket visibility scoping ────────────────────────────────────────────────
+/**
+ * Returns [sqlFragment, params] to AND into a tickets query for the current user.
+ *  - tickets.view_all        → no restriction ('' fragment)
+ *  - tickets.view_department → tickets whose fault type routes to the user's
+ *                              department, plus tickets they created or are assigned
+ *  - otherwise               → only own (created_by or assigned_to)
+ * $alias is the tickets table alias used in the query (e.g. 't' or '').
+ */
+function ticketScopeSql(string $alias = 't'): array {
+    $u = currentUser();
+    if (!$u) return ['1=0', []];
+    if (hasPermission('tickets.view_all')) return ['', []];
+    $p = $alias ? $alias . '.' : '';
+    $uid = $u['id'];
+
+    if (hasPermission('tickets.view_department') && ($dept = userDepartment()) !== '') {
+        return [
+            "({$p}created_by = ? OR {$p}assigned_to = ? OR {$p}fault_type_id IN (SELECT id FROM fault_types WHERE route_to = ?))",
+            [$uid, $uid, $dept],
+        ];
+    }
+    return ["({$p}created_by = ? OR {$p}assigned_to = ?)", [$uid, $uid]];
+}
+
+/** Can the current user view this specific ticket row? */
+function canAccessTicket(array $ticket): bool {
+    if (hasPermission('tickets.view_all')) return true;
+    $u = currentUser();
+    if (!$u) return false;
+    if (($ticket['assigned_to'] ?? null) === $u['id'] || ($ticket['created_by'] ?? null) === $u['id']) return true;
+    if (hasPermission('tickets.view_department') && ($dept = userDepartment()) !== '' && !empty($ticket['fault_type_id'])) {
+        $ft = dbFetch("SELECT route_to FROM fault_types WHERE id = ?", [$ticket['fault_type_id']]);
+        if ($ft && strtolower(trim((string)$ft['route_to'])) === strtolower($dept)) return true;
+    }
+    return false;
+}
+
+// ─── Auto-assign supervisor for ticket routing ────────────────────────────────
+/**
+ * Given a fault_type id, finds the most recently logged-in active supervisor
+ * for the fault type's routed department. Falls back to any active supervisor.
+ */
+function getAutoAssignSupervisor(string $faultTypeId): ?array {
+    $ft = dbFetch("SELECT route_to FROM fault_types WHERE id = ?", [$faultTypeId]);
+    if (!$ft || empty($ft['route_to'])) return null;
+
+    $roleMap = [
+        'fiber'        => 'supervisor-fiber',
+        'noc'          => 'supervisor-noc',
+        'installation' => 'supervisor-fiber',
+        'cx'           => 'cx_supervisor',
+    ];
+    $targetRole = $roleMap[strtolower(trim($ft['route_to']))] ?? null;
+    if (!$targetRole) return null;
+
+    // Most recently logged-in active supervisor; random fallback if no login record
+    $sup = dbFetch(
+        "SELECT u.id, u.name, u.email FROM users u
+         LEFT JOIN (
+             SELECT user_id, MAX(created_at) AS last_login
+             FROM audit_logs WHERE action = 'login' GROUP BY user_id
+         ) al ON al.user_id = u.id
+         WHERE u.role = ? AND u.status = 'active'
+         ORDER BY COALESCE(al.last_login, '2000-01-01') DESC
+         LIMIT 1",
+        [$targetRole]
+    );
+    return $sup ?: null;
+}
+
+// ─── Hub-city routing helpers ─────────────────────────────────────────────────
+/**
+ * Given a customer's mailing_city, look up the hub it belongs to via hub_city_mappings.
+ */
+function getHubIdForCity(string $city): ?string {
+    if (empty(trim($city))) return null;
+    $row = dbFetch(
+        "SELECT hub_id FROM hub_city_mappings WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?))",
+        [trim($city)]
+    );
+    return $row['hub_id'] ?? null;
+}
+
+/**
+ * For fiber/installation tickets: find the least-loaded active engineer in the team
+ * assigned to the given hub. Falls back to supervisor-fiber if none found.
+ */
+function getAutoAssignFiber(string $faultTypeId, ?string $hubId): ?array {
+    if ($hubId) {
+        $hub = dbFetch("SELECT team_id FROM hubs WHERE id = ?", [$hubId]);
+        $teamId = $hub['team_id'] ?? null;
+        if ($teamId) {
+            $engineer = dbFetch(
+                "SELECT u.id, u.name, u.email FROM users u
+                 LEFT JOIN (
+                     SELECT assigned_to, COUNT(*) AS open_count
+                     FROM tickets WHERE status IN ('open','in_progress')
+                     GROUP BY assigned_to
+                 ) tc ON tc.assigned_to = u.id
+                 WHERE u.team_id = ? AND u.status = 'active' AND u.role IN ('engineer','noc_engineer')
+                 ORDER BY COALESCE(tc.open_count, 0) ASC, u.name ASC
+                 LIMIT 1",
+                [$teamId]
+            );
+            if ($engineer) return $engineer;
+        }
+    }
+    return getAutoAssignSupervisor($faultTypeId);
+}
+
+// ─── Email helpers for ticket events ──────────────────────────────────────────
+function emailTicketAssigned(array $ticket, array $assignee): void {
+    try {
+        if (empty($assignee['email'])) return;
+        $tn  = htmlspecialchars($ticket['ticket_number'] ?? '');
+        $desc = htmlspecialchars(substr($ticket['description'] ?? '', 0, 200));
+        $prio = strtoupper($ticket['priority'] ?? '');
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $ticket['id'];
+        sendEmail(
+            $assignee['email'], $assignee['name'],
+            "Ticket Assigned to You — {$tn}",
+            "<p>Hi {$assignee['name']},</p>
+             <p>Ticket <strong>{$tn}</strong> (Priority: {$prio}) has been assigned to you.</p>
+             <p><strong>Issue:</strong> {$desc}</p>
+             <p><a href='{$link}'>View Ticket →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailTicketAssigned error: ' . $e->getMessage());
+    }
+}
+
+function emailTicketUpdated(array $ticket, array $creator, string $changedBy, string $newStatus): void {
+    try {
+        if (empty($creator['email'])) return;
+        $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
+        $statusLabel = str_replace('_', ' ', ucfirst($newStatus));
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $ticket['id'];
+        sendEmail(
+            $creator['email'], $creator['name'],
+            "Ticket {$tn} Updated",
+            "<p>Hi {$creator['name']},</p>
+             <p>Ticket <strong>{$tn}</strong> that you created has been updated by <strong>{$changedBy}</strong>.</p>
+             <p><strong>New Status:</strong> {$statusLabel}</p>
+             <p><a href='{$link}'>View Ticket →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailTicketUpdated error: ' . $e->getMessage());
+    }
+}
+
+function emailCustomerTicketCreated(array $ticket, array $customer): void {
+    try {
+        if (empty($customer['email'])) return;
+        $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
+        $desc = htmlspecialchars($ticket['description'] ?? '');
+        $prio = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'][$ticket['priority'] ?? 'p3'] ?? 'Medium';
+        $cfg  = getAppConfig();
+        $co   = htmlspecialchars($cfg['companyName'] ?? 'FieldPulse');
+        sendEmail(
+            $customer['email'], $customer['name'],
+            "Your Service Ticket Has Been Raised — {$tn}",
+            "<p>Dear {$customer['name']},</p>
+             <p>Thank you for reaching out. We have successfully logged a ticket for your issue.</p>
+             <table style='border-collapse:collapse;width:100%;max-width:480px;font-size:.9rem'>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Ticket #</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$tn}</td></tr>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Issue</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$desc}</td></tr>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Priority</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$prio}</td></tr>
+             </table>
+             <p>Our team will be in touch shortly. Please keep your ticket number for reference.</p>
+             <p style='color:#64748b;font-size:.85rem'>{$co} Support Team</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailCustomerTicketCreated error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Sent to the customer the first time a ticket reaches a done-state (resolved/closed).
+ * Call only on the first transition into resolved/closed to avoid duplicate emails.
+ */
+function emailCustomerTicketResolved(array $ticket, array $customer): void {
+    try {
+        if (empty($customer['email'])) return;
+        $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
+        $desc = htmlspecialchars($ticket['description'] ?? '');
+        $cfg  = getAppConfig();
+        $co   = htmlspecialchars($cfg['companyName'] ?? 'FieldPulse');
+        sendEmail(
+            $customer['email'], $customer['name'],
+            "Your Ticket {$tn} Has Been Resolved",
+            "<p>Dear {$customer['name']},</p>
+             <p>We are pleased to inform you that your ticket has been <strong>resolved</strong>. Our team has completed work on your reported issue.</p>
+             <table style='border-collapse:collapse;width:100%;max-width:480px;font-size:.9rem'>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Ticket #</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$tn}</td></tr>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Issue</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$desc}</td></tr>
+               <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Status</td><td style='padding:6px 12px;border:1px solid #e2e8f0;color:#15803d;font-weight:600'>Resolved</td></tr>
+             </table>
+             <p>If the issue persists or recurs, simply reply or contact us and we'll reopen your case right away.</p>
+             <p style='color:#64748b;font-size:.85rem'>{$co} Support Team</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailCustomerTicketResolved error: ' . $e->getMessage());
+    }
+}
+
+// ─── Ensure app_config.key has a UNIQUE constraint (required for ON CONFLICT) ─
+if (DB_TYPE === 'pgsql') {
+    try {
+        db()->exec("ALTER TABLE app_config ADD CONSTRAINT app_config_key_uq UNIQUE (key)");
+    } catch (\Throwable $e) { /* already exists — fine */ }
+}
 
 // ─── One-time PHP password migration ─────────────────────────────────────────
 $_k = dbKey();
@@ -388,4 +855,310 @@ if (!$_migrated) {
         }
     }
     dbUpsertConfig('php_pwd_migrated', 'true');
+}
+
+// ─── One-time RBAC table + seed migration ─────────────────────────────────────
+$_k = dbKey();
+$_rbacDone = dbFetch("SELECT value FROM app_config WHERE $_k = 'rbac_seeded_v1'");
+if (!$_rbacDone) {
+    try {
+        // Create table
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS role_permissions (
+                id varchar(36) PRIMARY KEY,
+                role varchar(50) NOT NULL,
+                permission varchar(100) NOT NULL,
+                UNIQUE (role, permission)
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `role_permissions` (
+                `id` varchar(36) NOT NULL,
+                `role` varchar(50) NOT NULL,
+                `permission` varchar(100) NOT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_role_perm` (`role`,`permission`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        }
+
+        // Add sla_warned_at column to tickets if missing
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `sla_warned_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+
+        // Seed defaults
+        $_defaults = [
+            'admin'            => array_keys(ALL_PERMISSIONS),
+            'project_admin'    => array_keys(ALL_PERMISSIONS),
+            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view'],
+            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view'],
+            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.close','customers.view','customers.create','customers.update','analytics.view'],
+            'cx'               => ['tickets.create','customers.view','customers.create'],
+            'engineer'         => ['tickets.update','tickets.close','schedule.view','map.view','installations.view'],
+            'noc_engineer'     => ['tickets.update','tickets.close','schedule.view','map.view'],
+            'vendor'           => ['installations.view'],
+        ];
+        foreach ($_defaults as $_r => $_perms) {
+            foreach ($_perms as $_p) {
+                try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),$_r,$_p]); } catch (\Throwable $e) {}
+            }
+        }
+        dbUpsertConfig('rbac_seeded_v1', 'true');
+    } catch (\Throwable $e) {
+        error_log('RBAC migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── One-time roles registry + department scoping migration ───────────────────
+$_k = dbKey();
+$_rolesDone = dbFetch("SELECT value FROM app_config WHERE $_k = 'roles_seeded_v1'");
+if (!$_rolesDone) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS roles (
+                name varchar(50) PRIMARY KEY,
+                label varchar(100) NOT NULL,
+                department varchar(30) NOT NULL DEFAULT '',
+                is_system smallint NOT NULL DEFAULT 0
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `roles` (
+                `name` varchar(50) NOT NULL,
+                `label` varchar(100) NOT NULL,
+                `department` varchar(30) NOT NULL DEFAULT '',
+                `is_system` tinyint(1) NOT NULL DEFAULT 0,
+                PRIMARY KEY (`name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        }
+
+        // Seed the built-in roles (label + department). is_system = cannot be deleted.
+        $_seedRoles = [
+            ['admin','Admin','',1],
+            ['project_admin','Project Admin','',1],
+            ['supervisor-fiber','Fiber Supervisor','fiber',1],
+            ['supervisor-noc','NOC Supervisor','noc',1],
+            ['cx_supervisor','CX Supervisor','cx',1],
+            ['cx','CX Agent','',1],
+            ['engineer','Engineer','fiber',1],
+            ['noc_engineer','NOC Engineer','noc',1],
+            ['vendor','Vendor','',1],
+        ];
+        foreach ($_seedRoles as [$_rn,$_rl,$_rd,$_rs]) {
+            try { dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES (?,?,?,?)", [$_rn,$_rl,$_rd,$_rs]); } catch (\Throwable $e) {}
+        }
+
+        // Switch fiber/noc supervisors from view_all → view_department (department-only)
+        foreach (['supervisor-fiber','supervisor-noc'] as $_sr) {
+            dbRun("DELETE FROM role_permissions WHERE role=? AND permission='tickets.view_all'", [$_sr]);
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'tickets.view_department')", [newUuid(),$_sr]); } catch (\Throwable $e) {}
+        }
+
+        dbUpsertConfig('roles_seeded_v1', 'true');
+    } catch (\Throwable $e) {
+        error_log('Roles migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v3: noc_engineer role + permissions ────────────────────────────────
+$_k = dbKey();
+$_sv3 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v3_migrated'");
+if (!$_sv3) {
+    try {
+        // Insert noc_engineer into roles table
+        try { dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES (?,?,?,?)", ['noc_engineer','NOC Engineer','noc',1]); } catch (\Throwable $e) {}
+        // Seed permissions for noc_engineer
+        $_nocPerms = ['tickets.update','tickets.close','schedule.view','map.view'];
+        foreach ($_nocPerms as $_p) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),'noc_engineer',$_p]); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v3_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v3 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v2: ticket_scope · hub_city_mappings · hubs.team_id ───────────────
+// Runs on both MySQL (cPanel) and PostgreSQL (Replit) — safe to re-run (all ops
+// are guarded by IF NOT EXISTS / try-catch on duplicate-column errors).
+$_k = dbKey();
+$_sv2 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v2_migrated'");
+if (!$_sv2) {
+    try {
+        // 1. ticket_scope column on tickets
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN ticket_scope VARCHAR(20) NOT NULL DEFAULT 'customer'"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `ticket_scope` VARCHAR(20) NOT NULL DEFAULT 'customer'"); } catch (\Throwable $e) {}
+        }
+
+        // 2. hub_city_mappings table — must use utf8mb4_general_ci to match all
+        //    other tables; mismatched collations cause error 1267 on JOINs
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS hub_city_mappings (
+                id          VARCHAR(36)  PRIMARY KEY,
+                hub_id      VARCHAR(36)  NOT NULL,
+                city_name   VARCHAR(255) NOT NULL,
+                created_at  TIMESTAMP    DEFAULT NOW(),
+                UNIQUE (hub_id, city_name)
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `hub_city_mappings` (
+                `id`         VARCHAR(36)  NOT NULL,
+                `hub_id`     VARCHAR(36)  NOT NULL,
+                `city_name`  VARCHAR(255) NOT NULL,
+                `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_hub_city` (`hub_id`, `city_name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            // Fix existing tables that were mistakenly created with utf8mb4_unicode_ci
+            try { db()->exec("ALTER TABLE `hub_city_mappings` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"); } catch (\Throwable $e) {}
+        }
+
+        // 3. team_id column on hubs
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE hubs ADD COLUMN team_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `hubs` ADD COLUMN `team_id` VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+
+        // 4. sla_warned_at on tickets (MySQL — pgsql schema already has it)
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN sla_warned_at TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+
+        dbUpsertConfig('schema_v2_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v2 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v4: escalated_at on tickets · reports.view permission ─────────────
+$_k = dbKey();
+$_sv4 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v4_migrated'");
+if (!$_sv4) {
+    try {
+        // 1. escalated_at column on tickets — marks when a ticket was first
+        //    escalated (used to measure "escalation → resolution" time in reports)
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN escalated_at TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `escalated_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+
+        // 2. reports.view permission — grant to management/supervisor roles that
+        //    already have analytics.view (mirrors the existing analytics grant)
+        foreach (['project_admin','supervisor-fiber','supervisor-noc','cx_supervisor'] as $_rr) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'reports.view')", [newUuid(),$_rr]); } catch (\Throwable $e) {}
+        }
+
+        dbUpsertConfig('schema_v4_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v4 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v5: installation SLA tracking + vendor reassignment history ───────
+$_k = dbKey();
+$_sv5 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v5_migrated'");
+if (!$_sv5) {
+    try {
+        // 1. installation_profiles: payment_confirmed_at (SLA clock start),
+        //    sla_due_at (payment_confirmed_at + 7 working days), completed_at
+        $_invCols = [
+            'payment_confirmed_at' => 'TIMESTAMP DEFAULT NULL',
+            'sla_due_at'           => 'TIMESTAMP DEFAULT NULL',
+            'completed_at'         => 'TIMESTAMP DEFAULT NULL',
+        ];
+        foreach ($_invCols as $_col => $_type) {
+            if (DB_TYPE === 'pgsql') {
+                try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN {$_col} {$_type}"); } catch (\Throwable $e) {}
+            } else {
+                $_myType = str_replace('TIMESTAMP', 'DATETIME', $_type);
+                try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `{$_col}` {$_myType}"); } catch (\Throwable $e) {}
+            }
+        }
+
+        // 2. installation_vendor_history — audit trail for vendor reassignment
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS installation_vendor_history (
+                id               VARCHAR(36) PRIMARY KEY,
+                profile_id       VARCHAR(36) NOT NULL,
+                old_vendor_id    VARCHAR(36) DEFAULT NULL,
+                new_vendor_id    VARCHAR(36) DEFAULT NULL,
+                reason           TEXT,
+                changed_by       VARCHAR(36) DEFAULT NULL,
+                changed_by_name  TEXT,
+                created_at       TIMESTAMP DEFAULT NOW()
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `installation_vendor_history` (
+                `id`              VARCHAR(36) NOT NULL,
+                `profile_id`      VARCHAR(36) NOT NULL,
+                `old_vendor_id`   VARCHAR(36) DEFAULT NULL,
+                `new_vendor_id`   VARCHAR(36) DEFAULT NULL,
+                `reason`          TEXT,
+                `changed_by`      VARCHAR(36) DEFAULT NULL,
+                `changed_by_name` TEXT,
+                `created_at`      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_ivh_profile` (`profile_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+        }
+
+        // 3. Backfill sla_due_at for any existing profiles that already have a
+        //    payment_confirmed_at (none should yet, but safe to run once)
+        foreach (dbFetchAll("SELECT id, payment_confirmed_at FROM installation_profiles WHERE payment_confirmed_at IS NOT NULL AND sla_due_at IS NULL") as $_p) {
+            $_due = addWorkingDays($_p['payment_confirmed_at'], INSTALLATION_SLA_WORKING_DAYS);
+            dbRun("UPDATE installation_profiles SET sla_due_at = ? WHERE id = ?", [$_due, $_p['id']]);
+        }
+
+        dbUpsertConfig('schema_v5_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v5 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v6: expanded installation profile fields ──────────────────────────
+// Fields requested for the Installation Module (billing/ops detail captured
+// alongside the SLA fields already added in schema v5).
+$_k = dbKey();
+$_sv6 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v6_migrated'");
+if (!$_sv6) {
+    try {
+        $_invCols2 = [
+            'amount_paid'        => 'DECIMAL(12,2) DEFAULT NULL',
+            'network_user_id'    => 'VARCHAR(100) DEFAULT NULL',
+            'router_type'        => 'VARCHAR(100) DEFAULT NULL',
+            'estate'             => 'VARCHAR(255) DEFAULT NULL',
+            'pop'                => 'VARCHAR(100) DEFAULT NULL',
+            'connection_status'  => "VARCHAR(30) DEFAULT NULL",
+            'connection_date'    => 'DATE DEFAULT NULL',
+            'installer'          => 'VARCHAR(150) DEFAULT NULL',
+            'installation_cost'  => 'DECIMAL(12,2) DEFAULT NULL',
+            'field_marketer'     => 'VARCHAR(150) DEFAULT NULL',
+        ];
+        foreach ($_invCols2 as $_col => $_type) {
+            if (DB_TYPE === 'pgsql') {
+                try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN {$_col} {$_type}"); } catch (\Throwable $e) {}
+            } else {
+                try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `{$_col}` {$_type}"); } catch (\Throwable $e) {}
+            }
+        }
+        dbUpsertConfig('schema_v6_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v6 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── App version tracking ──────────────────────────────────────────────────────
+// Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
+// the deployed APP_VERSION differs from what's recorded — i.e. once per release.
+try {
+    $_k = dbKey();
+    $_recordedVersion = dbFetch("SELECT value FROM app_config WHERE $_k = 'app_version'");
+    if (($_recordedVersion['value'] ?? null) !== APP_VERSION) {
+        dbUpsertConfig('app_version', APP_VERSION);
+        dbUpsertConfig('app_version_deployed_at', date('Y-m-d H:i:s'));
+    }
+} catch (\Throwable $e) {
+    error_log('App version tracking error: ' . $e->getMessage());
 }

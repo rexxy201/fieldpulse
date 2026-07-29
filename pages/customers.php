@@ -1,9 +1,8 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+requirePermission('customers.view');
 
-$user   = currentUser();
-$role   = $user['role'];
 $search = trim($_GET['search'] ?? '');
 $status = $_GET['status'] ?? '';
 
@@ -13,10 +12,10 @@ if (method() === 'POST') {
     $b      = $_POST;
     $action = $b['_action'] ?? 'create';
 
-    if ($action === 'delete' && isAdmin()) {
+    if ($action === 'delete' && hasPermission('customers.delete')) {
         dbRun("DELETE FROM customers WHERE id=?", [$b['id']]);
         $msg = 'Customer deleted.';
-    } elseif ($action === 'create') {
+    } elseif ($action === 'create' && hasPermission('customers.create')) {
         $name = trim(($b['first_name']??'') . ' ' . ($b['last_name']??''));
         if (!$name) $name = $b['name'] ?? '';
         dbRun("INSERT INTO customers
@@ -24,7 +23,7 @@ if (method() === 'POST') {
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [newUuid(),$name,$b['first_name']??'',$b['last_name']??'',$b['account_number']??'',$b['email']??'',$b['phone']??'',$b['address']??'',$b['mailing_city']??'',$b['mailing_state']??'',$b['plan']??'',$b['status']??'active',$b['expiration']??null]);
         $msg = 'Customer added.';
-    } elseif ($action === 'update' && isAdmin()) {
+    } elseif ($action === 'update' && hasPermission('customers.update')) {
         $name = trim(($b['first_name']??'') . ' ' . ($b['last_name']??''));
         if (!$name) $name = $b['name'] ?? '';
         dbRun("UPDATE customers SET name=?,first_name=?,last_name=?,account_number=?,email=?,phone=?,address=?,mailing_city=?,mailing_state=?,plan=?,status=?,expiration=? WHERE id=?",
@@ -50,6 +49,11 @@ $whereSQL = $where ? ' WHERE ' . implode(' AND ', $where) : '';
 $total     = (int)(dbFetch("SELECT COUNT(*) AS c FROM customers c" . $whereSQL, $params)['c'] ?? 0);
 $customers = dbFetchAll("SELECT c.* FROM customers c" . $whereSQL . " ORDER BY c.name LIMIT 300", $params);
 
+$custCanCreate = hasPermission('customers.create');
+$custCanEdit   = hasPermission('customers.update');
+$custCanDelete = hasPermission('customers.delete');
+$custCanAct    = $custCanEdit || $custCanDelete;
+
 $pageTitle = 'Customers';
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -61,10 +65,12 @@ require __DIR__ . '/../includes/header.php';
     <div class="text-muted small"><?= number_format($total) ?> total customer<?= $total !== 1 ? 's' : '' ?></div>
   </div>
   <div class="d-flex gap-2">
+    <?php if (hasPermission('admin.access')): ?>
     <a href="/admin#tab-customer-data" class="btn btn-outline-secondary">
       <i class="bi bi-upload me-1"></i>Bulk Upload
     </a>
-    <?php if (isAdmin()): ?>
+    <?php endif; ?>
+    <?php if (hasPermission('customers.create')): ?>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
       <i class="bi bi-plus-lg me-1"></i>Add Customer
     </button>
@@ -117,7 +123,27 @@ require __DIR__ . '/../includes/header.php';
           <th>Service</th>
           <th>Expiration</th>
           <th>Status</th>
-          <?php if (isAdmin()): ?><th style="width:70px"></th><?php endif; ?>
+          <?php if ($custCanAct): ?><th style="width:70px"></th><?php endif; ?>
+        </tr>
+        <tr id="colFilterRow">
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="0" placeholder="Filter name…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="1" placeholder="Filter acct…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="2" placeholder="Filter phone…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="3" placeholder="Filter email…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="4" placeholder="Filter city…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="5" placeholder="Filter plan…"></th>
+          <th class="p-1"><input type="text" class="form-control form-control-sm col-filter" data-col="6" placeholder="Filter date…"></th>
+          <th class="p-1">
+            <select class="form-select form-select-sm col-filter" data-col="7">
+              <option value="">All</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </th>
+          <?php if ($custCanAct): ?><th class="p-1 text-center">
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="clearColFilters()" title="Clear column filters"><i class="bi bi-x-lg"></i></button>
+          </th><?php endif; ?>
         </tr>
       </thead>
       <tbody>
@@ -148,13 +174,16 @@ require __DIR__ . '/../includes/header.php';
               default     => 'bg-secondary'
             } ?>"><?= ucfirst($c['status'] ?? 'active') ?></span>
           </td>
-          <?php if (isAdmin()): ?>
+          <?php if ($custCanAct): ?>
           <td>
             <div class="d-flex gap-1">
+              <?php if ($custCanEdit): ?>
               <button class="btn btn-sm btn-link p-0 text-muted" title="Edit"
                 onclick="openEdit(<?= htmlspecialchars(json_encode($c)) ?>)">
                 <i class="bi bi-pencil"></i>
               </button>
+              <?php endif; ?>
+              <?php if ($custCanDelete): ?>
               <form method="POST" class="d-inline" onsubmit="return confirm('Delete <?= addslashes(htmlspecialchars($displayName)) ?>?')">
                 <input type="hidden" name="_action" value="delete">
                 <input type="hidden" name="id" value="<?= $c['id'] ?>">
@@ -162,6 +191,7 @@ require __DIR__ . '/../includes/header.php';
                   <i class="bi bi-trash3"></i>
                 </button>
               </form>
+              <?php endif; ?>
             </div>
           </td>
           <?php endif; ?>
@@ -176,7 +206,7 @@ require __DIR__ . '/../includes/header.php';
 </div>
 
 <!-- Add Customer Modal -->
-<?php if (isAdmin()): ?>
+<?php if ($custCanCreate): ?>
 <div class="modal fade" id="addModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
@@ -246,8 +276,10 @@ require __DIR__ . '/../includes/header.php';
     </div>
   </div>
 </div>
+<?php endif; ?>
 
 <!-- Edit Customer Modal -->
+<?php if ($custCanEdit): ?>
 <div class="modal fade" id="editModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
@@ -321,6 +353,53 @@ require __DIR__ . '/../includes/header.php';
 <?php endif; ?>
 
 <script>
+// ── Column filters ─────────────────────────────────────────────────────────
+document.querySelectorAll('.col-filter').forEach(input => {
+  input.addEventListener('input', applyColFilters);
+  input.addEventListener('change', applyColFilters);
+});
+
+function applyColFilters() {
+  const filters = {};
+  document.querySelectorAll('.col-filter').forEach(inp => {
+    const v = inp.value.trim().toLowerCase();
+    if (v) filters[parseInt(inp.dataset.col)] = v;
+  });
+
+  let visible = 0;
+  document.querySelectorAll('#customersTable tbody tr').forEach(row => {
+    if (row.querySelector('td[colspan]')) return; // empty-state row
+    const cells = row.querySelectorAll('td');
+    const show = Object.entries(filters).every(([col, val]) => {
+      const cell = cells[parseInt(col)];
+      return cell && cell.textContent.trim().toLowerCase().includes(val);
+    });
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  // Show match count
+  let badge = document.getElementById('colFilterBadge');
+  if (Object.keys(filters).length) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.id = 'colFilterBadge';
+      badge.className = 'badge bg-primary ms-2';
+      document.querySelector('#customersTable thead tr:first-child th:first-child').appendChild(badge);
+    }
+    badge.textContent = visible + ' match' + (visible !== 1 ? 'es' : '');
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
+function clearColFilters() {
+  document.querySelectorAll('.col-filter').forEach(inp => {
+    inp.value = '';
+    inp.dispatchEvent(new Event('input'));
+  });
+}
+
 // ── Search with debounce ───────────────────────────────────────────────────
 let searchTimer;
 function debounceSearch(val) {
@@ -356,7 +435,7 @@ function openEdit(c) {
   document.getElementById('editPlan').value        = c.plan || '';
   document.getElementById('editExpiration').value  = c.expiration ? c.expiration.substring(0,10) : '';
   document.getElementById('editStatus').value      = c.status || 'active';
-  new bootstrap.Modal(document.getElementById('editModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('editModal')).show();
 }
 </script>
 

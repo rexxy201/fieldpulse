@@ -3,7 +3,7 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 
 $user = currentUser();
-$uid  = (int)$user['id'];
+$uid  = $user['id'];  // UUID string — do NOT cast to int
 
 if (method() === 'GET') {
     $action = $_GET['action'] ?? 'list';
@@ -34,7 +34,7 @@ if (method() === 'POST') {
     }
 
     if ($action === 'mark_read' && !empty($b['id'])) {
-        dbRun("UPDATE notifications SET is_read = true WHERE id = ? AND user_id = ?", [(int)$b['id'], $uid]);
+        dbRun("UPDATE notifications SET is_read = true WHERE id = ? AND user_id = ?", [(string)$b['id'], $uid]);
         jsonResponse(['ok' => true]);
     }
 

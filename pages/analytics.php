@@ -1,11 +1,11 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
-if (!in_array(currentUser()['role'],['admin','project_admin','supervisor-fiber','supervisor-noc'])) { header('Location: /dashboard'); exit; }
+requirePermission('analytics.view');
 
 $byStatus   = dbFetchAll("SELECT status, COUNT(*) AS count FROM tickets GROUP BY status ORDER BY count DESC");
 $byPriority = dbFetchAll("SELECT priority, COUNT(*) AS count FROM tickets GROUP BY priority ORDER BY priority");
-$_dateDay   = DB_TYPE === 'pgsql' ? "created_at::date" : "DATE(created_at)";
+$_dateDay   = dbDate('created_at');
 $_dateFmt   = dbDateFormat('created_at', '%b %d');
 $_iv30      = dbNowMinusInterval(30, 'DAY');
 $_tsDiff    = dbSecondsDiff('created_at', 'resolved_at');

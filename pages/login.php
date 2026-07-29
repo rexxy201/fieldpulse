@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/../config.php';
 if (isLoggedIn()) { header('Location: /dashboard'); exit; }
-$_cfg = getAppConfig();
+$_cfg         = getAppConfig();
 $_loginNotice = $_cfg['loginNotice'] ?? '';
+$_loginLogo   = $_cfg['companyLogo']  ?? '';
+$_loginName   = $_cfg['companyName']  ?? 'FieldPulse';
 
 $error = '';
 if (method() === 'POST') {
@@ -41,10 +43,17 @@ if (method() === 'POST') {
   <div class="login-card">
 
     <div class="text-center mb-4">
+      <?php if ($_loginLogo): ?>
+      <div class="brand-logo" style="width:auto;height:auto;background:none;border-radius:0;padding:0;margin-bottom:1rem">
+        <img src="<?= htmlspecialchars($_loginLogo) ?>" alt="<?= htmlspecialchars($_loginName) ?>"
+             style="max-height:72px;max-width:200px;width:auto;height:auto;object-fit:contain;display:block;margin:0 auto">
+      </div>
+      <?php else: ?>
       <div class="brand-logo">
         <i class="bi bi-broadcast-pin"></i>
       </div>
-      <h4 class="fw-bold mb-0" style="font-size:1.4rem;letter-spacing:-.02em">FieldPulse</h4>
+      <?php endif; ?>
+      <h4 class="fw-bold mb-0" style="font-size:1.4rem;letter-spacing:-.02em"><?= htmlspecialchars($_loginName) ?></h4>
       <p class="text-muted mt-1 mb-0" style="font-size:.8375rem">Field Service &amp; Operations Management</p>
     </div>
 

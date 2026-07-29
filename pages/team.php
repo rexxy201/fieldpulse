@@ -2,10 +2,7 @@
 require_once __DIR__ . '/../config.php';
 requireAuth();
 
-$myRole = currentUser()['role'];
-if (!in_array($myRole, ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor'])) {
-    header('Location: /dashboard'); exit;
-}
+requirePermission('team.view');
 
 $msg = ''; $msgType = 'success';
 
@@ -65,12 +62,9 @@ $teams   = dbFetchAll("SELECT * FROM teams ORDER BY name");
 $hubs    = dbFetchAll("SELECT id,name FROM hubs ORDER BY name");
 $hubMap  = array_column($hubs, 'name', 'id');
 
-// Role display config
-$roleLabel = [
-    'admin'=>'Admin','project_admin'=>'Project Admin','supervisor-fiber'=>'Fiber Supervisor',
-    'supervisor-noc'=>'NOC Supervisor','cx_supervisor'=>'CX Supervisor',
-    'cx'=>'CX Agent','engineer'=>'Engineer','vendor'=>'Vendor'
-];
+// Role display config — labels come from the DB-managed roles registry
+$roleLabel = [];
+foreach (getRoles() as $rn => $rrow) { $roleLabel[$rn] = $rrow['label']; }
 $roleBadge = [
     'admin'=>'danger','project_admin'=>'dark','supervisor-fiber'=>'primary',
     'supervisor-noc'=>'info','cx_supervisor'=>'purple','cx'=>'teal',
@@ -136,7 +130,7 @@ require __DIR__ . '/../includes/header.php';
     <h4 class="fw-bold mb-1">Team &amp; Vendors</h4>
     <p class="text-muted mb-0 small">Manage internal staff and external vendor partners.</p>
   </div>
-  <?php if (isAdmin()): ?>
+  <?php if (hasPermission('team.manage')): ?>
   <div class="d-flex gap-2 flex-wrap">
     <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addTeamModal">
       <i class="bi bi-people me-1"></i>Create Team
@@ -186,7 +180,7 @@ require __DIR__ . '/../includes/header.php';
       <div class="col-md-6 col-xl-4">
         <div class="member-card">
           <!-- Actions -->
-          <?php if (isAdmin()): ?>
+          <?php if (hasPermission('team.manage')): ?>
           <div class="member-actions">
             <button class="btn btn-sm btn-outline-secondary"
               onclick='openEditUser(<?= htmlspecialchars(json_encode([
@@ -265,7 +259,7 @@ require __DIR__ . '/../includes/header.php';
       <?php foreach ($vendors as $v): ?>
       <div class="col-md-6 col-xl-4">
         <div class="member-card">
-          <?php if (isAdmin()): ?>
+          <?php if (hasPermission('team.manage')): ?>
           <div class="member-actions">
             <button class="btn btn-sm btn-outline-secondary"
               onclick='openEditVendor(<?= htmlspecialchars(json_encode([
@@ -365,7 +359,7 @@ require __DIR__ . '/../includes/header.php';
             <input type="text" name="phone" class="form-control form-control-sm" placeholder="e.g. 08012345678"></div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Role</label>
             <select name="role" class="form-select form-select-sm">
-              <?php foreach(ROLES as $r): ?><option value="<?=$r?>"><?= $roleLabel[$r] ?? $r ?></option><?php endforeach; ?>
+              <?php foreach(roleKeys() as $r): ?><option value="<?=$r?>"><?= $roleLabel[$r] ?? $r ?></option><?php endforeach; ?>
             </select>
           </div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Primary Hub</label>
@@ -423,7 +417,7 @@ require __DIR__ . '/../includes/header.php';
             <input type="text" name="phone" id="eu_phone" class="form-control form-control-sm"></div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Role</label>
             <select name="role" id="eu_role" class="form-select form-select-sm">
-              <?php foreach(ROLES as $r): ?><option value="<?=$r?>"><?= $roleLabel[$r] ?? $r ?></option><?php endforeach; ?>
+              <?php foreach(roleKeys() as $r): ?><option value="<?=$r?>"><?= $roleLabel[$r] ?? $r ?></option><?php endforeach; ?>
             </select>
           </div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Status</label>
@@ -580,7 +574,7 @@ function openEditUser(u) {
   document.querySelectorAll('.eu-hub-check').forEach(cb => {
     cb.checked = u.hub_ids && u.hub_ids.includes(cb.value);
   });
-  new bootstrap.Modal(document.getElementById('editUserModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('editUserModal')).show();
 }
 
 function openEditVendor(v) {
@@ -591,7 +585,7 @@ function openEditVendor(v) {
   document.getElementById('ev_supervisor').value = v.supervisor_name || '';
   document.getElementById('ev_email').value      = v.email || '';
   document.getElementById('ev_phone').value      = v.phone || '';
-  new bootstrap.Modal(document.getElementById('editVendorModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('editVendorModal')).show();
 }
 </script>
 

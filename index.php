@@ -22,8 +22,31 @@ if ($page === 'login')  { require __DIR__ . '/pages/login.php'; exit; }
 if ($page === 'logout') { require __DIR__ . '/pages/logout.php'; exit; }
 if ($page === 'portal') { require __DIR__ . '/pages/portal.php'; exit; }
 
+// Public inventory QR-scan landing pages (no auth)
+if ($page === 'asset')   { require __DIR__ . '/pages/inventory/public-asset.php';   exit; }
+if ($page === 'cabinet') { require __DIR__ . '/pages/inventory/public-cabinet.php'; exit; }
+
 // Protected pages
 requireAuth();
+
+// ── Installations module dispatch (list + SLA analytics sub-page) ─────────────
+if ($page === 'installations') {
+    $sub = $segments[1] ?? '';
+    if ($sub === 'analytics') { require __DIR__ . '/pages/installations-analytics.php'; exit; }
+    require __DIR__ . '/pages/installations.php'; exit;
+}
+
+// ── Inventory module dispatch ────────────────────────────────────────────────
+if ($page === 'inventory') {
+    $sub = $segments[1] ?? 'dashboard';
+    $invPages = ['dashboard','assets','asset-form','items','item-form','cabinets',
+                 'categories','requests','request-new','movements','refill'];
+    if (in_array($sub, $invPages, true)) {
+        $f = __DIR__ . '/pages/inventory/' . $sub . '.php';
+        if (file_exists($f)) { require $f; exit; }
+    }
+    header('Location: /inventory'); exit;
+}
 
 $pages = [
     'dashboard'     => 'dashboard',
@@ -35,8 +58,8 @@ $pages = [
     'map'           => 'map',
     'team'          => 'team',
     'analytics'     => 'analytics',
+    'reports'       => 'reports',
     'admin'         => 'admin',
-    'installations' => 'installations',
 ];
 
 if (isset($pages[$page])) {

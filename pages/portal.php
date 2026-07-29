@@ -38,17 +38,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
         $ticketNum = generateTicketNumber('INC');
         $newId = newUuid();
         $_slaExpr = dbNowPlusInterval($hours, 'HOUR');
+
+        // Auto-assign to the appropriate supervisor (if a fault type was chosen)
+        $supervisor = $ftId ? getAutoAssignSupervisor($ftId) : null;
+        $assignedTo = $supervisor['id'] ?? null;
+
         dbRun(
-            "INSERT INTO tickets (id,ticket_number,description,priority,type,status,customer_id,customer_name,fault_type_id,sla_breach_at)
-             VALUES (?,?,?,?,?,?,?,?,?, {$_slaExpr})",
+            "INSERT INTO tickets (id,ticket_number,description,priority,type,status,customer_id,customer_name,fault_type_id,assigned_to,sla_breach_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
             [$newId, $ticketNum, trim($_POST['description']), $priority, 'fault', 'open',
-             $cust['id'], $cust['name'], $ftId]
+             $cust['id'], $cust['name'], $ftId, $assignedTo]
         );
-        $row = dbFetch("SELECT id, ticket_number FROM tickets WHERE id = ?", [$newId]);
+        $row = dbFetch("SELECT * FROM tickets WHERE id = ?", [$newId]);
         auditLog('create', 'ticket', $row['id']);
         $raiseSuccess = $row['ticket_number'];
 
-        // Notify supervisors and admins
+        // Confirmation email to the customer
+        emailCustomerTicketCreated($row, $cust);
+
+        // Email + notify the assigned supervisor
+        if ($supervisor) {
+            if (!empty($supervisor['email'])) emailTicketAssigned($row, $supervisor);
+            notifyUser(
+                $supervisor['id'],
+                "Customer Ticket Assigned — {$row['ticket_number']}",
+                "{$cust['name']}: " . substr(trim($_POST['description']), 0, 90),
+                "/ticket/{$row['id']}"
+            );
+        }
+
+        // Notify supervisors and admins in-app
         $priorityLabelsN = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         $pLabel = $priorityLabelsN[$priority] ?? $priority;
         notifyRoles(

@@ -64,7 +64,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     </button>
   </div>
 
-  <?php if (!in_array($role, ['vendor'])): ?>
+  <?php if ($role !== 'vendor'): ?>
   <div class="nav-section">Operations</div>
   <a href="/dashboard" class="nav-link <?= $activePath === 'dashboard' ? 'active' : '' ?>">
     <i class="bi bi-grid-1x2"></i> Dashboard
@@ -74,38 +74,101 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   </a>
   <?php endif; ?>
 
-  <?php if (in_array($role, ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx'])): ?>
+  <?php if (hasPermission('customers.view')): ?>
   <a href="/customers" class="nav-link <?= $activePath === 'customers' ? 'active' : '' ?>">
     <i class="bi bi-people"></i> Customers
   </a>
   <?php endif; ?>
 
-  <?php if (in_array($role, ['admin','project_admin','supervisor-fiber','supervisor-noc','engineer'])): ?>
+  <?php if (hasPermission('schedule.view') || hasPermission('map.view')): ?>
   <div class="nav-section">Field</div>
+  <?php if (hasPermission('schedule.view')): ?>
   <a href="/schedule" class="nav-link <?= $activePath === 'schedule' ? 'active' : '' ?>">
     <i class="bi bi-calendar3"></i> Schedule
   </a>
+  <?php endif; ?>
+  <?php if (hasPermission('map.view')): ?>
   <a href="/map" class="nav-link <?= $activePath === 'map' ? 'active' : '' ?>">
     <i class="bi bi-map"></i> Field Map
   </a>
   <?php endif; ?>
+  <?php endif; ?>
 
+  <?php if (hasPermission('installations.view')): ?>
   <div class="nav-section">Installations</div>
   <a href="/installations" class="nav-link <?= $activePath === 'installations' ? 'active' : '' ?>">
     <i class="bi bi-wifi"></i> Installations
   </a>
+  <?php endif; ?>
 
-  <?php if (in_array($role, ['admin','project_admin','supervisor-fiber','supervisor-noc'])): ?>
+  <?php
+  $_invAny = hasPermission('inventory.view') || hasPermission('inventory.assets.view')
+          || hasPermission('inventory.items.view') || hasPermission('inventory.cabinets.view')
+          || hasPermission('inventory.categories.view') || hasPermission('inventory.requests.view')
+          || hasPermission('inventory.requests.create') || hasPermission('inventory.movements.view');
+  $_invSub = ($activePath === 'inventory' || str_starts_with($activePath, 'inventory/')) ? explode('/', $activePath)[1] ?? 'dashboard' : '';
+  if ($_invAny):
+  ?>
+  <div class="nav-section">Inventory</div>
+  <?php if (hasPermission('inventory.view')): ?>
+  <a href="/inventory" class="nav-link <?= ($activePath === 'inventory') ? 'active' : '' ?>">
+    <i class="bi bi-box-seam"></i> Overview
+  </a>
+  <?php endif; ?>
+  <?php /* Assets — hidden from menu (commented out per request)
+  if (hasPermission('inventory.assets.view')): ?>
+  <a href="/inventory/assets" class="nav-link <?= in_array($_invSub,['assets','asset-form'])?'active':'' ?>">
+    <i class="bi bi-pc-display"></i> Assets
+  </a>
+  <?php endif; */ ?>
+  <?php if (hasPermission('inventory.items.view')): ?>
+  <a href="/inventory/items" class="nav-link <?= in_array($_invSub,['items','item-form','refill'])?'active':'' ?>">
+    <i class="bi bi-boxes"></i> Stock Items
+  </a>
+  <?php endif; ?>
+  <?php /* Cabinets — hidden from menu (commented out per request)
+  if (hasPermission('inventory.cabinets.view')): ?>
+  <a href="/inventory/cabinets" class="nav-link <?= $_invSub==='cabinets'?'active':'' ?>">
+    <i class="bi bi-archive"></i> Cabinets
+  </a>
+  <?php endif; */ ?>
+  <?php if (hasPermission('inventory.categories.view')): ?>
+  <a href="/inventory/categories" class="nav-link <?= $_invSub==='categories'?'active':'' ?>">
+    <i class="bi bi-tags"></i> Categories
+  </a>
+  <?php endif; ?>
+  <?php if (hasPermission('inventory.requests.view') || hasPermission('inventory.requests.create')): ?>
+  <a href="/inventory/requests" class="nav-link <?= in_array($_invSub,['requests','request-new'])?'active':'' ?>">
+    <i class="bi bi-clipboard-check"></i> Stock Requests
+  </a>
+  <?php endif; ?>
+  <?php if (hasPermission('inventory.movements.view')): ?>
+  <a href="/inventory/movements" class="nav-link <?= $_invSub==='movements'?'active':'' ?>">
+    <i class="bi bi-arrow-left-right"></i> Movements
+  </a>
+  <?php endif; ?>
+  <?php endif; ?>
+
+  <?php if (hasPermission('team.view') || hasPermission('analytics.view') || hasPermission('reports.view')): ?>
   <div class="nav-section">Team</div>
+  <?php if (hasPermission('team.view')): ?>
   <a href="/team" class="nav-link <?= $activePath === 'team' ? 'active' : '' ?>">
     <i class="bi bi-person-badge"></i> Team
   </a>
+  <?php endif; ?>
+  <?php if (hasPermission('analytics.view')): ?>
   <a href="/analytics" class="nav-link <?= $activePath === 'analytics' ? 'active' : '' ?>">
     <i class="bi bi-bar-chart-line"></i> Analytics
   </a>
   <?php endif; ?>
+  <?php if (hasPermission('reports.view')): ?>
+  <a href="/reports" class="nav-link <?= $activePath === 'reports' ? 'active' : '' ?>">
+    <i class="bi bi-file-earmark-bar-graph"></i> Reports
+  </a>
+  <?php endif; ?>
+  <?php endif; ?>
 
-  <?php if (in_array($role, ['admin','project_admin'])): ?>
+  <?php if (hasPermission('admin.access')): ?>
   <div class="nav-section">System</div>
   <a href="/admin" class="nav-link <?= $activePath === 'admin' ? 'active' : '' ?>">
     <i class="bi bi-gear"></i> Admin
@@ -127,6 +190,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
       <i class="bi bi-box-arrow-right"></i>
     </a>
   </div>
+  <div class="text-center" style="font-size:.65rem;color:rgba(255,255,255,.35);padding:.25rem 0 .5rem">v<?= htmlspecialchars(APP_VERSION) ?></div>
 </div>
 
 <!-- Main -->
@@ -159,7 +223,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
       </div>
     </div>
 
-    <?php if (!in_array($role, ['vendor','cx'])): ?>
+    <?php if (hasPermission('tickets.create')): ?>
     <a href="/create-ticket" class="btn btn-sm btn-primary">
       <i class="bi bi-plus-lg me-1"></i><span class="d-none d-sm-inline">New Ticket</span><span class="d-sm-none">+</span>
     </a>

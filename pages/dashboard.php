@@ -2,9 +2,20 @@
 require_once __DIR__ . '/../config.php';
 requireAuth();
 
+// Vendors have no dashboard widgets — send them to installations IF they can
+// access it (guard against a redirect loop if that permission was removed).
+if (currentUser()['role'] === 'vendor' && hasPermission('installations.view')) {
+    header('Location: /installations'); exit;
+}
+
+// ── Ticket visibility scope (department supervisors see only their dept) ──────
+[$_tScope, $_tParams] = ticketScopeSql('');
+$_tWhere = $_tScope ? "WHERE $_tScope" : '';          // for queries with no other WHERE
+$_tAnd   = $_tScope ? "AND ($_tScope)" : '';          // for queries that already have WHERE
+
 // ── Stat cards ────────────────────────────────────────────────────────────────
 $_tsDiff   = dbSecondsDiff('created_at', 'resolved_at');
-$_today    = DB_TYPE === 'pgsql' ? "resolved_at::date = CURRENT_DATE" : "DATE(resolved_at) = CURDATE()";
+$_today    = dbDate('resolved_at') . " = CURRENT_DATE";
 $_pending  = "status NOT IN ('closed','resolved','completed')";
 
 $stats = dbFetch("
@@ -13,23 +24,18 @@ $stats = dbFetch("
         SUM(CASE WHEN $_today THEN 1 ELSE 0 END)                                                         AS resolved_today,
         SUM(CASE WHEN sla_breach_at < NOW() AND status NOT IN ('closed','resolved') THEN 1 ELSE 0 END)  AS sla_breaches,
         ROUND(AVG(CASE WHEN resolved_at IS NOT NULL THEN {$_tsDiff}/3600.0 ELSE NULL END), 1)            AS mttr_hours
-    FROM tickets
-");
+    FROM tickets $_tWhere
+", $_tParams);
 
 $pendingInstalls = dbFetch("SELECT COUNT(*) AS cnt FROM installation_profiles WHERE status NOT IN ('completed','cancelled')");
 
 // ── 4-hour bucket chart: ticket influx vs resolved ────────────────────────────
 $_iv24 = dbNowMinusInterval(24, 'HOUR');
-if (DB_TYPE === 'pgsql') {
-    $_bucket_c = "FLOOR(EXTRACT(HOUR FROM created_at)/4)::int";
-    $_bucket_r = "FLOOR(EXTRACT(HOUR FROM resolved_at)/4)::int";
-} else {
-    $_bucket_c = "FLOOR(HOUR(created_at)/4)";
-    $_bucket_r = "FLOOR(HOUR(resolved_at)/4)";
-}
+$_bucket_c = "FLOOR(" . dbHour('created_at')  . "/4)";
+$_bucket_r = "FLOOR(" . dbHour('resolved_at') . "/4)";
 
-$influxRaw   = dbFetchAll("SELECT {$_bucket_c} AS bucket, COUNT(*) AS cnt FROM tickets WHERE created_at  >= {$_iv24} GROUP BY bucket ORDER BY bucket");
-$resolvedRaw = dbFetchAll("SELECT {$_bucket_r} AS bucket, COUNT(*) AS cnt FROM tickets WHERE resolved_at >= {$_iv24} GROUP BY bucket ORDER BY bucket");
+$influxRaw   = dbFetchAll("SELECT {$_bucket_c} AS bucket, COUNT(*) AS cnt FROM tickets WHERE created_at  >= {$_iv24} {$_tAnd} GROUP BY bucket ORDER BY bucket", $_tParams);
+$resolvedRaw = dbFetchAll("SELECT {$_bucket_r} AS bucket, COUNT(*) AS cnt FROM tickets WHERE resolved_at >= {$_iv24} {$_tAnd} GROUP BY bucket ORDER BY bucket", $_tParams);
 
 // Fill all 6 buckets (0-5 → 00-03, 04-07, 08-11, 12-15, 16-19, 20-23)
 $influxArr = $resolvedArr = array_fill(0, 6, 0);
@@ -51,14 +57,15 @@ $vendors = dbFetchAll("
 ");
 
 // ── Status & priority distribution ───────────────────────────────────────────
-$statusDist   = dbFetchAll("SELECT status, COUNT(*) AS cnt FROM tickets GROUP BY status ORDER BY cnt DESC");
-$priorityDist = dbFetchAll("SELECT priority, COUNT(*) AS cnt FROM tickets GROUP BY priority ORDER BY priority");
+$statusDist   = dbFetchAll("SELECT status, COUNT(*) AS cnt FROM tickets $_tWhere GROUP BY status ORDER BY cnt DESC", $_tParams);
+$priorityDist = dbFetchAll("SELECT priority, COUNT(*) AS cnt FROM tickets $_tWhere GROUP BY priority ORDER BY priority", $_tParams);
 
-// ── Recent tickets ────────────────────────────────────────────────────────────
+// ── Recent tickets (scoped to what the user may see) ──────────────────────────
+[$_recScope, $_recParams] = ticketScopeSql('');
 $recent = dbFetchAll("
     SELECT id, ticket_number, description, type, status, priority, customer_name, created_at
-    FROM tickets ORDER BY created_at DESC LIMIT 8
-");
+    FROM tickets " . ($_recScope ? "WHERE $_recScope " : '') . "ORDER BY created_at DESC LIMIT 8
+", $_recParams);
 
 $pageTitle = 'Dashboard';
 require __DIR__ . '/../includes/header.php';

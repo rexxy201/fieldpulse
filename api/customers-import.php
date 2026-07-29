@@ -15,7 +15,6 @@ if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
 
 $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-// Validate MIME type using the actual file content (not just extension)
 $allowedMimes = ['text/plain', 'text/csv', 'application/csv', 'application/json',
                  'application/vnd.ms-excel', 'text/x-csv', 'text/comma-separated-values'];
 $finfo    = new finfo(FILEINFO_MIME_TYPE);
@@ -34,12 +33,10 @@ try {
         $handle = fopen($file['tmp_name'], 'r');
         if (!$handle) throw new Exception('Cannot read file');
 
-        // Read header row
         $headers = fgetcsv($handle);
         if (!$headers) throw new Exception('Empty CSV file');
         $headers = array_map('trim', array_map('strtolower', $headers));
 
-        // Map expected column names
         $nameIdx   = array_search('name', $headers);
         $fnIdx     = array_search('first_name', $headers);
         $lnIdx     = array_search('last_name', $headers);
@@ -71,16 +68,11 @@ try {
             $exp    = $expIdx !== false ? (trim($data[$expIdx] ?? '') ?: null) : null;
 
             if (!$name) { $skipped++; continue; }
+            if (!$acct) { $errors[] = "Row {$row}: skipped — Account # is required."; $skipped++; continue; }
             if (!in_array($status, ['active','suspended','inactive'])) $status = 'active';
 
-            // Upsert by account_number if provided, otherwise by name+email
-            if ($acct) {
-                $existing = dbFetch("SELECT id FROM customers WHERE account_number=?", [$acct]);
-            } elseif ($email) {
-                $existing = dbFetch("SELECT id FROM customers WHERE email=?", [$email]);
-            } else {
-                $existing = null;
-            }
+            // Account number is the sole unique identifier
+            $existing = dbFetch("SELECT id FROM customers WHERE account_number=?", [$acct]);
 
             if ($existing) {
                 dbRun("UPDATE customers SET name=?,first_name=?,last_name=?,email=?,phone=?,address=?,mailing_city=?,mailing_state=?,plan=?,status=?,expiration=? WHERE id=?",
@@ -109,15 +101,11 @@ try {
             $status = trim($r['status'] ?? 'active');
 
             if (!$name) { $skipped++; continue; }
+            if (!$acct) { $errors[] = "Record " . ($i+1) . ": skipped — Account # is required."; $skipped++; continue; }
             if (!in_array($status, ['active','suspended','inactive'])) $status = 'active';
 
-            if ($acct) {
-                $existing = dbFetch("SELECT id FROM customers WHERE account_number=?", [$acct]);
-            } elseif ($email) {
-                $existing = dbFetch("SELECT id FROM customers WHERE email=?", [$email]);
-            } else {
-                $existing = null;
-            }
+            // Account number is the sole unique identifier
+            $existing = dbFetch("SELECT id FROM customers WHERE account_number=?", [$acct]);
 
             if ($existing) {
                 dbRun("UPDATE customers SET name=?,email=?,phone=?,address=?,plan=?,status=? WHERE id=?",

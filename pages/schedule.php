@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+requirePermission('schedule.view');
 
 // ── Week navigation ────────────────────────────────────────────────────────
 $weekParam = $_GET['week'] ?? null;
@@ -27,7 +28,7 @@ for ($i = 0; $i < 5; $i++) {
 
 // ── Data ─────────────────────────────────────────────────────────────────
 $technicians = dbFetchAll(
-    "SELECT * FROM users WHERE role IN ('engineer','vendor') ORDER BY name"
+    "SELECT * FROM users WHERE role IN ('engineer','noc_engineer','vendor') ORDER BY name"
 );
 $unassignedCount = (int)(dbFetch(
     "SELECT COUNT(*) AS c FROM tickets WHERE assigned_to IS NULL AND status NOT IN ('resolved','closed','pending_confirmation')"
@@ -36,14 +37,16 @@ $unassignedCount = (int)(dbFetch(
 // Tickets for this week (by created_at), with assignment info
 $weekStart = $monday->format('Y-m-d') . ' 00:00:00';
 $weekEnd   = $friday->format('Y-m-d') . ' 23:59:59';
+[$_schScope, $_schParams] = ticketScopeSql('t');
 $tickets = dbFetchAll(
     "SELECT t.*, u.name AS assigned_name
      FROM tickets t
      LEFT JOIN users u ON u.id = t.assigned_to
      WHERE t.status NOT IN ('closed')
-       AND t.created_at BETWEEN ? AND ?
+       AND t.created_at BETWEEN ? AND ?"
+     . ($_schScope ? " AND $_schScope" : '') . "
      ORDER BY t.created_at",
-    [$weekStart, $weekEnd]
+    array_merge([$weekStart, $weekEnd], $_schParams)
 );
 
 // Organise: $grid[$techId][$date] = [ticket, ...]
