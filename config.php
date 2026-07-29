@@ -526,7 +526,8 @@ define('ALL_PERMISSIONS', [
     'tickets.create'       => 'Create tickets',
     'tickets.update'       => 'Update tickets',
     'tickets.assign'       => 'Assign tickets to team members',
-    'tickets.close'        => 'Close / resolve tickets',
+    'tickets.resolve'      => 'Mark tickets resolved',
+    'tickets.close'        => 'Close tickets',
     'tickets.delete'       => 'Delete tickets',
     'customers.view'       => 'View customers',
     'customers.create'     => 'Create customers',
@@ -889,12 +890,12 @@ if (!$_rbacDone) {
         $_defaults = [
             'admin'            => array_keys(ALL_PERMISSIONS),
             'project_admin'    => array_keys(ALL_PERMISSIONS),
-            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view'],
-            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view'],
-            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.close','customers.view','customers.create','customers.update','analytics.view'],
+            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view'],
+            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view'],
+            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','analytics.view'],
             'cx'               => ['tickets.create','customers.view','customers.create'],
-            'engineer'         => ['tickets.update','tickets.close','schedule.view','map.view','installations.view'],
-            'noc_engineer'     => ['tickets.update','tickets.close','schedule.view','map.view'],
+            'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view'],
+            'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view'],
             'vendor'           => ['installations.view'],
         ];
         foreach ($_defaults as $_r => $_perms) {
@@ -966,7 +967,7 @@ if (!$_sv3) {
         // Insert noc_engineer into roles table
         try { dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES (?,?,?,?)", ['noc_engineer','NOC Engineer','noc',1]); } catch (\Throwable $e) {}
         // Seed permissions for noc_engineer
-        $_nocPerms = ['tickets.update','tickets.close','schedule.view','map.view'];
+        $_nocPerms = ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view'];
         foreach ($_nocPerms as $_p) {
             try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),'noc_engineer',$_p]); } catch (\Throwable $e) {}
         }
@@ -1146,6 +1147,25 @@ if (!$_sv6) {
         dbUpsertConfig('schema_v6_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v6 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v7: split tickets.close into tickets.resolve + tickets.close ──────
+// tickets.close used to gate both "mark resolved" and "mark closed". Any role
+// that already had tickets.close keeps working exactly as before by also
+// getting tickets.resolve here — admins can then separate them per-role from
+// Admin → Permissions.
+$_k = dbKey();
+$_sv7 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v7_migrated'");
+if (!$_sv7) {
+    try {
+        $_closeRoles = dbFetchAll("SELECT DISTINCT role FROM role_permissions WHERE permission = 'tickets.close'");
+        foreach ($_closeRoles as $_cr) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'tickets.resolve')", [newUuid(),$_cr['role']]); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v7_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v7 migration error: ' . $e->getMessage());
     }
 }
 

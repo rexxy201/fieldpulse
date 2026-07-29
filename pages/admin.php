@@ -803,7 +803,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               <tbody>
                 <?php
                 $groups = [
-                    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.close','tickets.delete'],
+                    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
                     'Customers'     => ['customers.view','customers.create','customers.update','customers.delete'],
                     'Installations' => ['installations.view','installations.create','installations.update'],
                     'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view'],

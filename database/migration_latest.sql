@@ -76,3 +76,11 @@ ALTER TABLE `installation_profiles`
   ADD COLUMN IF NOT EXISTS `installer`         VARCHAR(150)  DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS `installation_cost` DECIMAL(12,2) DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS `field_marketer`    VARCHAR(150)  DEFAULT NULL;
+
+-- 10. Split tickets.close into tickets.resolve + tickets.close (each assignable
+--     separately). Any role that already had tickets.close also gets
+--     tickets.resolve so nobody loses capability — separate them afterward
+--     from Admin -> Permissions.
+INSERT IGNORE INTO `role_permissions` (`id`, `role`, `permission`)
+SELECT UUID(), rp.role, 'tickets.resolve'
+FROM (SELECT DISTINCT role FROM `role_permissions` WHERE permission = 'tickets.close') rp;

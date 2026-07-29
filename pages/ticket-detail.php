@@ -21,9 +21,10 @@ $comments  = dbFetchAll("SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER
 $engineers = dbFetchAll("SELECT id,name,role FROM users WHERE role IN ('engineer','noc_engineer','supervisor-fiber','supervisor-noc','cx_supervisor') ORDER BY name");
 $user      = currentUser();
 $role      = $user['role'];
-$canEdit   = hasPermission('tickets.update');
-$canAssign = hasPermission('tickets.assign');
-$canClose  = hasPermission('tickets.close');
+$canEdit    = hasPermission('tickets.update');
+$canAssign  = hasPermission('tickets.assign');
+$canResolve = hasPermission('tickets.resolve');
+$canClose   = hasPermission('tickets.close');
 
 if (method() === 'POST') {
     verifyCsrf();
@@ -43,7 +44,13 @@ if (method() === 'POST') {
         auditLog('escalate','ticket',$ticketId);
     }
 
-    if ($action === 'update' && ($canEdit || $canClose || $canAssign)) {
+    if ($action === 'update' && ($canEdit || $canResolve || $canClose || $canAssign)) {
+        // Server-side enforcement of the resolve/close split — the status dropdown
+        // only offers options the user is permitted to set, but a direct POST must
+        // not be able to bypass that, so re-check here regardless of what was hidden.
+        if (($b['status'] ?? null) === 'resolved' && !$canResolve) unset($b['status']);
+        if (($b['status'] ?? null) === 'closed'   && !$canClose)   unset($b['status']);
+
         $newStatus  = $b['status'] ?? $ticket['status'];
         $isResolving = in_array($newStatus, ['resolved','closed']) && !in_array($ticket['status'], ['resolved','closed']);
 
@@ -266,7 +273,7 @@ require __DIR__ . '/../includes/header.php';
       </div>
     </div>
 
-    <?php if ($canEdit || $canClose || $canAssign): ?>
+    <?php if ($canEdit || $canResolve || $canClose || $canAssign): ?>
     <div class="card-section">
       <div class="card-header">Update Ticket</div>
       <form method="POST" class="p-3 d-flex flex-column gap-2" id="updateForm">
@@ -277,13 +284,14 @@ require __DIR__ . '/../includes/header.php';
         <input type="hidden" name="roca_observation" id="hObservation" value="<?= htmlspecialchars($ticket['roca_observation'] ?? '') ?>">
         <input type="hidden" name="roca_corrective_action" id="hCorrectiveAction" value="<?= htmlspecialchars($ticket['roca_corrective_action'] ?? '') ?>">
 
-        <?php if ($canEdit || $canClose): ?>
+        <?php if ($canEdit || $canResolve || $canClose): ?>
         <div>
           <label class="form-label small fw-semibold mb-1">Status</label>
           <select name="status" class="form-select form-select-sm" id="statusSelect">
             <?php
             $statusOpts = ['open','in_progress','pending_confirmation'];
-            if ($canClose) { $statusOpts[] = 'resolved'; $statusOpts[] = 'closed'; }
+            if ($canResolve) { $statusOpts[] = 'resolved'; }
+            if ($canClose)   { $statusOpts[] = 'closed'; }
             foreach ($statusOpts as $s):
             ?>
             <option value="<?=$s?>" <?=$ticket['status']===$s?'selected':''?>><?=str_replace('_',' ',ucfirst($s))?></option>

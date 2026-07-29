@@ -27,6 +27,10 @@ if ($id === 'bulk-update' && method() === 'POST') {
     $b = getBody();
     $ids = $b['ids'] ?? [];
     if (empty($ids)) jsonResponse(['error' => 'No IDs'], 400);
+    // Resolve/close are separately permissioned — block a bulk status change to
+    // either if the caller doesn't hold the specific permission for it.
+    if (($b['status'] ?? '') === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
+    if (($b['status'] ?? '') === 'closed'   && !hasPermission('tickets.close'))   jsonResponse(['error' => 'Forbidden — missing tickets.close'], 403);
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     if (!empty($b['status']))     dbRun("UPDATE tickets SET status=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['status']], $ids));
     if (!empty($b['assignedTo'])) dbRun("UPDATE tickets SET assigned_to=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['assignedTo']], $ids));
@@ -58,6 +62,10 @@ if ($id && method() === 'GET') {
 // ─── Ticket PATCH
 if ($id && method() === 'PATCH') {
     $b = getBody();
+    // Resolve/close are separately permissioned — a caller without the specific
+    // permission can't set the ticket to that status via the API either.
+    if (($b['status'] ?? null) === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
+    if (($b['status'] ?? null) === 'closed'   && !hasPermission('tickets.close'))   jsonResponse(['error' => 'Forbidden — missing tickets.close'], 403);
     $allowed = ['status','priority','assigned_to','description','olt','roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'];
     $sets = []; $vals = [];
     foreach ($allowed as $col) {
