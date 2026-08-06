@@ -357,7 +357,9 @@ function signupDb(): ?PDO {
 }
 
 /**
- * Pulls paid signups from the serviceorder app's `submissions` table into
+ * Pulls paid/approved signups (status IN ('paid','approved') — approved
+ * implies paid, since that's the next stage after payment in the signup
+ * app's workflow) from the serviceorder app's `submissions` table into
  * installation_profiles, skipping any already imported (tracked via
  * signup_submission_id). payment_confirmed_at is set from the signup app's
  * paid_at (the moment Paystack payment was verified there), which starts the
@@ -376,7 +378,7 @@ function syncInstallationsFromSignup(): array {
     }
 
     try {
-        $rows = $sdb->query("SELECT * FROM submissions WHERE status = 'paid' AND paid_at IS NOT NULL ORDER BY paid_at ASC")
+        $rows = $sdb->query("SELECT * FROM submissions WHERE status IN ('paid','approved') AND paid_at IS NOT NULL ORDER BY paid_at ASC")
                     ->fetchAll(PDO::FETCH_ASSOC);
     } catch (\Throwable $e) {
         return ['imported' => 0, 'skipped' => 0, 'errors' => ['Could not read submissions: ' . $e->getMessage()]];
