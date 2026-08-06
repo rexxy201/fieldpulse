@@ -5,7 +5,7 @@ declare(strict_types=1);
 // Bump this on every release. Auto-recorded into app_config (with a deploy
 // timestamp) below once the DB connection is up, so it's queryable/reportable
 // and Admin can show "last deployed" without a manual migration each time.
-define('APP_VERSION', '2.4');
+define('APP_VERSION', '2.5');
 
 // ─── Composer autoloader ─────────────────────────────────────────────────────
 $_autoload = __DIR__ . '/vendor/autoload.php';
@@ -971,6 +971,73 @@ function emailCustomerTicketResolved(array $ticket, array $customer): void {
     }
 }
 
+// ─── Installation vendor emails ────────────────────────────────────────────────
+function emailVendorInstallationAssigned(array $profile, array $vendor, bool $isReassignment = false): void {
+    try {
+        if (empty($vendor['email'])) return;
+        $name = htmlspecialchars($profile['name'] ?? '');
+        $addr = htmlspecialchars($profile['address'] ?? '—');
+        $plan = htmlspecialchars($profile['plan'] ?? '—');
+        $due  = !empty($profile['sla_due_at']) ? date('d M Y', strtotime($profile['sla_due_at'])) : null;
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        $verb = $isReassignment ? 'reassigned to you' : 'assigned to you';
+        sendEmail(
+            $vendor['email'], $vendor['name'] ?? 'Vendor',
+            ($isReassignment ? 'Installation Reassigned to You' : 'New Installation Assigned to You') . " — {$name}",
+            "<p>Hi " . htmlspecialchars($vendor['name'] ?? 'there') . ",</p>
+             <p>An installation job for <strong>{$name}</strong> has been {$verb}.</p>
+             <table style='border-collapse:collapse;font-size:.9rem'>
+               <tr><td style='padding:4px 10px;background:#f8fafc;font-weight:600'>Customer</td><td style='padding:4px 10px'>{$name}</td></tr>
+               <tr><td style='padding:4px 10px;background:#f8fafc;font-weight:600'>Address</td><td style='padding:4px 10px'>{$addr}</td></tr>
+               <tr><td style='padding:4px 10px;background:#f8fafc;font-weight:600'>Plan</td><td style='padding:4px 10px'>{$plan}</td></tr>
+               " . ($due ? "<tr><td style='padding:4px 10px;background:#f8fafc;font-weight:600'>SLA Due</td><td style='padding:4px 10px'>{$due}</td></tr>" : '') . "
+             </table>
+             <p><a href='{$link}'>View Installation →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailVendorInstallationAssigned error: ' . $e->getMessage());
+    }
+}
+
+function emailVendorInstallationSlaWarning(array $profile, array $vendor): void {
+    try {
+        if (empty($vendor['email'])) return;
+        $name = htmlspecialchars($profile['name'] ?? '');
+        $due  = date('d M Y', strtotime($profile['sla_due_at']));
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        sendEmail(
+            $vendor['email'], $vendor['name'] ?? 'Vendor',
+            "⚠ Installation SLA Due Soon — {$name}",
+            "<p style='color:#d97706;font-weight:700'>⚠ SLA Due Soon</p>
+             <p>Hi " . htmlspecialchars($vendor['name'] ?? 'there') . ", the installation for <strong>{$name}</strong> is due by <strong>{$due}</strong> and hasn't been completed yet.</p>
+             <p><a href='{$link}'>View Installation →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailVendorInstallationSlaWarning error: ' . $e->getMessage());
+    }
+}
+
+function emailVendorInstallationSlaBreached(array $profile, array $vendor): void {
+    try {
+        if (empty($vendor['email'])) return;
+        $name = htmlspecialchars($profile['name'] ?? '');
+        $due  = date('d M Y', strtotime($profile['sla_due_at']));
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        sendEmail(
+            $vendor['email'], $vendor['name'] ?? 'Vendor',
+            "🚨 Installation SLA Breached — {$name}",
+            "<p style='color:#dc2626;font-weight:700'>🚨 SLA Breached</p>
+             <p>Hi " . htmlspecialchars($vendor['name'] ?? 'there') . ", the installation for <strong>{$name}</strong> was due by <strong>{$due}</strong> and is now overdue. Please complete it or update its status as soon as possible.</p>
+             <p><a href='{$link}'>View Installation →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('emailVendorInstallationSlaBreached error: ' . $e->getMessage());
+    }
+}
+
 // ─── Ensure app_config.key has a UNIQUE constraint (required for ON CONFLICT) ─
 if (DB_TYPE === 'pgsql') {
     try {
@@ -1335,6 +1402,24 @@ if (!$_sv9) {
         dbUpsertConfig('schema_v9_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v9 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v10: installation SLA email tracking (avoids duplicate warn/breach emails) ─
+$_k = dbKey();
+$_sv10 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v10_migrated'");
+if (!$_sv10) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN sla_warned_at TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN sla_breached_notified_at TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `sla_warned_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `sla_breached_notified_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v10_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v10 migration error: ' . $e->getMessage());
     }
 }
 

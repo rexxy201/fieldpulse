@@ -95,3 +95,8 @@ ALTER TABLE `users`
 ALTER TABLE `installation_profiles`
   ADD COLUMN IF NOT EXISTS `signup_submission_id` VARCHAR(36) DEFAULT NULL,
   ADD UNIQUE KEY IF NOT EXISTS `idx_install_signup_submission` (`signup_submission_id`);
+
+-- 13. Installation SLA email tracking (avoids duplicate warn/breach emails to vendors)
+ALTER TABLE `installation_profiles`
+  ADD COLUMN IF NOT EXISTS `sla_warned_at`            DATETIME DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS `sla_breached_notified_at` DATETIME DEFAULT NULL;

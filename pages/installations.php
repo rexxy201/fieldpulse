@@ -51,6 +51,14 @@ if (method() === 'POST') {
              $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['pop']??null,$b['connection_status']?:null,$b['connection_date']?:null,$b['installer']??null,
              $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,$b['field_marketer']??null]);
         $msg = 'Profile created.';
+
+        if (!empty($b['vendor_id'])) {
+            $vendor = dbFetch("SELECT name,email FROM vendors WHERE id=?", [$b['vendor_id']]);
+            if ($vendor) {
+                $newProfile = dbFetch("SELECT * FROM installation_profiles WHERE id=?", [$newPid]);
+                emailVendorInstallationAssigned($newProfile, $vendor, false);
+            }
+        }
     }
     if ($action === 'update' && $canEdit) {
         $pid = $b['profile_id'] ?? '';
@@ -138,7 +146,9 @@ if (method() === 'POST') {
         if ($pid) {
             $current = dbFetch("SELECT vendor_id FROM installation_profiles WHERE id=?", [$pid]);
             $oldVendorId = $current['vendor_id'] ?? null;
-            dbRun("UPDATE installation_profiles SET vendor_id=?, updated_at=NOW() WHERE id=?", [$newVendorId ?: null, $pid]);
+            // Reset SLA notification flags on reassignment — the due date itself doesn't
+            // move, but a new vendor who hasn't been warned/notified yet still should be.
+            dbRun("UPDATE installation_profiles SET vendor_id=?, sla_warned_at=NULL, sla_breached_notified_at=NULL, updated_at=NOW() WHERE id=?", [$newVendorId ?: null, $pid]);
             dbRun("INSERT INTO installation_vendor_history (id,profile_id,old_vendor_id,new_vendor_id,reason,changed_by,changed_by_name) VALUES (?,?,?,?,?,?,?)",
                 [newUuid(),$pid,$oldVendorId,$newVendorId ?: null,$reason,$user['id'],$user['name']]);
             $oldName = $oldVendorId ? (dbFetch("SELECT name FROM vendors WHERE id=?",[$oldVendorId])['name'] ?? 'Unknown') : 'Unassigned';
@@ -146,6 +156,14 @@ if (method() === 'POST') {
             $cid = newUuid();
             dbRun("INSERT INTO installation_comments (id,profile_id,user_id,user_name,user_role,content,type) VALUES (?,?,?,?,?,?,?)",
                 [$cid,$pid,$user['id'],$user['name'],$role,"Vendor reassigned from {$oldName} to {$newName}".($reason?": {$reason}":'.'),'vendor_reassigned']);
+
+            if ($newVendorId) {
+                $newVendorRow = dbFetch("SELECT name,email FROM vendors WHERE id=?", [$newVendorId]);
+                if ($newVendorRow) {
+                    $updatedProfile = dbFetch("SELECT * FROM installation_profiles WHERE id=?", [$pid]);
+                    emailVendorInstallationAssigned($updatedProfile, $newVendorRow, true);
+                }
+            }
             $msg = 'Vendor reassigned.';
         }
     }

@@ -46,8 +46,18 @@ if ($id && method() === 'PATCH') {
 
     // Log vendor reassignment
     if (array_key_exists('vendor_id', $b) && $existing && $b['vendor_id'] !== $existing['vendor_id']) {
+        // Due date doesn't move on reassignment, but a new vendor who hasn't been
+        // warned/notified yet still should be.
+        dbRun("UPDATE installation_profiles SET sla_warned_at=NULL, sla_breached_notified_at=NULL WHERE id=?", [$id]);
         dbRun("INSERT INTO installation_vendor_history (id,profile_id,old_vendor_id,new_vendor_id,reason,changed_by,changed_by_name) VALUES (?,?,?,?,?,?,?)",
             [newUuid(),$id,$existing['vendor_id'],$b['vendor_id']?:null,$b['reassignReason']??'',$user['id'],$user['name']]);
+        if (!empty($b['vendor_id'])) {
+            $newVendorRow = dbFetch("SELECT name,email FROM vendors WHERE id=?", [$b['vendor_id']]);
+            if ($newVendorRow) {
+                $updatedProfile = dbFetch("SELECT * FROM installation_profiles WHERE id=?", [$id]);
+                emailVendorInstallationAssigned($updatedProfile, $newVendorRow, !empty($existing['vendor_id']));
+            }
+        }
     }
 
     jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]));
@@ -80,5 +90,12 @@ if (method() === 'POST') {
          $b['amountPaid']??null,$b['networkUserId']??null,$b['routerType']??null,$b['estate']??null,$b['pop']??null,
          $b['connectionStatus']??null,$b['connectionDate']??null,$b['installer']??null,$b['installationCost']??null,$b['fieldMarketer']??null]
     );
+    if (!empty($b['vendorId'])) {
+        $vendorRow = dbFetch("SELECT name,email FROM vendors WHERE id=?", [$b['vendorId']]);
+        if ($vendorRow) {
+            $newProfile = dbFetch("SELECT * FROM installation_profiles WHERE id=?", [$newId]);
+            emailVendorInstallationAssigned($newProfile, $vendorRow, false);
+        }
+    }
     jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$newId]),201);
 }
