@@ -163,7 +163,7 @@ if (method() === 'POST') {
         dbRun("DELETE FROM installation_profiles WHERE id=?",[$b['profile_id']??'']);
         $msg = 'Profile deleted.';
     }
-    header('Location: /installations' . ($b['profile_id'] ? '#profile-'.$b['profile_id'] : '')); exit;
+    header('Location: /installations' . (!empty($b['profile_id']) ? '#profile-'.$b['profile_id'] : '')); exit;
 }
 
 $search  = $_GET['search'] ?? '';
