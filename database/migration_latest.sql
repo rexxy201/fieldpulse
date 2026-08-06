@@ -89,3 +89,9 @@ FROM (SELECT DISTINCT role FROM `role_permissions` WHERE permission = 'tickets.c
 ALTER TABLE `users`
   ADD COLUMN IF NOT EXISTS `failed_login_attempts` INT NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS `locked_until`           DATETIME DEFAULT NULL;
+
+-- 12. Signup-app import tracking (prevents double-importing the same
+--     serviceorder.mangonetonline.com submission)
+ALTER TABLE `installation_profiles`
+  ADD COLUMN IF NOT EXISTS `signup_submission_id` VARCHAR(36) DEFAULT NULL,
+  ADD UNIQUE KEY IF NOT EXISTS `idx_install_signup_submission` (`signup_submission_id`);

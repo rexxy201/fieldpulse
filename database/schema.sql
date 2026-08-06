@@ -262,7 +262,9 @@ CREATE TABLE IF NOT EXISTS `installation_profiles` (
   `installer`            VARCHAR(150)  DEFAULT NULL,
   `installation_cost`    DECIMAL(12,2) DEFAULT NULL,
   `field_marketer`       VARCHAR(150)  DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  `signup_submission_id` VARCHAR(36)   DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_install_signup_submission` (`signup_submission_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ─────────────────────────────────────────

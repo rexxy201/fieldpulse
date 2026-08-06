@@ -122,6 +122,15 @@ if (method() === 'POST') {
             $msg = 'Payment confirmation recorded.';
         }
     }
+    if ($action === 'sync_signups' && $canEdit) {
+        $result = syncInstallationsFromSignup();
+        if ($result['errors']) {
+            $msg = "Synced {$result['imported']} new installation(s), skipped {$result['skipped']} already imported. " . count($result['errors']) . ' error(s) — check the PHP error log.';
+            foreach ($result['errors'] as $_e) { error_log('Signup sync: ' . $_e); }
+        } else {
+            $msg = "Synced {$result['imported']} new installation(s) from signups. {$result['skipped']} were already imported.";
+        }
+    }
     if ($action === 'reassign_vendor' && $canEdit) {
         $pid = $b['profile_id'] ?? '';
         $newVendorId = $b['new_vendor_id'] ?? '';
@@ -214,6 +223,13 @@ require __DIR__ . '/../includes/header.php';
   <a href="/installations/analytics" class="btn btn-outline-primary btn-sm">
     <i class="bi bi-graph-up-arrow me-1"></i>SLA Analytics
   </a>
+  <form method="POST" class="d-inline">
+    <input type="hidden" name="_action" value="sync_signups">
+    <?= csrfField() ?>
+    <button type="submit" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-repeat me-1"></i>Sync Signups
+    </button>
+  </form>
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addProfileModal">
     <i class="bi bi-plus-lg me-1"></i>New Profile
   </button>
@@ -231,7 +247,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if (!$profiles): ?><tr><td colspan="10" class="text-center text-muted py-4">No profiles found</td></tr><?php endif; ?>
         <?php foreach ($profiles as $p): $sla = installationSlaBadge($p); $daysPending = installationDaysPending($p); ?>
         <tr id="profile-<?= $p['id'] ?>">
-          <td class="fw-semibold"><?= htmlspecialchars($p['name']) ?></td>
+          <td class="fw-semibold"><?= htmlspecialchars($p['name']) ?><?php if (!empty($p['signup_submission_id'])): ?> <i class="bi bi-arrow-repeat text-muted" title="Auto-imported from the signup site"></i><?php endif; ?></td>
           <td class="small"><?= htmlspecialchars($p['phone']??'') ?></td>
           <td class="small"><?= htmlspecialchars($p['plan']??'') ?></td>
           <td><span class="badge bg-<?= $STATUS_COLORS[$p['status']]??'secondary' ?>"><?= $STATUS_LABELS[$p['status']]??$p['status'] ?></span></td>
@@ -267,6 +283,9 @@ require __DIR__ . '/../includes/header.php';
   <div class="card-header d-flex justify-content-between align-items-center">
     <span><i class="bi bi-chat-left-text me-1 text-primary"></i><?= htmlspecialchars($detailProfile['name']) ?>
       <span class="badge bg-<?= $STATUS_COLORS[$detailProfile['status']]??'secondary' ?> ms-1"><?= $STATUS_LABELS[$detailProfile['status']]??$detailProfile['status'] ?></span>
+      <?php if (!empty($detailProfile['signup_submission_id'])): ?>
+      <span class="badge bg-light text-dark border ms-1" title="Auto-imported from the signup site"><i class="bi bi-arrow-repeat me-1"></i>From Signup</span>
+      <?php endif; ?>
     </span>
     <a href="/installations" class="btn btn-sm btn-outline-secondary">Close</a>
   </div>

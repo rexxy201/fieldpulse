@@ -323,6 +323,93 @@ function installationDaysPending(array $p): ?int {
     return $start->diff($end)->days;
 }
 
+// ─── Signup-app integration (serviceorder.mangonetonline.com) ─────────────────
+// Same cPanel account / MySQL server as this app. Set SIGNUP_DB_NAME to the
+// signup app's real database name (cPanel → MySQL Databases), and either grant
+// this app's own DB_USER access to that database (cPanel → MySQL Databases →
+// Add User to Database, SELECT privilege is enough), or set SIGNUP_DB_USER /
+// SIGNUP_DB_PASS below to a separate credential instead.
+define('SIGNUP_DB_NAME', 'CHANGE_ME_signup_db_name');
+define('SIGNUP_DB_USER', DB_USER);
+define('SIGNUP_DB_PASS', DB_PASS);
+
+/** Lazily connects to the signup app's database. Returns null if not configured or unreachable. */
+function signupDb(): ?PDO {
+    static $pdo = null;
+    static $tried = false;
+    if ($pdo !== null) return $pdo;
+    if ($tried) return null;
+    $tried = true;
+    if (DB_TYPE !== 'mysql' || SIGNUP_DB_NAME === 'CHANGE_ME_signup_db_name') return null;
+    try {
+        $pdo = new PDO(
+            sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', DB_HOST, SIGNUP_DB_NAME),
+            SIGNUP_DB_USER, SIGNUP_DB_PASS,
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
+        );
+    } catch (\Throwable $e) {
+        error_log('Signup DB connection error: ' . $e->getMessage());
+        return null;
+    }
+    return $pdo;
+}
+
+/**
+ * Pulls paid signups from the serviceorder app's `submissions` table into
+ * installation_profiles, skipping any already imported (tracked via
+ * signup_submission_id). payment_confirmed_at is set from the signup app's
+ * paid_at (the moment Paystack payment was verified there), which starts the
+ * installation SLA clock automatically — no manual "Confirm Payment" step.
+ *
+ * Deliberately does NOT import nin/passport_photo/govt_id/proof_of_address —
+ * those are KYC documents with no operational use in FieldPulse, and copying
+ * them would duplicate sensitive data across two systems unnecessarily.
+ *
+ * Returns ['imported'=>int, 'skipped'=>int, 'errors'=>string[]].
+ */
+function syncInstallationsFromSignup(): array {
+    $sdb = signupDb();
+    if (!$sdb) {
+        return ['imported' => 0, 'skipped' => 0, 'errors' => ['Signup database not configured — set SIGNUP_DB_NAME in config.php.']];
+    }
+
+    try {
+        $rows = $sdb->query("SELECT * FROM submissions WHERE status = 'paid' AND paid_at IS NOT NULL ORDER BY paid_at ASC")
+                    ->fetchAll(PDO::FETCH_ASSOC);
+    } catch (\Throwable $e) {
+        return ['imported' => 0, 'skipped' => 0, 'errors' => ['Could not read submissions: ' . $e->getMessage()]];
+    }
+
+    $imported = 0; $skipped = 0; $errors = [];
+    foreach ($rows as $row) {
+        if (dbFetch("SELECT id FROM installation_profiles WHERE signup_submission_id = ?", [$row['id']])) {
+            $skipped++;
+            continue;
+        }
+
+        $name    = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
+        $address = implode(', ', array_filter([$row['address'] ?? '', $row['city'] ?? '', $row['state'] ?? '']));
+        $paidAt  = $row['paid_at'];
+        $slaDue  = addWorkingDays($paidAt, INSTALLATION_SLA_WORKING_DAYS);
+
+        try {
+            dbRun(
+                "INSERT INTO installation_profiles
+                    (id,name,phone,email,address,plan,wifi_username,wifi_password,notes,status,
+                     payment_confirmed_at,sla_due_at,signup_submission_id)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [newUuid(), $name, $row['phone'] ?? '', $row['email'] ?? '', $address, $row['plan'] ?? '',
+                 $row['wifi_ssid'] ?? '', $row['wifi_password'] ?? '', $row['notes'] ?? '', 'pending',
+                 $paidAt, $slaDue, $row['id']]
+            );
+            $imported++;
+        } catch (\Throwable $e) {
+            $errors[] = "Submission {$row['id']}: " . $e->getMessage();
+        }
+    }
+    return ['imported' => $imported, 'skipped' => $skipped, 'errors' => $errors];
+}
+
 /**
  * Execute an INSERT that silently skips on unique-constraint violation.
  * MySQL: INSERT IGNORE INTO …  |  PostgreSQL: INSERT INTO … ON CONFLICT DO NOTHING
@@ -1226,6 +1313,24 @@ if (!$_sv8) {
         dbUpsertConfig('schema_v8_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v8 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v9: signup-app import tracking ─────────────────────────────────────
+$_k = dbKey();
+$_sv9 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v9_migrated'");
+if (!$_sv9) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN signup_submission_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("CREATE UNIQUE INDEX idx_install_signup_submission ON installation_profiles (signup_submission_id)"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `signup_submission_id` VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD UNIQUE KEY `idx_install_signup_submission` (`signup_submission_id`)"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v9_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v9 migration error: ' . $e->getMessage());
     }
 }
 
