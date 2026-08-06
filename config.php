@@ -5,11 +5,14 @@ declare(strict_types=1);
 // Bump this on every release. Auto-recorded into app_config (with a deploy
 // timestamp) below once the DB connection is up, so it's queryable/reportable
 // and Admin can show "last deployed" without a manual migration each time.
-define('APP_VERSION', '2.5');
+define('APP_VERSION', '2.6');
 
 // ─── Composer autoloader ─────────────────────────────────────────────────────
 $_autoload = __DIR__ . '/vendor/autoload.php';
 if (file_exists($_autoload)) require_once $_autoload;
+
+// ─── AI helper (OpenAI wrapper) ────────────────────────────────────────────────
+require_once __DIR__ . '/includes/ai.php';
 
 // ─── Database ───────────────────────────────────────────────────────────────
 // Auto-detects environment:

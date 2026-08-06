@@ -267,8 +267,16 @@ require __DIR__ . '/../includes/header.php';
 
       <div class="mb-4">
         <label class="form-label fw-semibold">Description <span class="text-danger">*</span></label>
-        <textarea name="description" class="form-control" rows="4"
+        <textarea name="description" id="descriptionInput" class="form-control" rows="4"
           placeholder="Detailed description of the issue…" required></textarea>
+        <?php if (aiEnabled()): ?>
+        <div class="mt-2 d-flex align-items-center gap-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="aiSuggestBtn" onclick="aiSuggestTicket()">
+            <i class="bi bi-stars me-1"></i>AI Suggest Fault Type &amp; Priority
+          </button>
+          <span class="small text-muted" id="aiSuggestStatus"></span>
+        </div>
+        <?php endif; ?>
       </div>
 
       <!-- Auto-routing info box -->
@@ -309,6 +317,7 @@ const scopeHints = {
 const ftSelect = document.getElementById('fault_type_id');
 let selectedCustHub = '';
 let currentScope = 'customer';
+let ftTomSelect = null; // set once TomSelect initializes fault_type_id below
 
 function updateRouteInfo() {
   const opt  = ftSelect.options[ftSelect.selectedIndex];
@@ -364,12 +373,52 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     updateRouteInfo();
   });
-  new TomSelect('#fault_type_id', {
+  ftTomSelect = new TomSelect('#fault_type_id', {
     placeholder: '— Select fault type —',
     create: false,
     onItemAdd: function() { updateRouteInfo(); }
   });
 });
+
+// ── AI ticket triage ─────────────────────────────────────────────────────
+function aiSuggestTicket() {
+  const desc = document.getElementById('descriptionInput').value.trim();
+  const btn = document.getElementById('aiSuggestBtn');
+  const status = document.getElementById('aiSuggestStatus');
+  if (desc.length < 8) {
+    status.textContent = 'Write a bit more detail first.';
+    status.className = 'small text-warning';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Thinking…';
+  status.className = 'small text-muted';
+
+  fetch('/api/ai-suggest-ticket', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description: desc })
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) {
+        status.textContent = data.error || 'Could not get a suggestion.';
+        status.className = 'small text-danger';
+        return;
+      }
+      if (ftTomSelect) ftTomSelect.setValue(data.faultTypeId);
+      const prioSelect = document.querySelector('select[name="priority"]');
+      if (prioSelect) prioSelect.value = data.priority;
+      status.innerHTML = '<i class="bi bi-check-circle text-success me-1"></i>' +
+        (data.reasoning ? data.reasoning : 'Suggestion applied — review before submitting.');
+      status.className = 'small text-success';
+    })
+    .catch(() => {
+      status.textContent = 'Request failed — check your connection and try again.';
+      status.className = 'small text-danger';
+    })
+    .finally(() => { btn.disabled = false; });
+}
 </script>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>

@@ -112,6 +112,16 @@ if (method() === 'POST') {
         dbUpsertConfig('slaWarnHours', (string)(int)($b['slaWarnHours'] ?? 2));
         $msg = 'SLA warning timing saved.';
     }
+    if ($action === 'save_ai_settings') {
+        dbUpsertConfig('aiAssistantEnabled', !empty($b['aiAssistantEnabled']) ? '1' : '0');
+        dbUpsertConfig('openaiModel', trim($b['openaiModel'] ?? '') ?: 'gpt-4o-mini');
+        // Only overwrite the key if a new one was actually typed — the field is
+        // always rendered blank, so an empty submit means "leave it as is".
+        if (trim($b['openaiApiKey'] ?? '') !== '') {
+            dbUpsertConfig('openaiApiKey', trim($b['openaiApiKey']));
+        }
+        $msg = 'AI Assistant settings saved.';
+    }
     if ($action === 'save_permissions') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
@@ -243,6 +253,13 @@ $smtp = [
     'smtpFromName'   => $cfg['smtpFromName'] ?? '',
 ];
 
+// AI Assistant — API key is intentionally never echoed back into the form
+$aiCfg = [
+    'aiAssistantEnabled' => $cfg['aiAssistantEnabled'] ?? '1',
+    'openaiApiKey'       => $cfg['openaiApiKey'] ?? '', // only used to detect "already set", never rendered
+    'openaiModel'        => $cfg['openaiModel'] ?? 'gpt-4o-mini',
+];
+
 // VAPID keys (for push notifications display)
 $vapidPublic  = $cfg['vapidPublicKey'] ?? '(not generated)';
 
@@ -277,6 +294,8 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
     <i class="bi bi-palette me-1"></i>Branding</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-notifications">
     <i class="bi bi-bell me-1"></i>Notifications</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-ai">
+    <i class="bi bi-stars me-1"></i>AI Assistant</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-permissions">
     <i class="bi bi-shield-lock me-1"></i>Permissions</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-customer-data">
@@ -702,6 +721,61 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
       </div>
     </div>
 
+  </div>
+
+  <!-- ── AI Assistant ──────────────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tab-ai">
+    <div class="card-section">
+      <div class="card-header">
+        <i class="bi bi-stars me-1 text-primary"></i>AI Assistant (OpenAI)
+      </div>
+      <div class="p-4">
+        <p class="text-muted small mb-4">
+          Powers AI-assisted features across the app — ticket triage suggestions, RCA drafting, and more as they're added.
+          Uses your own OpenAI API key; nothing is sent anywhere unless a key is set below. Every AI feature falls back to
+          normal manual behavior if this isn't configured or a request fails.
+        </p>
+        <form method="POST" id="aiForm">
+          <input type="hidden" name="_action" value="save_ai_settings">
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="aiEnabledSwitch" name="aiAssistantEnabled" value="1"
+              <?= ($aiCfg['aiAssistantEnabled'] ?? '1') !== '0' ? 'checked' : '' ?>>
+            <label class="form-check-label fw-semibold" for="aiEnabledSwitch">Enable AI Assistant features</label>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">OpenAI API Key</label>
+            <div class="input-group">
+              <input type="password" name="openaiApiKey" id="openaiKeyInput" class="form-control" autocomplete="new-password"
+                value="" placeholder="<?= !empty($aiCfg['openaiApiKey']) ? 'sk-••••••••••••••••••••••••  (already saved — leave blank to keep it)' : 'sk-...' ?>">
+              <button type="button" class="btn btn-outline-secondary" onclick="toggleOpenaiKey()">
+                <i class="bi bi-eye" id="openaiKeyEyeIcon"></i>
+              </button>
+            </div>
+            <div class="form-text">Get a key from <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>. Stored key is never shown again after saving — leave this blank on future saves to keep it unchanged.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Model</label>
+            <select name="openaiModel" class="form-select" style="max-width:340px">
+              <?php $curModel = $aiCfg['openaiModel'] ?? 'gpt-4o-mini'; ?>
+              <?php foreach (['gpt-4o-mini' => 'gpt-4o-mini (recommended — fast & cheap)', 'gpt-4o' => 'gpt-4o (higher quality, more expensive)'] as $v => $l): ?>
+              <option value="<?= $v ?>" <?= $curModel === $v ? 'selected' : '' ?>><?= $l ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-floppy me-1"></i>Save AI Settings
+          </button>
+        </form>
+
+        <hr class="my-4">
+
+        <p class="fw-semibold mb-2 small"><i class="bi bi-stars text-primary me-1"></i>AI Features</p>
+        <ul class="list-unstyled small text-muted mb-0">
+          <li class="mb-1"><i class="bi bi-check-circle text-success me-2"></i>Ticket triage — suggests fault type and priority from the description when creating a ticket</li>
+          <li><i class="bi bi-check-circle text-success me-2"></i>RCA drafting — expands an engineer's rough notes into a formal Root Cause / Observation / Corrective Action write-up</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <!-- ── Permissions ───────────────────────────────────────────────────── -->
@@ -1258,6 +1332,13 @@ document.getElementById('colorPicker').addEventListener('input', function() {
 function togglePass() {
   const inp  = document.getElementById('smtpPass');
   const icon = document.getElementById('passEyeIcon');
+  if (inp.type === 'password') { inp.type = 'text';     icon.className = 'bi bi-eye-slash'; }
+  else                         { inp.type = 'password'; icon.className = 'bi bi-eye'; }
+}
+
+function toggleOpenaiKey() {
+  const inp  = document.getElementById('openaiKeyInput');
+  const icon = document.getElementById('openaiKeyEyeIcon');
   if (inp.type === 'password') { inp.type = 'text';     icon.className = 'bi bi-eye-slash'; }
   else                         { inp.type = 'password'; icon.className = 'bi bi-eye'; }
 }

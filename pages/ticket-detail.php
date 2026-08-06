@@ -363,6 +363,19 @@ require __DIR__ . '/../includes/header.php';
       </div>
       <div class="modal-body">
         <p class="text-muted small mb-3">Before marking this ticket as resolved, please complete the Root Cause Analysis. This is mandatory.</p>
+        <?php if (aiEnabled()): ?>
+        <div class="mb-3 p-2 border rounded bg-light">
+          <label class="form-label small fw-semibold mb-1"><i class="bi bi-stars text-primary me-1"></i>Draft with AI</label>
+          <textarea id="rcaRoughNotes" class="form-control form-control-sm mb-2" rows="2"
+            placeholder="Jot down what happened in your own words — AI will draft the three fields below from this."></textarea>
+          <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-primary" id="aiDraftRcaBtn" onclick="aiDraftRca()">
+              <i class="bi bi-stars me-1"></i>Draft
+            </button>
+            <span class="small text-muted" id="aiDraftRcaStatus"></span>
+          </div>
+        </div>
+        <?php endif; ?>
         <div class="mb-3">
           <label class="form-label fw-semibold">Root Cause <span class="text-danger">*</span></label>
           <textarea id="rcaRootCause" class="form-control" rows="3"
@@ -391,6 +404,46 @@ require __DIR__ . '/../includes/header.php';
 
 <script>
 const closingStatuses = ['resolved', 'closed'];
+const CURRENT_TICKET_ID = <?= json_encode($ticketId) ?>;
+
+function aiDraftRca() {
+  const notes = document.getElementById('rcaRoughNotes').value.trim();
+  const btn = document.getElementById('aiDraftRcaBtn');
+  const status = document.getElementById('aiDraftRcaStatus');
+  if (notes.length < 8) {
+    status.textContent = 'Write a bit more detail first.';
+    status.className = 'small text-warning';
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = 'Drafting…';
+  status.className = 'small text-muted';
+
+  fetch('/api/ai-draft-rca', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticketId: CURRENT_TICKET_ID, notes })
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) {
+        status.textContent = data.error || 'Could not draft an RCA.';
+        status.className = 'small text-danger';
+        return;
+      }
+      document.getElementById('rcaRootCause').value = data.rootCause || '';
+      document.getElementById('rcaObservation').value = data.observation || '';
+      document.getElementById('rcaCorrective').value = data.correctiveAction || '';
+      document.getElementById('rcaRootCause').classList.remove('is-invalid');
+      status.innerHTML = '<i class="bi bi-check-circle text-success me-1"></i>Draft applied — review and edit before saving.';
+      status.className = 'small text-success';
+    })
+    .catch(() => {
+      status.textContent = 'Request failed — check your connection and try again.';
+      status.className = 'small text-danger';
+    })
+    .finally(() => { btn.disabled = false; });
+}
 
 function handleSave() {
   const status = document.getElementById('statusSelect')?.value;
