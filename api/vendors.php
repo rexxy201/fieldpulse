@@ -4,6 +4,7 @@ requireAuth();
 $id = $segments[2] ?? null;
 
 if ($id && method() === 'PATCH') {
+    if (!hasPermission('team.manage')) jsonResponse(['error'=>'Forbidden'],403);
     $b=getBody();
     $allowed=['name','type','status','email','phone','supervisor_name'];
     $sets=[]; $vals=[];
@@ -19,6 +20,7 @@ if (method() === 'GET') {
 }
 
 if (method() === 'POST') {
+    if (!hasPermission('team.manage')) jsonResponse(['error'=>'Forbidden'],403);
     $b=getBody();
     $newId=newUuid();
     dbRun("INSERT INTO vendors (id,name,type,status,email,phone,supervisor_name) VALUES (?,?,?,?,?,?,?)",
@@ -28,6 +30,7 @@ if (method() === 'POST') {
 }
 
 if ($id && method() === 'DELETE') {
+    if (!hasPermission('team.manage')) jsonResponse(['error'=>'Forbidden'],403);
     dbRun("DELETE FROM vendors WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }

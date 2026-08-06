@@ -81,7 +81,8 @@ if (method() === 'POST') {
         if (!empty($_FILES['companyLogoFile']['tmp_name']) && $_FILES['companyLogoFile']['error'] === UPLOAD_ERR_OK) {
             $f   = $_FILES['companyLogoFile'];
             $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
-            if (in_array($ext, ['png','jpg','jpeg','gif','svg','webp'], true) && $f['size'] <= 2 * 1024 * 1024) {
+            // SVG intentionally excluded — it can carry embedded scripts (stored-XSS risk)
+            if (in_array($ext, ['png','jpg','jpeg','gif','webp'], true) && $f['size'] <= 2 * 1024 * 1024) {
                 $dir = __DIR__ . '/../assets/uploads/';
                 if (!is_dir($dir)) mkdir($dir, 0755, true);
                 $dest = $dir . 'logo.' . $ext;
@@ -91,7 +92,7 @@ if (method() === 'POST') {
                     $b['companyLogo'] = '/assets/uploads/logo.' . $ext;
                 }
             } else {
-                $msg = 'Logo must be PNG, JPG, SVG, or WebP and under 2 MB.'; $msgType = 'error';
+                $msg = 'Logo must be PNG, JPG, GIF, or WebP and under 2 MB.'; $msgType = 'error';
             }
         }
         if ($msgType !== 'error') {

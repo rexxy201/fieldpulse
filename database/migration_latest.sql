@@ -84,3 +84,8 @@ ALTER TABLE `installation_profiles`
 INSERT IGNORE INTO `role_permissions` (`id`, `role`, `permission`)
 SELECT UUID(), rp.role, 'tickets.resolve'
 FROM (SELECT DISTINCT role FROM `role_permissions` WHERE permission = 'tickets.close') rp;
+
+-- 11. Login brute-force lockout columns on users
+ALTER TABLE `users`
+  ADD COLUMN IF NOT EXISTS `failed_login_attempts` INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS `locked_until`           DATETIME DEFAULT NULL;

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 if (method() === 'GET') { jsonResponse(dbFetchAll("SELECT * FROM sla_configs ORDER BY priority")); }
 if (method() === 'POST') {
+    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $priority = $b['priority'] ?? 'p3';
     $rh = (int)($b['responseHours'] ?? 4);

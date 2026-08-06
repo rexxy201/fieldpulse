@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (!hasPermission('customers.view')) jsonResponse(['error'=>'Forbidden'],403);
 
 $id = $segments[2] ?? null;
 
@@ -9,6 +10,7 @@ if ($id && method() === 'GET') {
 }
 
 if ($id && method() === 'PATCH') {
+    if (!hasPermission('customers.update')) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $allowed = ['name','email','phone','address','plan','status'];
     $sets=[]; $vals=[];
@@ -20,7 +22,7 @@ if ($id && method() === 'PATCH') {
 }
 
 if ($id && method() === 'DELETE') {
-    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
+    if (!hasPermission('customers.delete')) jsonResponse(['error'=>'Forbidden'],403);
     dbRun("DELETE FROM customers WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }
@@ -35,6 +37,7 @@ if (method() === 'GET') {
 }
 
 if (method() === 'POST') {
+    if (!hasPermission('customers.create')) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $newId = newUuid();
     dbRun("INSERT INTO customers (id,name,account_number,email,phone,address,plan,status,hub_id) VALUES (?,?,?,?,?,?,?,?,?)",

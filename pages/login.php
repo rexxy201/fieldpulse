@@ -11,11 +11,9 @@ if (method() === 'POST') {
     $body = getBody();
     $username = trim($body['username'] ?? '');
     $password = $body['password'] ?? '';
-    $user = dbFetch("SELECT * FROM users WHERE username = ?", [$username]);
-    if ($user && verifyPassword($password, $user['password'])) {
-        if (!str_starts_with($user['password'], '$2y$')) {
-            dbRun("UPDATE users SET password = ? WHERE id = ?", [hashPassword($password), $user['id']]);
-        }
+    $result = attemptLogin($username, $password);
+    if ($result['ok']) {
+        $user = $result['user'];
         session_regenerate_id(true);
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         $_SESSION['user_id'] = $user['id'];
@@ -23,7 +21,7 @@ if (method() === 'POST') {
         try { auditLog('login', 'user', $user['id']); } catch (Throwable) {}
         header('Location: /dashboard'); exit;
     }
-    $error = 'Invalid username or password.';
+    $error = $result['error'];
 }
 ?>
 <!DOCTYPE html>

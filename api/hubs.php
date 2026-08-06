@@ -4,6 +4,7 @@ requireAuth();
 $id = $segments[2] ?? null;
 
 if ($id && method() === 'PATCH') {
+    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b=getBody(); $sets=[]; $vals=[];
     foreach(['name','location','lat','lng'] as $c){
         if(array_key_exists($c,$b)){$sets[]="$c=?";$vals[]=$b[$c];}
@@ -19,6 +20,7 @@ if (method() === 'GET') {
 }
 
 if (method() === 'POST') {
+    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b=getBody();
     $newId=newUuid();
     dbRun("INSERT INTO hubs (id,name,location,lat,lng) VALUES (?,?,?,?,?)",
@@ -27,6 +29,7 @@ if (method() === 'POST') {
 }
 
 if ($id && method() === 'DELETE') {
+    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     dbRun("DELETE FROM hubs WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }

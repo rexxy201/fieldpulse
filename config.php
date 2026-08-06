@@ -5,7 +5,7 @@ declare(strict_types=1);
 // Bump this on every release. Auto-recorded into app_config (with a deploy
 // timestamp) below once the DB connection is up, so it's queryable/reportable
 // and Admin can show "last deployed" without a manual migration each time.
-define('APP_VERSION', '2.2');
+define('APP_VERSION', '2.3');
 
 // ─── Composer autoloader ─────────────────────────────────────────────────────
 $_autoload = __DIR__ . '/vendor/autoload.php';
@@ -77,6 +77,12 @@ if (!headers_sent()) {
     header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
     // Allow CDN resources (Bootstrap, Chart.js, Leaflet, Google Fonts)
     header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net unpkg.com; style-src 'self' 'unsafe-inline' cdn.jsdelivr.net unpkg.com fonts.googleapis.com; font-src 'self' fonts.gstatic.com cdn.jsdelivr.net; img-src 'self' data: *.tile.openstreetmap.org; connect-src 'self'");
+    // Tell browsers to always use HTTPS for this host going forward (only sent over an actual HTTPS request)
+    $_isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+             || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+    if ($_isHttps) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
 }
 
 // ─── Session ─────────────────────────────────────────────────────────────────
@@ -128,12 +134,48 @@ function hashPassword(string $plain): string {
 }
 
 function verifyPassword(string $plain, string $stored): bool {
-    // Bcrypt hashes start with $2y$
+    // Bcrypt hashes start with $2y$ — this is the only format ever written by
+    // hashPassword(). Anything else (empty, corrupted, legacy) fails closed:
+    // no plaintext fallback, since that would be a permanent backdoor.
     if (str_starts_with($stored, '$2y$')) {
         return password_verify($plain, $stored);
     }
-    // Legacy scrypt format from Node.js — accept "admin123" and migrate
-    return $plain === 'admin123';
+    return false;
+}
+
+// ─── Login brute-force lockout ─────────────────────────────────────────────────
+define('LOGIN_MAX_ATTEMPTS', 5);
+define('LOGIN_LOCKOUT_MINUTES', 15);
+
+/**
+ * Shared by pages/login.php and api/auth.php so both entry points get the same
+ * lockout behavior. Returns ['ok'=>bool, 'user'=>array|null, 'error'=>?string].
+ */
+function attemptLogin(string $username, string $password): array {
+    $user = dbFetch("SELECT * FROM users WHERE username = ?", [$username]);
+
+    if ($user && !empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
+        $mins = (int)ceil((strtotime($user['locked_until']) - time()) / 60);
+        return ['ok' => false, 'user' => null, 'error' => "Too many failed attempts. Try again in {$mins} minute" . ($mins===1?'':'s') . "."];
+    }
+
+    if ($user && verifyPassword($password, $user['password'])) {
+        if ((int)($user['failed_login_attempts'] ?? 0) !== 0 || !empty($user['locked_until'])) {
+            dbRun("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", [$user['id']]);
+        }
+        return ['ok' => true, 'user' => $user, 'error' => null];
+    }
+
+    if ($user) {
+        $attempts = (int)($user['failed_login_attempts'] ?? 0) + 1;
+        if ($attempts >= LOGIN_MAX_ATTEMPTS) {
+            $lockUntil = date('Y-m-d H:i:s', time() + LOGIN_LOCKOUT_MINUTES * 60);
+            dbRun("UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?", [$attempts, $lockUntil, $user['id']]);
+        } else {
+            dbRun("UPDATE users SET failed_login_attempts = ? WHERE id = ?", [$attempts, $user['id']]);
+        }
+    }
+    return ['ok' => false, 'user' => null, 'error' => 'Invalid username or password.'];
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -1166,6 +1208,24 @@ if (!$_sv7) {
         dbUpsertConfig('schema_v7_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v7 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v8: login brute-force lockout columns ──────────────────────────────
+$_k = dbKey();
+$_sv8 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v8_migrated'");
+if (!$_sv8) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE users ADD COLUMN failed_login_attempts INT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `failed_login_attempts` INT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `locked_until` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v8_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v8 migration error: ' . $e->getMessage());
     }
 }
 
