@@ -329,7 +329,9 @@ function installationDaysPending(array $p): ?int {
 // this app's own DB_USER access to that database (cPanel → MySQL Databases →
 // Add User to Database, SELECT privilege is enough), or set SIGNUP_DB_USER /
 // SIGNUP_DB_PASS below to a separate credential instead.
-define('SIGNUP_DB_NAME', 'CHANGE_ME_signup_db_name');
+// Leave SIGNUP_DB_NAME as '' (empty) until you've set it — that's the only
+// value signupDb() treats as "not configured yet".
+define('SIGNUP_DB_NAME', 'mangonetcom_serviceorder');
 define('SIGNUP_DB_USER', DB_USER);
 define('SIGNUP_DB_PASS', DB_PASS);
 
@@ -340,7 +342,7 @@ function signupDb(): ?PDO {
     if ($pdo !== null) return $pdo;
     if ($tried) return null;
     $tried = true;
-    if (DB_TYPE !== 'mysql' || SIGNUP_DB_NAME === 'CHANGE_ME_signup_db_name') return null;
+    if (DB_TYPE !== 'mysql' || SIGNUP_DB_NAME === '') return null;
     try {
         $pdo = new PDO(
             sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', DB_HOST, SIGNUP_DB_NAME),
