@@ -279,6 +279,27 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         <?php endforeach; ?>
       </div>
 
+      <?php if (aiEnabled()): ?>
+      <!-- Chat assistant -->
+      <div class="card-section mt-4">
+        <div class="card-header"><i class="bi bi-chat-dots me-1 text-primary"></i>Ask a Question</div>
+        <div class="p-3">
+          <div id="chatMessages" style="max-height:280px;overflow-y:auto" class="mb-3 small"></div>
+          <div class="d-flex gap-2">
+            <input type="text" id="chatInput" class="form-control form-control-sm" placeholder="Ask about your account or tickets…" maxlength="1000">
+            <button type="button" class="btn btn-primary btn-sm text-nowrap" id="chatSendBtn" onclick="sendChatMessage()">
+              <i class="bi bi-send"></i>
+            </button>
+          </div>
+          <div id="chatDraftBox" class="alert alert-light border mt-3 mb-0 d-none small">
+            <div class="fw-semibold mb-1"><i class="bi bi-ticket-perforated me-1"></i>Want to raise this as a ticket?</div>
+            <div id="chatDraftText" class="text-muted mb-2"></div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="useChatDraft()">Use This — Review &amp; Submit</button>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
       <?php endif; ?>
 
     </div>
@@ -362,5 +383,75 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
 <?php endif; ?>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const CHAT_ACCOUNT = <?= json_encode($account) ?>;
+let chatHistory = [];
+let pendingDraft = null;
+
+function chatAppend(role, text) {
+  const wrap = document.getElementById('chatMessages');
+  if (!wrap) return;
+  const bubble = document.createElement('div');
+  bubble.className = role === 'user' ? 'text-end mb-2' : 'mb-2';
+  const inner = document.createElement('span');
+  inner.className = role === 'user'
+    ? 'd-inline-block px-2 py-1 rounded text-white'
+    : 'd-inline-block px-2 py-1 rounded';
+  inner.style.cssText = role === 'user' ? 'background:var(--bs-primary,#0ea5e9);max-width:85%' : 'background:#f1f5f9;max-width:85%';
+  inner.textContent = text;
+  bubble.appendChild(inner);
+  wrap.appendChild(bubble);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const btn = document.getElementById('chatSendBtn');
+  const message = input.value.trim();
+  if (!message || !CHAT_ACCOUNT) return;
+
+  chatAppend('user', message);
+  input.value = '';
+  btn.disabled = true;
+  document.getElementById('chatDraftBox').classList.add('d-none');
+
+  fetch('/api/ai-portal-chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: CHAT_ACCOUNT, message, history: chatHistory })
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) {
+        chatAppend('assistant', data.error || 'Sorry, something went wrong. Please try again.');
+        return;
+      }
+      chatAppend('assistant', data.reply);
+      chatHistory.push({ role: 'user', text: message }, { role: 'assistant', text: data.reply });
+      if (data.draftTicket && data.draftTicket.description) {
+        pendingDraft = data.draftTicket;
+        document.getElementById('chatDraftText').textContent = data.draftTicket.description;
+        document.getElementById('chatDraftBox').classList.remove('d-none');
+      }
+    })
+    .catch(() => chatAppend('assistant', 'Sorry, the request failed. Please try again.'))
+    .finally(() => { btn.disabled = false; });
+}
+
+document.getElementById('chatInput')?.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
+});
+
+function useChatDraft() {
+  if (!pendingDraft) return;
+  const modalEl = document.getElementById('raiseModal');
+  if (!modalEl) return;
+  const descField = modalEl.querySelector('[name="description"]');
+  const ftField = modalEl.querySelector('[name="fault_type_id"]');
+  if (descField) descField.value = pendingDraft.description;
+  if (ftField && pendingDraft.faultTypeId) ftField.value = pendingDraft.faultTypeId;
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+</script>
 </body>
 </html>

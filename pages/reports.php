@@ -175,6 +175,22 @@ function rqs(array $extra = []) {
   </form>
 </div>
 
+<?php if (aiEnabled()): ?>
+<div class="card-section mb-3">
+  <div class="p-3">
+    <label class="form-label small fw-semibold mb-1"><i class="bi bi-stars text-primary me-1"></i>Ask a question about this report</label>
+    <div class="d-flex gap-2 flex-wrap">
+      <input type="text" id="askDataInput" class="form-control form-control-sm" style="max-width:480px"
+        placeholder="e.g. which department has the worst resolution time?">
+      <button type="button" class="btn btn-sm btn-primary" id="askDataBtn" onclick="askAboutReport()">
+        <i class="bi bi-send me-1"></i>Ask
+      </button>
+    </div>
+    <div class="small mt-2" id="askDataAnswer"></div>
+  </div>
+</div>
+<?php endif; ?>
+
 <div class="card-section">
   <div class="table-responsive">
 
@@ -326,5 +342,42 @@ function rqs(array $extra = []) {
 
   </div>
 </div>
+
+<?php if (aiEnabled()): ?>
+<script>
+// Exactly what's already rendered on screen for this user in this request —
+// the AI endpoint never re-queries the database, it only reasons over this.
+const REPORT_SNAPSHOT = <?= json_encode(['type' => $type, 'from' => $from, 'to' => $to, 'rows' => $rows, 'summary' => $summary ?? null]) ?>;
+
+function askAboutReport() {
+  const input = document.getElementById('askDataInput');
+  const btn = document.getElementById('askDataBtn');
+  const answerBox = document.getElementById('askDataAnswer');
+  const question = input.value.trim();
+  if (!question) return;
+  btn.disabled = true;
+  answerBox.innerHTML = '<span class="text-muted">Thinking…</span>';
+
+  fetch('/api/ai-ask-report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || '' },
+    body: JSON.stringify({ question, snapshot: REPORT_SNAPSHOT })
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) {
+        answerBox.innerHTML = '<span class="text-danger">' + (data.error || 'Could not answer that.') + '</span>';
+        return;
+      }
+      answerBox.innerHTML = '<i class="bi bi-stars text-primary me-1"></i>' + data.answer.replace(/\n/g, '<br>');
+    })
+    .catch(() => { answerBox.innerHTML = '<span class="text-danger">Request failed — try again.</span>'; })
+    .finally(() => { btn.disabled = false; });
+}
+document.getElementById('askDataInput')?.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); askAboutReport(); }
+});
+</script>
+<?php endif; ?>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>
