@@ -32,15 +32,19 @@ a { text-decoration: none; }
 /* ── Sidebar ──────────────────────────────────────────────────────────────── */
 #sidebar {
     width: var(--sidebar-width);
-    min-height: 100vh;
+    height: 100vh;            /* cap to viewport so it can scroll internally */
+    height: 100dvh;           /* mobile-accurate viewport height (browser chrome resizes 100vh) */
     background: var(--sidebar-bg);
     border-right: 1px solid var(--sidebar-border);
     position: fixed;
-    top: 0; left: 0;
+    top: 0; left: 0; bottom: 0;
     display: flex;
     flex-direction: column;
     z-index: 1000;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;  /* smooth momentum scroll on iOS */
+    overscroll-behavior: contain;       /* stop scroll from "leaking" to the page behind it */
+    touch-action: pan-y;
     scrollbar-width: thin;
     scrollbar-color: #cbd5e1 transparent;
 }
