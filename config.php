@@ -5,7 +5,7 @@ declare(strict_types=1);
 // Bump this on every release. Auto-recorded into app_config (with a deploy
 // timestamp) below once the DB connection is up, so it's queryable/reportable
 // and Admin can show "last deployed" without a manual migration each time.
-define('APP_VERSION', '2.6');
+define('APP_VERSION', '2.7');
 
 // ─── Composer autoloader ─────────────────────────────────────────────────────
 $_autoload = __DIR__ . '/vendor/autoload.php';

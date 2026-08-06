@@ -122,6 +122,11 @@ if (method() === 'POST') {
         }
         $msg = 'AI Assistant settings saved.';
     }
+    if ($action === 'save_digest_settings') {
+        dbUpsertConfig('opsDigestEnabled', !empty($b['opsDigestEnabled']) ? '1' : '0');
+        dbUpsertConfig('opsDigestEmails', trim($b['opsDigestEmails'] ?? ''));
+        $msg = 'Ops digest settings saved.';
+    }
     if ($action === 'save_permissions') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
@@ -772,8 +777,43 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         <p class="fw-semibold mb-2 small"><i class="bi bi-stars text-primary me-1"></i>AI Features</p>
         <ul class="list-unstyled small text-muted mb-0">
           <li class="mb-1"><i class="bi bi-check-circle text-success me-2"></i>Ticket triage — suggests fault type and priority from the description when creating a ticket</li>
-          <li><i class="bi bi-check-circle text-success me-2"></i>RCA drafting — expands an engineer's rough notes into a formal Root Cause / Observation / Corrective Action write-up</li>
+          <li class="mb-1"><i class="bi bi-check-circle text-success me-2"></i>RCA drafting — expands an engineer's rough notes into a formal Root Cause / Observation / Corrective Action write-up</li>
+          <li><i class="bi bi-check-circle text-success me-2"></i>Recurring-issue check — flags when a new ticket looks like a repeat of a customer's recent issue</li>
         </ul>
+      </div>
+    </div>
+
+    <!-- Ops Digest -->
+    <div class="card-section mt-3">
+      <div class="card-header">
+        <i class="bi bi-envelope-paper me-1 text-primary"></i>Automated Ops Digest
+      </div>
+      <div class="p-4">
+        <p class="text-muted small mb-4">
+          A narrative summary of ticket/installation performance, emailed to whoever you list below. Needs a cron job to
+          actually send on a schedule — see the note after saving.
+        </p>
+        <form method="POST" id="digestForm">
+          <input type="hidden" name="_action" value="save_digest_settings">
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="digestEnabledSwitch" name="opsDigestEnabled" value="1"
+              <?= ($cfg['opsDigestEnabled'] ?? '0') === '1' ? 'checked' : '' ?>>
+            <label class="form-check-label fw-semibold" for="digestEnabledSwitch">Enable ops digest</label>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Recipient Emails</label>
+            <input type="text" name="opsDigestEmails" class="form-control"
+              value="<?= htmlspecialchars($cfg['opsDigestEmails'] ?? '') ?>" placeholder="manager@mangonetonline.com, ops@mangonetonline.com">
+            <div class="form-text">Comma-separated. Sent to all of them each time the digest runs.</div>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-floppy me-1"></i>Save Digest Settings
+          </button>
+        </form>
+        <div class="alert alert-light border mt-3 mb-0 small">
+          <i class="bi bi-info-circle me-1"></i>Add a cPanel Cron Job (weekly is typical) hitting:
+          <code>https://<?= htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') ?>/api/ops-digest</code>
+        </div>
       </div>
     </div>
   </div>

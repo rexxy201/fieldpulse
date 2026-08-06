@@ -270,12 +270,16 @@ require __DIR__ . '/../includes/header.php';
         <textarea name="description" id="descriptionInput" class="form-control" rows="4"
           placeholder="Detailed description of the issue…" required></textarea>
         <?php if (aiEnabled()): ?>
-        <div class="mt-2 d-flex align-items-center gap-2">
+        <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
           <button type="button" class="btn btn-sm btn-outline-primary" id="aiSuggestBtn" onclick="aiSuggestTicket()">
             <i class="bi bi-stars me-1"></i>AI Suggest Fault Type &amp; Priority
           </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="aiRecurringBtn" onclick="aiCheckRecurring()">
+            <i class="bi bi-arrow-repeat me-1"></i>Check for Recurring Issue
+          </button>
           <span class="small text-muted" id="aiSuggestStatus"></span>
         </div>
+        <div class="alert alert-warning py-2 px-3 mt-2 d-none small" id="aiRecurringAlert"></div>
         <?php endif; ?>
       </div>
 
@@ -416,6 +420,55 @@ function aiSuggestTicket() {
     .catch(() => {
       status.textContent = 'Request failed — check your connection and try again.';
       status.className = 'small text-danger';
+    })
+    .finally(() => { btn.disabled = false; });
+}
+
+function aiCheckRecurring() {
+  const desc = document.getElementById('descriptionInput').value.trim();
+  const customerId = document.getElementById('customer_id').value;
+  const btn = document.getElementById('aiRecurringBtn');
+  const alertBox = document.getElementById('aiRecurringAlert');
+  alertBox.classList.add('d-none');
+
+  if (!customerId) {
+    alert('Select a customer first — recurring-issue check works from their ticket history.');
+    return;
+  }
+  if (desc.length < 8) {
+    alert('Write a bit more detail in the description first.');
+    return;
+  }
+  btn.disabled = true;
+
+  fetch('/api/ai-check-recurring', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId, description: desc })
+  })
+    .then(r => r.json().then(data => ({ ok: r.ok, data })))
+    .then(({ ok, data }) => {
+      if (!ok || data.error) {
+        alertBox.className = 'alert alert-secondary py-2 px-3 mt-2 small';
+        alertBox.textContent = data.error || 'Could not check for recurring issues.';
+        alertBox.classList.remove('d-none');
+        return;
+      }
+      if (data.isRecurring) {
+        alertBox.className = 'alert alert-warning py-2 px-3 mt-2 small';
+        alertBox.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Possible recurring issue' +
+          (data.relatedTicketNumber ? ' — similar to <strong>' + data.relatedTicketNumber + '</strong>' : '') +
+          (data.reasoning ? ': ' + data.reasoning : '.');
+      } else {
+        alertBox.className = 'alert alert-secondary py-2 px-3 mt-2 small';
+        alertBox.innerHTML = '<i class="bi bi-check-circle me-1"></i>No similar recent issue found for this customer.';
+      }
+      alertBox.classList.remove('d-none');
+    })
+    .catch(() => {
+      alertBox.className = 'alert alert-secondary py-2 px-3 mt-2 small';
+      alertBox.textContent = 'Request failed — check your connection and try again.';
+      alertBox.classList.remove('d-none');
     })
     .finally(() => { btn.disabled = false; });
 }
