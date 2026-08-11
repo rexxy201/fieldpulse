@@ -27,7 +27,8 @@ $stats = dbFetch("
     FROM tickets $_tWhere
 ", $_tParams);
 
-$pendingInstalls = dbFetch("SELECT COUNT(*) AS cnt FROM installation_profiles WHERE status NOT IN ('completed','cancelled')");
+$_installTerminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
+$pendingInstalls = dbFetch("SELECT COUNT(*) AS cnt FROM installation_profiles WHERE status NOT IN ({$_installTerminalIn})");
 
 // ── 4-hour bucket chart: ticket influx vs resolved ────────────────────────────
 $_iv24 = dbNowMinusInterval(24, 'HOUR');
@@ -47,8 +48,8 @@ $bucketLabels = ['00–03','04–07','08–11','12–15','16–19','20–23'];
 $vendors = dbFetchAll("
     SELECT v.name,
            COUNT(ip.id)                                                          AS total,
-           SUM(CASE WHEN ip.status = 'completed' THEN 1 ELSE 0 END)             AS completed,
-           SUM(CASE WHEN ip.status IN ('active','pending','assigned') THEN 1 ELSE 0 END) AS in_progress
+           SUM(CASE WHEN ip.status = 'connected' THEN 1 ELSE 0 END)             AS completed,
+           SUM(CASE WHEN ip.status NOT IN ({$_installTerminalIn}) THEN 1 ELSE 0 END) AS in_progress
     FROM vendors v
     LEFT JOIN installation_profiles ip ON ip.vendor_id = v.id
     GROUP BY v.id, v.name

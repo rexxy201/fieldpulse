@@ -26,7 +26,8 @@ if ($id && method() === 'PATCH') {
     $existing = dbFetch("SELECT vendor_id, status, completed_at FROM installation_profiles WHERE id=?", [$id]);
 
     $allowed=['name','phone','address','email','plan','wifi_username','wifi_password','ticket_id','vendor_id','status','notes',
-        'amount_paid','network_user_id','router_type','estate','pop','connection_status','connection_date','installer','installation_cost','field_marketer'];
+        'amount_paid','network_user_id','router_type','estate','pop','connection_status','connection_date','installer','installation_cost','field_marketer',
+        'on_hold_reason','refund_reason','payment_status','hub_id'];
     $sets=[]; $vals=[];
     foreach($allowed as $c){if(array_key_exists($c,$b)){$sets[]="$c=?";$vals[]=$b[$c];}}
 
@@ -35,8 +36,8 @@ if ($id && method() === 'PATCH') {
         $sets[]="payment_confirmed_at=?"; $vals[]=$b['paymentConfirmedAt'];
         $sets[]="sla_due_at=?"; $vals[]=addWorkingDays($b['paymentConfirmedAt'], INSTALLATION_SLA_WORKING_DAYS);
     }
-    // First time the work order is marked completed
-    if (($b['status'] ?? null) === 'completed' && $existing && empty($existing['completed_at'])) {
+    // First time the work order is marked connected
+    if (($b['status'] ?? null) === 'connected' && $existing && empty($existing['completed_at'])) {
         $sets[]="completed_at=NOW()";
     }
 

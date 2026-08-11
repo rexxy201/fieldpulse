@@ -55,20 +55,21 @@ $topEngineers = dbFetchAll(
 
 // ── Installation stats ───────────────────────────────────────────────────
 $_diffPay = dbSecondsDiff('payment_confirmed_at', 'completed_at');
+$_terminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
 $installStats = dbFetch(
     "SELECT
-        SUM(CASE WHEN status = 'completed' AND completed_at >= {$_ivPeriod} THEN 1 ELSE 0 END) AS completed_in_period,
-        ROUND(AVG(CASE WHEN status='completed' AND completed_at >= {$_ivPeriod} AND payment_confirmed_at IS NOT NULL THEN ({$_diffPay})/3600.0 END), 1) AS avg_hours
+        SUM(CASE WHEN status = 'connected' AND completed_at >= {$_ivPeriod} THEN 1 ELSE 0 END) AS completed_in_period,
+        ROUND(AVG(CASE WHEN status='connected' AND completed_at >= {$_ivPeriod} AND payment_confirmed_at IS NOT NULL THEN ({$_diffPay})/3600.0 END), 1) AS avg_hours
      FROM installation_profiles"
 );
-$installPending = dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status <> 'completed'")['c'] ?? 0;
-$installOverdue = dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status <> 'completed' AND sla_due_at IS NOT NULL AND sla_due_at < NOW()")['c'] ?? 0;
+$installPending = dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status NOT IN ({$_terminalIn})")['c'] ?? 0;
+$installOverdue = dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status NOT IN ({$_terminalIn}) AND sla_due_at IS NOT NULL AND sla_due_at < NOW()")['c'] ?? 0;
 
 // ── Vendors currently overdue ────────────────────────────────────────────
 $vendorsOverdue = dbFetchAll(
     "SELECT v.name, COUNT(p.id) AS overdue_count
      FROM installation_profiles p JOIN vendors v ON v.id = p.vendor_id
-     WHERE p.status <> 'completed' AND p.sla_due_at IS NOT NULL AND p.sla_due_at < NOW()
+     WHERE p.status NOT IN ({$_terminalIn}) AND p.sla_due_at IS NOT NULL AND p.sla_due_at < NOW()
      GROUP BY v.id, v.name ORDER BY overdue_count DESC LIMIT 5"
 );
 

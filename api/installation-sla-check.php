@@ -27,7 +27,7 @@ $approaching = dbFetchAll(
     "SELECT p.*, v.name AS vendor_name, v.email AS vendor_email
      FROM installation_profiles p
      LEFT JOIN vendors v ON v.id = p.vendor_id
-     WHERE p.status NOT IN ('completed')
+     WHERE p.status NOT IN ('" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "')
        AND p.sla_due_at IS NOT NULL
        AND p.sla_warned_at IS NULL
        AND p.sla_due_at > NOW()
@@ -51,7 +51,7 @@ $newlyBreached = dbFetchAll(
     "SELECT p.*, v.name AS vendor_name, v.email AS vendor_email
      FROM installation_profiles p
      LEFT JOIN vendors v ON v.id = p.vendor_id
-     WHERE p.status NOT IN ('completed')
+     WHERE p.status NOT IN ('" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "')
        AND p.sla_due_at IS NOT NULL
        AND p.sla_due_at <= NOW()
        AND p.sla_breached_notified_at IS NULL"

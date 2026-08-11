@@ -278,6 +278,11 @@ function dbHour(string $col): string {
 
 // ─── Installation SLA ──────────────────────────────────────────────────────────
 define('INSTALLATION_SLA_WORKING_DAYS', 7);
+// Stages that mean "no longer pending" — excluded from SLA/overdue tracking
+// everywhere. 'connected' is the terminal "done" stage (drives completed_at,
+// same role 'completed' used to play); 'refunded' means the job isn't
+// happening, so it shouldn't count as outstanding either.
+define('INSTALLATION_TERMINAL_STATUSES', ['connected', 'refunded']);
 
 /** Add N working days (Mon–Fri) to a datetime string; returns 'Y-m-d H:i:s'. */
 function addWorkingDays(string $fromDateTime, int $days): string {
@@ -1423,6 +1428,37 @@ if (!$_sv10) {
         dbUpsertConfig('schema_v10_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v10 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v11: installation module rework ────────────────────────────────────
+// New fields (on-hold/refund reasons, payment status, hub link) + a one-time
+// data migration of existing stage values into the new stage list (Pending,
+// In Progress, On Hold (Customer), On Hold (Deployment), Cable Laying,
+// Termination Pending, Configured, Connected, Refunded). Only 'completed' has
+// no direct match in the new list — it becomes 'connected', the new terminal
+// stage. in_progress/configured keep their existing meaning unchanged.
+// completed_at is left untouched — it already captured the moment each of
+// those records was first marked done, which is still correct after the rename.
+$_k = dbKey();
+$_sv11 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v11_migrated'");
+if (!$_sv11) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN on_hold_reason TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN refund_reason TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN payment_status VARCHAR(20) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN hub_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `on_hold_reason` TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `refund_reason` TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `payment_status` VARCHAR(20) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `hub_id` VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        }
+        dbRun("UPDATE installation_profiles SET status = 'connected' WHERE status = 'completed'");
+        dbUpsertConfig('schema_v11_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v11 migration error: ' . $e->getMessage());
     }
 }
 

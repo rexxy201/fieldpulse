@@ -27,6 +27,8 @@ $dateAndSql = $dateConds ? ' AND ' . implode(' AND ', $dateConds) : '';
 
 $_diffPaymentToCompleted = dbSecondsDiff('p.payment_confirmed_at', 'p.completed_at');
 $_diffCreatedToCompleted = dbSecondsDiff('p.created_at', 'p.completed_at');
+// Terminal statuses (connected, refunded) — excluded from "pending/overdue" everywhere below.
+$_terminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
 
 // ─── Overview stats ────────────────────────────────────────────────────────
 $pendingSummary = dbFetch(
@@ -34,7 +36,7 @@ $pendingSummary = dbFetch(
             SUM(CASE WHEN p.payment_confirmed_at IS NOT NULL AND p.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue,
             SUM(CASE WHEN p.payment_confirmed_at IS NULL THEN 1 ELSE 0 END) AS awaiting_payment
      FROM installation_profiles p
-     WHERE p.status <> 'completed'{$andSql}",
+     WHERE p.status NOT IN ({$_terminalIn}){$andSql}",
     $params
 );
 
@@ -45,7 +47,7 @@ $completedSummary = dbFetch(
             ROUND(AVG(CASE WHEN p.payment_confirmed_at IS NOT NULL THEN ({$_diffPaymentToCompleted})/3600.0 END), 1) AS avg_hours_payment,
             ROUND(AVG(({$_diffCreatedToCompleted})/3600.0), 1) AS avg_hours_created
      FROM installation_profiles p
-     WHERE p.status = 'completed'{$andSql}",
+     WHERE p.status = 'connected'{$andSql}",
     $params
 );
 $slaComplianceRate = ($completedSummary && $completedSummary['with_sla'] > 0)
@@ -55,7 +57,7 @@ $slaComplianceRate = ($completedSummary && $completedSummary['with_sla'] > 0)
 $pendingRows = dbFetchAll(
     "SELECT p.id, p.name, p.status, p.payment_confirmed_at, p.sla_due_at, v.name AS vendor_name
      FROM installation_profiles p LEFT JOIN vendors v ON v.id = p.vendor_id
-     WHERE p.status <> 'completed'{$andSql}
+     WHERE p.status NOT IN ({$_terminalIn}){$andSql}
      ORDER BY (p.sla_due_at IS NULL), p.sla_due_at ASC
      LIMIT 200",
     $params
@@ -65,11 +67,11 @@ $pendingRows = dbFetchAll(
 $vendorRows = dbFetchAll(
     "SELECT v.id, v.name,
             COUNT(p.id) AS total_assigned,
-            SUM(CASE WHEN p.status='completed' THEN 1 ELSE 0 END) AS completed,
-            SUM(CASE WHEN p.status<>'completed' AND p.payment_confirmed_at IS NOT NULL AND p.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue_now,
-            ROUND(AVG(CASE WHEN p.status='completed' AND p.payment_confirmed_at IS NOT NULL THEN ({$_diffPaymentToCompleted})/3600.0 END), 1) AS avg_hours,
-            SUM(CASE WHEN p.status='completed' AND p.sla_due_at IS NOT NULL AND p.completed_at <= p.sla_due_at THEN 1 ELSE 0 END) AS on_time,
-            SUM(CASE WHEN p.status='completed' AND p.sla_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_sla
+            SUM(CASE WHEN p.status='connected' THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN p.status NOT IN ({$_terminalIn}) AND p.payment_confirmed_at IS NOT NULL AND p.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue_now,
+            ROUND(AVG(CASE WHEN p.status='connected' AND p.payment_confirmed_at IS NOT NULL THEN ({$_diffPaymentToCompleted})/3600.0 END), 1) AS avg_hours,
+            SUM(CASE WHEN p.status='connected' AND p.sla_due_at IS NOT NULL AND p.completed_at <= p.sla_due_at THEN 1 ELSE 0 END) AS on_time,
+            SUM(CASE WHEN p.status='connected' AND p.sla_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_sla
      FROM vendors v
      LEFT JOIN installation_profiles p ON p.vendor_id = v.id{$dateAndSql}
      WHERE v.type = 'installation'
