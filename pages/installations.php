@@ -189,7 +189,7 @@ $stFilter = $_GET['status'] ?? '';
 
 $where=[]; $params=[];
 if ($search) { $where[]="(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $like="%$search%"; array_push($params,$like,$like,$like); }
-if ($stFilter) { $where[]="status=?"; $params[]=$stFilter; }
+if ($stFilter) { $where[]="p.status=?"; $params[]=$stFilter; }
 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
