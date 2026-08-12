@@ -328,13 +328,13 @@ require __DIR__ . '/../includes/header.php';
 
 <!-- Installation Paid stats row -->
 <div class="row g-2 mb-3">
-  <div class="col-6 col-sm-4 col-xl-2">
+  <div class="col-6 col-sm-3 col-xl-2">
     <a href="/installations?paid=Yes" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='Yes'?'border-primary':'' ?>">
       <div class="fw-bold fs-5"><?= $paidStats['Yes'] ?></div>
       <div style="font-size:.7rem;color:#64748b">Installation Paid</div>
     </a>
   </div>
-  <div class="col-6 col-sm-4 col-xl-2">
+  <div class="col-6 col-sm-3 col-xl-2">
     <a href="/installations?paid=No" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='No'?'border-primary':'' ?>">
       <div class="fw-bold fs-5"><?= $paidStats['No'] ?></div>
       <div style="font-size:.7rem;color:#64748b">Installation Not Paid</div>
