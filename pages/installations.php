@@ -572,13 +572,6 @@ require __DIR__ . '/../includes/header.php';
           </div>
           <div class="col-6 d-none" id="addOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="addRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
-            <select name="installation_paid" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <option value="Yes">Yes</option>
-              <option value="No">No</option>
-            </select>
-          </div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Starts the <?= INSTALLATION_SLA_WORKING_DAYS ?>-working-day SLA clock. Leave blank if payment isn't confirmed yet.</div>
@@ -603,6 +596,13 @@ require __DIR__ . '/../includes/header.php';
           <div class="col-6"><label class="form-label small fw-semibold">Connection Date</label><input type="date" name="connection_date" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" class="form-control form-control-sm"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
+            <select name="installation_paid" class="form-select form-select-sm">
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Username</label><input type="text" name="wifi_username" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Password</label><input type="text" name="wifi_password" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Vendor</label>
@@ -671,13 +671,6 @@ function autoSelectHub(cityValue, selectId) {
           <div class="col-6 d-none" id="editOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" id="editOnHoldReason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="editRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" id="editRefundReason" class="form-control form-control-sm"></div>
           <div class="col-6" id="editRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="text" id="editRefundedAtDisplay" class="form-control form-control-sm" disabled></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
-            <select name="installation_paid" id="editInstallationPaid" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <option value="Yes">Yes</option>
-              <option value="No">No</option>
-            </select>
-          </div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" id="editPaymentDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Recalculates the SLA due date if changed. Setting/changing this requires Payment Status + Amount Paid below.</div>
@@ -708,6 +701,13 @@ function autoSelectHub(cityValue, selectId) {
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" id="editFieldMarketer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" id="editInstallationCost" class="form-control form-control-sm"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
+            <select name="installation_paid" id="editInstallationPaid" class="form-select form-select-sm">
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Username</label><input type="text" name="wifi_username" id="editWifiUsername" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Password</label><input type="text" name="wifi_password" id="editWifiPassword" class="form-control form-control-sm"></div>
           <div class="col-12"><label class="form-label small fw-semibold">Linked Ticket</label>
