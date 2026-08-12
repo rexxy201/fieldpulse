@@ -51,14 +51,23 @@ if (method() === 'POST') {
         $onHoldReason = trim($b['on_hold_reason'] ?? '');
         $refundReason = trim($b['refund_reason'] ?? '');
         $createErr = null;
+        $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
         if (trim($b['plan'] ?? '') === '') {
             $createErr = 'Plan is required.';
         } elseif (trim($b['estate'] ?? '') === '') {
             $createErr = 'Location is required.';
+        } elseif (!$hubId) {
+            $createErr = 'POP (Hub) is required.';
+        } elseif (trim($b['installation_cost'] ?? '') === '') {
+            $createErr = 'Cost of Installation is required.';
+        } elseif (trim($b['installation_paid'] ?? '') === '') {
+            $createErr = 'Installation Paid is required.';
         } elseif (in_array($newStatus, $ON_HOLD_STATUSES, true) && $onHoldReason === '') {
             $createErr = 'An On Hold reason is required.';
         } elseif ($newStatus === 'refunded' && $refundReason === '') {
             $createErr = 'A refund reason is required.';
+        } elseif ($newStatus === 'connected' && trim($b['network_user_id'] ?? '') === '') {
+            $createErr = 'User ID is required when Stage is Connected.';
         }
         if ($createErr) {
             header('Location: /installations?err=' . urlencode($createErr)); exit;
@@ -66,18 +75,17 @@ if (method() === 'POST') {
         $newPid = newUuid();
         $paymentAt = trim($b['payment_confirmed_at'] ?? '');
         $slaDue = $paymentAt ? addWorkingDays($paymentAt, INSTALLATION_SLA_WORKING_DAYS) : null;
-        $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
         $refundedAtInput = trim($b['refunded_at'] ?? '');
         $refundedAt = $newStatus === 'refunded' ? ($refundedAtInput ?: date('Y-m-d')) : null;
         dbRun("INSERT INTO installation_profiles
             (id,name,phone,address,email,plan,wifi_username,wifi_password,ticket_id,vendor_id,status,notes,payment_confirmed_at,sla_due_at,
-             amount_paid,network_user_id,router_type,estate,connection_date,installation_cost,field_marketer,
-             on_hold_reason,refund_reason,payment_status,hub_id,installation_paid,refunded_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             amount_paid,network_user_id,router_type,estate,connection_date,installation_cost,
+             on_hold_reason,refund_reason,hub_id,installation_paid,refunded_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [$newPid,$b['name']??'',$b['phone']??'',$b['address']??'',$b['email']??'',$b['plan']??'',$b['wifi_username']??'',$b['wifi_password']??'',$b['ticket_id']??null,$b['vendor_id']??null,$newStatus,$b['notes']??'',$paymentAt?:null,$slaDue,
              $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['connection_date']?:null,
-             $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,$b['field_marketer']??null,
-             $onHoldReason?:null,$refundReason?:null,$b['payment_status']?:null,$hubId?:null,$b['installation_paid']?:null,$refundedAt]);
+             $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,
+             $onHoldReason?:null,$refundReason?:null,$hubId?:null,$b['installation_paid']?:null,$refundedAt]);
         $msg = 'Profile created.';
 
         if (!empty($b['vendor_id'])) {
@@ -98,19 +106,27 @@ if (method() === 'POST') {
                 $paymentAt = trim($b['payment_confirmed_at'] ?? '');
                 $onHoldReason = trim($b['on_hold_reason'] ?? '');
                 $refundReason = trim($b['refund_reason'] ?? '');
-                $paymentStatus = trim($b['payment_status'] ?? '');
                 $amountPaidRaw = $b['amount_paid'] ?? '';
+                $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
                 $updateErr = null;
                 if (trim($b['plan'] ?? '') === '') {
                     $updateErr = 'Plan is required.';
                 } elseif (trim($b['estate'] ?? '') === '') {
                     $updateErr = 'Location is required.';
+                } elseif (!$hubId) {
+                    $updateErr = 'POP (Hub) is required.';
+                } elseif (trim($b['installation_cost'] ?? '') === '') {
+                    $updateErr = 'Cost of Installation is required.';
+                } elseif (trim($b['installation_paid'] ?? '') === '') {
+                    $updateErr = 'Installation Paid is required.';
                 } elseif (in_array($newStatus, $ON_HOLD_STATUSES, true) && $onHoldReason === '') {
                     $updateErr = 'An On Hold reason is required.';
                 } elseif ($newStatus === 'refunded' && $refundReason === '') {
                     $updateErr = 'A refund reason is required.';
-                } elseif ($paymentAt !== '' && $paymentAt !== ($existing['payment_confirmed_at'] ? date('Y-m-d', strtotime($existing['payment_confirmed_at'])) : '') && ($paymentStatus === '' || $amountPaidRaw === '')) {
-                    $updateErr = 'Payment status and amount paid are required when setting the payment confirmation date.';
+                } elseif ($newStatus === 'connected' && trim($b['network_user_id'] ?? '') === '') {
+                    $updateErr = 'User ID is required when Stage is Connected.';
+                } elseif ($paymentAt !== '' && $paymentAt !== ($existing['payment_confirmed_at'] ? date('Y-m-d', strtotime($existing['payment_confirmed_at'])) : '') && $amountPaidRaw === '') {
+                    $updateErr = 'Amount paid is required when setting the payment confirmation date.';
                 }
                 if ($updateErr) {
                     header('Location: /installations?err=' . urlencode($updateErr) . (!empty($pid) ? '#profile-'.$pid : '')); exit;
@@ -118,14 +134,13 @@ if (method() === 'POST') {
 
                 // Recompute the SLA due date if the payment date changed (or was just set)
                 $slaDue = $paymentAt ? addWorkingDays($paymentAt, INSTALLATION_SLA_WORKING_DAYS) : null;
-                $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
 
                 $sets = [
                     "name=?","phone=?","address=?","email=?","plan=?","wifi_username=?","wifi_password=?",
                     "ticket_id=?","status=?","notes=?","payment_confirmed_at=?","sla_due_at=?",
                     "amount_paid=?","network_user_id=?","router_type=?","estate=?",
-                    "connection_date=?","installation_cost=?","field_marketer=?","installation_paid=?",
-                    "on_hold_reason=?","refund_reason=?","payment_status=?","hub_id=?","updated_at=NOW()",
+                    "connection_date=?","installation_cost=?","installation_paid=?",
+                    "on_hold_reason=?","refund_reason=?","hub_id=?","updated_at=NOW()",
                 ];
                 $vals = [
                     $b['name']??'', $b['phone']??'', $b['address']??'', $b['email']??'', $b['plan']??'',
@@ -133,8 +148,8 @@ if (method() === 'POST') {
                     $newStatus, $b['notes']??'', $paymentAt?:null, $slaDue,
                     ($b['amount_paid']??'')!==''?$b['amount_paid']:null, $b['network_user_id']??null, $b['router_type']??null,
                     $b['estate']??null, $b['connection_date']?:null,
-                    ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['field_marketer']??null, $b['installation_paid']?:null,
-                    $onHoldReason?:null, $refundReason?:null, $paymentStatus?:null, $hubId?:null,
+                    ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['installation_paid']?:null,
+                    $onHoldReason?:null, $refundReason?:null, $hubId?:null,
                 ];
                 // Capture the moment the work order is first marked connected (same rule as Update Stage)
                 if ($newStatus === 'connected' && empty($existing['completed_at'])) {
@@ -189,6 +204,9 @@ if (method() === 'POST') {
             }
             if ($newStatus === 'refunded' && $reason === '') {
                 header('Location: /installations?err=' . urlencode('A refund reason is required.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
+            }
+            if ($newStatus === 'connected' && empty(dbFetch("SELECT network_user_id FROM installation_profiles WHERE id=?", [$pid])['network_user_id'])) {
+                header('Location: /installations?err=' . urlencode('User ID is required when Stage is Connected — set it via Edit first.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
             }
             $existing = dbFetch("SELECT status, completed_at, refunded_at FROM installation_profiles WHERE id=?", [$pid]);
             $sets = ["status=?", "updated_at=NOW()"]; $vals = [$newStatus];
@@ -280,12 +298,14 @@ if (method() === 'POST') {
 $search  = $_GET['search'] ?? '';
 $stFilter = $_GET['status'] ?? '';
 $paidFilter = $_GET['paid'] ?? '';
+$vendorFilter = $_GET['vendor'] ?? '';
 
 $where=[]; $params=[];
 if ($search) { $where[]="(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $like="%$search%"; array_push($params,$like,$like,$like); }
 if ($stFilter) { $where[]="p.status=?"; $params[]=$stFilter; }
 if ($paidFilter === 'unset') { $where[]="(p.installation_paid IS NULL OR p.installation_paid='')"; }
 elseif ($paidFilter) { $where[]="p.installation_paid=?"; $params[]=$paidFilter; }
+if ($vendorFilter) { $where[]="p.vendor_id=?"; $params[]=$vendorFilter; }
 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
@@ -354,8 +374,15 @@ require __DIR__ . '/../includes/header.php';
       <option value="">All Stages</option>
       <?php foreach($STATUS_LABELS as $s=>$l): ?><option value="<?=$s?>" <?=$stFilter===$s?'selected':''?>><?=$l?></option><?php endforeach; ?>
     </select>
-    <?php if ($search||$stFilter||$paidFilter): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
+    <select name="vendor" class="form-select" style="width:auto" onchange="this.form.submit()">
+      <option value="">All Vendors</option>
+      <?php foreach($allVendors as $v): ?><option value="<?=$v['id']?>" <?=$vendorFilter===$v['id']?'selected':''?>><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
+    </select>
+    <?php if ($search||$stFilter||$paidFilter||$vendorFilter): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
   </form>
+  <a href="/api/installations-export.php?<?= http_build_query(['search'=>$search,'status'=>$stFilter,'paid'=>$paidFilter,'vendor'=>$vendorFilter]) ?>" class="btn btn-outline-success btn-sm">
+    <i class="bi bi-file-earmark-excel me-1"></i>Export
+  </a>
   <?php if ($canEdit): ?>
   <a href="/installations/analytics" class="btn btn-outline-primary btn-sm">
     <i class="bi bi-graph-up-arrow me-1"></i>SLA Analytics
@@ -438,13 +465,11 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($detailProfile['network_user_id']): ?><dt class="col-4 text-muted">User ID</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['network_user_id']) ?></dd><?php endif; ?>
         <dt class="col-4 text-muted">POP (Hub)</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['hub_name']??'—') ?></dd>
         <dt class="col-4 text-muted">Vendor</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['vendor_name']??'Unassigned') ?></dd>
-        <?php if (!empty($detailProfile['payment_status'])): ?><dt class="col-4 text-muted">Payment Status</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['payment_status']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['installation_paid'])): ?><dt class="col-4 text-muted">Installation Paid</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['installation_paid']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['on_hold_reason'])): ?><dt class="col-4 text-muted">On Hold Reason</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['on_hold_reason']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['refund_reason'])): ?><dt class="col-4 text-muted">Refund Reason</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['refund_reason']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['refunded_at'])): ?><dt class="col-4 text-muted">Date Refunded</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['refunded_at'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['installer']): ?><dt class="col-4 text-muted">Installer</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['installer']) ?></dd><?php endif; ?>
-        <?php if ($detailProfile['field_marketer']): ?><dt class="col-4 text-muted">Field Marketer</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['field_marketer']) ?></dd><?php endif; ?>
         <?php if ($detailProfile['connection_date']): ?><dt class="col-4 text-muted">Connection Date</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['connection_date'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['amount_paid'] !== null): ?><dt class="col-4 text-muted">Amount Paid</dt><dd class="col-8"><?= number_format((float)$detailProfile['amount_paid'], 2) ?></dd><?php endif; ?>
         <?php if ($detailProfile['installation_cost'] !== null): ?><dt class="col-4 text-muted">Install Cost</dt><dd class="col-8"><?= number_format((float)$detailProfile['installation_cost'], 2) ?></dd><?php endif; ?>
@@ -604,27 +629,18 @@ require __DIR__ . '/../includes/header.php';
             <div class="form-text">Starts the <?= INSTALLATION_SLA_WORKING_DAYS ?>-working-day SLA clock. Leave blank if payment isn't confirmed yet.</div>
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Amount Paid</label><input type="number" step="0.01" min="0" name="amount_paid" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Payment Status</label>
-            <select name="payment_status" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <option value="Paid">Paid</option>
-              <option value="Partial">Partial</option>
-              <option value="Unpaid">Unpaid</option>
-            </select>
-          </div>
-          <div class="col-6"><label class="form-label small fw-semibold">User ID</label><input type="text" name="network_user_id" class="form-control form-control-sm" placeholder="Network / BSS username"></div>
+          <div class="col-6 d-none" id="addUserIdWrap"><label class="form-label small fw-semibold">User ID <span class="text-danger">*</span></label><input type="text" name="network_user_id" class="form-control form-control-sm" placeholder="Network / BSS username"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Router Type</label><input type="text" name="router_type" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">POP (Hub)</label>
-            <select name="hub_id" id="hub_id" class="form-select form-select-sm">
+          <div class="col-6"><label class="form-label small fw-semibold">POP (Hub) <span class="text-danger">*</span></label>
+            <select name="hub_id" id="hub_id" class="form-select form-select-sm" required>
               <option value="">— Auto-detect or select —</option>
               <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
             </select>
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Connection Date</label><input type="date" name="connection_date" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
-            <select name="installation_paid" class="form-select form-select-sm">
+          <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation <span class="text-danger">*</span></label><input type="number" step="0.01" min="0" name="installation_cost" class="form-control form-control-sm" required></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid <span class="text-danger">*</span></label>
+            <select name="installation_paid" class="form-select form-select-sm" required>
               <option value="">— Select —</option>
               <option value="Yes">Yes</option>
               <option value="No">No</option>
@@ -659,6 +675,7 @@ function toggleAddReasons(v) {
   document.getElementById('addOnHoldWrap').classList.toggle('d-none', v !== 'on_hold_customer' && v !== 'on_hold_deployment');
   document.getElementById('addRefundWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('addRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
+  document.getElementById('addUserIdWrap').classList.toggle('d-none', v !== 'connected');
 }
 var CITY_HUB_MAP = <?= json_encode(array_column(dbFetchAll("SELECT LOWER(TRIM(city_name)) AS city_name, hub_id FROM hub_city_mappings"), 'hub_id', 'city_name')) ?>;
 function autoSelectHub(cityValue, selectId) {
@@ -701,21 +718,13 @@ function autoSelectHub(cityValue, selectId) {
           <div class="col-6 d-none" id="editRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="date" name="refunded_at" id="editRefundedAtInput" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" id="editPaymentDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
-            <div class="form-text">Recalculates the SLA due date if changed. Setting/changing this requires Payment Status + Amount Paid below.</div>
+            <div class="form-text">Recalculates the SLA due date if changed. Setting/changing this requires Amount Paid below.</div>
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Amount Paid</label><input type="number" step="0.01" min="0" name="amount_paid" id="editAmountPaid" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Payment Status</label>
-            <select name="payment_status" id="editPaymentStatus" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <option value="Paid">Paid</option>
-              <option value="Partial">Partial</option>
-              <option value="Unpaid">Unpaid</option>
-            </select>
-          </div>
-          <div class="col-6"><label class="form-label small fw-semibold">User ID</label><input type="text" name="network_user_id" id="editNetworkUserId" class="form-control form-control-sm" placeholder="Network / BSS username"></div>
+          <div class="col-6 d-none" id="editUserIdWrap"><label class="form-label small fw-semibold">User ID <span class="text-danger">*</span></label><input type="text" name="network_user_id" id="editNetworkUserId" class="form-control form-control-sm" placeholder="Network / BSS username"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Router Type</label><input type="text" name="router_type" id="editRouterType" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">POP (Hub)</label>
-            <select name="hub_id" id="editHubId" class="form-select form-select-sm">
+          <div class="col-6"><label class="form-label small fw-semibold">POP (Hub) <span class="text-danger">*</span></label>
+            <select name="hub_id" id="editHubId" class="form-select form-select-sm" required>
               <option value="">— Auto-detect or select —</option>
               <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
             </select>
@@ -727,10 +736,9 @@ function autoSelectHub(cityValue, selectId) {
             </select>
             <div class="form-text">Changing this is logged in vendor history and emails the new vendor.</div>
           </div>
-          <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" id="editFieldMarketer" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" id="editInstallationCost" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid</label>
-            <select name="installation_paid" id="editInstallationPaid" class="form-select form-select-sm">
+          <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation <span class="text-danger">*</span></label><input type="number" step="0.01" min="0" name="installation_cost" id="editInstallationCost" class="form-control form-control-sm" required></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid <span class="text-danger">*</span></label>
+            <select name="installation_paid" id="editInstallationPaid" class="form-select form-select-sm" required>
               <option value="">— Select —</option>
               <option value="Yes">Yes</option>
               <option value="No">No</option>
@@ -759,6 +767,7 @@ function toggleEditReasons(v) {
   document.getElementById('editOnHoldWrap').classList.toggle('d-none', v !== 'on_hold_customer' && v !== 'on_hold_deployment');
   document.getElementById('editRefundWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('editRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
+  document.getElementById('editUserIdWrap').classList.toggle('d-none', v !== 'connected');
 }
 
 let editTicketTS = null, addTicketTS = null;
@@ -784,13 +793,11 @@ function openEditFull(p) {
   document.getElementById('editInstallationPaid').value = p.installation_paid || '';
   document.getElementById('editPaymentDate').value     = p.payment_confirmed_at ? p.payment_confirmed_at.substring(0,10) : '';
   document.getElementById('editAmountPaid').value      = p.amount_paid ?? '';
-  document.getElementById('editPaymentStatus').value   = p.payment_status || '';
   document.getElementById('editNetworkUserId').value   = p.network_user_id || '';
   document.getElementById('editRouterType').value      = p.router_type || '';
   document.getElementById('editHubId').value           = p.hub_id || '';
   document.getElementById('editConnectionDate').value  = p.connection_date ? p.connection_date.substring(0,10) : '';
   document.getElementById('editVendorId').value        = p.vendor_id || '';
-  document.getElementById('editFieldMarketer').value   = p.field_marketer || '';
   document.getElementById('editInstallationCost').value= p.installation_cost ?? '';
   document.getElementById('editWifiUsername').value    = p.wifi_username || '';
   document.getElementById('editWifiPassword').value    = p.wifi_password || '';
