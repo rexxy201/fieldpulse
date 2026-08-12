@@ -51,6 +51,7 @@ $customers = dbFetchAll("SELECT c.* FROM customers c" . $whereSQL . " ORDER BY c
 
 $custCanCreate = hasPermission('customers.create');
 $custCanEdit   = hasPermission('customers.update');
+$sharedLocations = dbFetchAll("SELECT name FROM locations ORDER BY name");
 $custCanDelete = hasPermission('customers.delete');
 $custCanAct    = $custCanEdit || $custCanDelete;
 
@@ -244,7 +245,7 @@ require __DIR__ . '/../includes/header.php';
             </div>
             <div class="col-6">
               <label class="form-label fw-semibold">City</label>
-              <input type="text" name="mailing_city" class="form-control" placeholder="e.g. Iponri">
+              <input type="text" name="mailing_city" class="form-control" list="sharedLocationsList" placeholder="e.g. Iponri">
             </div>
             <div class="col-6">
               <label class="form-label fw-semibold">State / Region</label>
@@ -318,7 +319,7 @@ require __DIR__ . '/../includes/header.php';
             </div>
             <div class="col-6">
               <label class="form-label fw-semibold">City</label>
-              <input type="text" name="mailing_city" id="editCity" class="form-control">
+              <input type="text" name="mailing_city" id="editCity" class="form-control" list="sharedLocationsList">
             </div>
             <div class="col-6">
               <label class="form-label fw-semibold">State / Region</label>
@@ -438,5 +439,10 @@ function openEdit(c) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('editModal')).show();
 }
 </script>
+<datalist id="sharedLocationsList">
+  <?php foreach ($sharedLocations as $sl): ?>
+  <option value="<?= htmlspecialchars($sl['name']) ?>">
+  <?php endforeach; ?>
+</datalist>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>

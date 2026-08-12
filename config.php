@@ -297,6 +297,11 @@ function addWorkingDays(string $fromDateTime, int $days): string {
 
 /** SLA badge for an installation_profiles row (['label'=>string,'class'=>bootstrap-color]). */
 function installationSlaBadge(array $p): array {
+    // Refunded stops the SLA clock, same as Connected — the job isn't happening, so
+    // there's nothing left to be overdue against.
+    if (($p['status'] ?? '') === 'refunded') {
+        return ['label' => 'Refunded', 'class' => 'dark'];
+    }
     if (empty($p['payment_confirmed_at'])) {
         return ['label' => 'Awaiting Payment', 'class' => 'secondary'];
     }
@@ -321,13 +326,14 @@ function installationSlaBadge(array $p): array {
 
 /**
  * Days pending for an installation: payment_confirmed_at → connection_date
- * (if connected) or → today (if still pending). Null if payment isn't
- * confirmed yet, since there's no start date to count from.
+ * (if connected), refunded_at (if refunded), or today (if still pending).
+ * Null if payment isn't confirmed yet, since there's no start date to count from.
  */
 function installationDaysPending(array $p): ?int {
     if (empty($p['payment_confirmed_at'])) return null;
     $start = new DateTime($p['payment_confirmed_at']);
-    $end   = !empty($p['connection_date']) ? new DateTime($p['connection_date']) : new DateTime();
+    $end   = !empty($p['refunded_at']) ? new DateTime($p['refunded_at'])
+           : (!empty($p['connection_date']) ? new DateTime($p['connection_date']) : new DateTime());
     return $start->diff($end)->days;
 }
 
@@ -1459,6 +1465,42 @@ if (!$_sv11) {
         dbUpsertConfig('schema_v11_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v11 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v12: installation_paid + refunded_at + shared locations list ──────
+// installation_paid: separate Yes/No flag from payment_status (which is a
+// finer-grained Paid/Partial/Unpaid). refunded_at: same role as completed_at but
+// for the Refunded stage — captured once so the SLA clock stops there too.
+// locations: a shared canonical location list (admin-managed) so Customers,
+// Tickets, and Installations all offer the same set of location names.
+$_k = dbKey();
+$_sv12 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v12_migrated'");
+if (!$_sv12) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN installation_paid VARCHAR(10) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN refunded_at TIMESTAMP DEFAULT NULL"); } catch (\Throwable $e) {}
+            db()->exec("CREATE TABLE IF NOT EXISTS locations (
+                id   VARCHAR(36) PRIMARY KEY,
+                name VARCHAR(150) NOT NULL UNIQUE
+            )");
+        } else {
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `installation_paid` VARCHAR(10) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `refunded_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+            db()->exec("CREATE TABLE IF NOT EXISTS `locations` (
+                `id`   VARCHAR(36)  PRIMARY KEY,
+                `name` VARCHAR(150) NOT NULL UNIQUE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        }
+        // Seed from whatever location names are already in use, so the list isn't empty on day one.
+        $_seedCities = dbFetchAll("SELECT DISTINCT TRIM(city_name) AS n FROM hub_city_mappings WHERE TRIM(city_name) <> ''");
+        foreach ($_seedCities as $_c) {
+            try { dbRun("INSERT INTO locations (id,name) VALUES (?,?)", [newUuid(), $_c['n']]); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v12_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v12 migration error: ' . $e->getMessage());
     }
 }
 

@@ -76,6 +76,20 @@ if (method() === 'POST') {
         dbRun("DELETE FROM hub_city_mappings WHERE id=?", [$b['id']]);
         $msg = 'City mapping removed.';
     }
+    // Shared canonical location list — used by Customers, Tickets, and Installations
+    // so all three modules offer the same set of location names.
+    if ($action === 'add_location' && trim($b['name'] ?? '') !== '') {
+        try {
+            dbRun("INSERT INTO locations (id,name) VALUES (?,?)", [newUuid(), trim($b['name'])]);
+            $msg = 'Location added.';
+        } catch (\Throwable $e) {
+            $msg = 'That location already exists.'; $msgType = 'error';
+        }
+    }
+    if ($action === 'del_location' && !empty($b['id'])) {
+        dbRun("DELETE FROM locations WHERE id=?", [$b['id']]);
+        $msg = 'Location removed.';
+    }
     if ($action === 'save_branding') {
         // Handle logo file upload — overrides the URL field when a valid image is chosen
         if (!empty($_FILES['companyLogoFile']['tmp_name']) && $_FILES['companyLogoFile']['error'] === UPLOAD_ERR_OK) {
@@ -186,7 +200,7 @@ if (method() === 'POST') {
         }
     }
     if ($msg !== '') { $_SESSION['admin_flash'] = $msg; $_SESSION['admin_flash_type'] = $msgType; }
-    $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','add_hub_city','del_hub_city'];
+    $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','add_hub_city','del_hub_city','add_location','del_location'];
     $_permActions = ['save_permissions','add_role','edit_role','del_role'];
     if (in_array($action, $_hubActions, true))  $_anchor = '#tab-hubs';
     elseif (in_array($action, $_permActions, true)) $_anchor = '#tab-permissions';
@@ -208,6 +222,7 @@ $auditLogs  = dbFetchAll("SELECT * FROM audit_logs ORDER BY created_at DESC LIMI
 $teams      = dbFetchAll("SELECT * FROM teams ORDER BY type, name");
 $teamById   = [];
 foreach ($teams as $t) $teamById[$t['id']] = $t;
+$locations = dbFetchAll("SELECT * FROM locations ORDER BY name");
 $hubCityMappings = dbFetchAll("SELECT * FROM hub_city_mappings ORDER BY city_name");
 $cityByHub = [];
 foreach ($hubCityMappings as $m) $cityByHub[$m['hub_id']][] = $m;
@@ -414,9 +429,14 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
   <div class="tab-pane fade" id="tab-hubs">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <span class="text-muted small"><?= count($hubs) ?> hubs &middot; <?= $totalCitiesMapped ?> cities mapped</span>
-      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addHubModal">
-        <i class="bi bi-plus-lg me-1"></i>Add Hub
-      </button>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#manageLocationsModal">
+          <i class="bi bi-signpost-2 me-1"></i>Manage Locations
+        </button>
+        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addHubModal">
+          <i class="bi bi-plus-lg me-1"></i>Add Hub
+        </button>
+      </div>
     </div>
     <div class="card-section">
       <div class="table-responsive">
@@ -1288,6 +1308,45 @@ if (location.hash === '#tab-permissions') {
         <button type="submit" class="btn btn-primary text-nowrap"><i class="bi bi-plus-lg me-1"></i>Add City</button>
       </form>
       <div id="manageCitiesList"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+    </div>
+  </div></div>
+</div>
+
+<!-- ── Manage Locations Modal — shared canonical location list used by Customers,
+     Tickets, and Installations so all three modules offer the same names. ── -->
+<div class="modal fade" id="manageLocationsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="bi bi-signpost-2 me-1 text-primary"></i>Locations</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted small mb-3">These are the location names offered across Customers, Tickets, and Installations. Add a location here to make it available everywhere; it doesn't automatically map to a hub — use City Mappings above for that.</p>
+      <form method="POST" class="d-flex gap-2 mb-3">
+        <?= csrfField() ?>
+        <input type="hidden" name="_action" value="add_location">
+        <input type="text" name="name" class="form-control" placeholder="Location name, e.g. Yaba" required>
+        <button type="submit" class="btn btn-primary text-nowrap"><i class="bi bi-plus-lg me-1"></i>Add Location</button>
+      </form>
+      <div style="max-height:320px;overflow-y:auto">
+        <?php if (!$locations): ?>
+        <p class="text-muted small">No locations yet.</p>
+        <?php endif; ?>
+        <?php foreach ($locations as $loc): ?>
+        <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+          <span class="small"><?= htmlspecialchars($loc['name']) ?></span>
+          <form method="POST" onsubmit="return confirm('Remove this location?')">
+            <?= csrfField() ?>
+            <input type="hidden" name="_action" value="del_location">
+            <input type="hidden" name="id" value="<?= $loc['id'] ?>">
+            <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2"><i class="bi bi-trash"></i></button>
+          </form>
+        </div>
+        <?php endforeach; ?>
+      </div>
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
