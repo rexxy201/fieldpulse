@@ -40,15 +40,6 @@ $PLAN_OPTIONS = [
     'Mango Platinum'  => ['price' => 58245, 'speed' => '200Mbps'],
 ];
 
-// Connection status is the ISP/network-side connection state — independent of
-// the internal workflow `status` above (which drives SLA + completed_at).
-$CONNECTION_STATUS_LABELS = [
-    'not_connected' => 'Not Connected',
-    'connected'     => 'Connected',
-    'disconnected'  => 'Disconnected',
-    'suspended'     => 'Suspended',
-];
-
 $msg = '';
 if (method() === 'POST') {
     verifyCsrf();
@@ -78,11 +69,11 @@ if (method() === 'POST') {
         $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
         dbRun("INSERT INTO installation_profiles
             (id,name,phone,address,email,plan,wifi_username,wifi_password,ticket_id,vendor_id,status,notes,payment_confirmed_at,sla_due_at,
-             amount_paid,network_user_id,router_type,estate,connection_status,connection_date,installation_cost,field_marketer,
+             amount_paid,network_user_id,router_type,estate,connection_date,installation_cost,field_marketer,
              on_hold_reason,refund_reason,payment_status,hub_id,installation_paid,refunded_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [$newPid,$b['name']??'',$b['phone']??'',$b['address']??'',$b['email']??'',$b['plan']??'',$b['wifi_username']??'',$b['wifi_password']??'',$b['ticket_id']??null,$b['vendor_id']??null,$newStatus,$b['notes']??'',$paymentAt?:null,$slaDue,
-             $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['connection_status']?:null,$b['connection_date']?:null,
+             $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['connection_date']?:null,
              $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,$b['field_marketer']??null,
              $onHoldReason?:null,$refundReason?:null,$b['payment_status']?:null,$hubId?:null,$b['installation_paid']?:null,$newStatus==='refunded'?date('Y-m-d H:i:s'):null]);
         $msg = 'Profile created.';
@@ -130,7 +121,7 @@ if (method() === 'POST') {
                 $sets = [
                     "name=?","phone=?","address=?","email=?","plan=?","wifi_username=?","wifi_password=?",
                     "ticket_id=?","status=?","notes=?","payment_confirmed_at=?","sla_due_at=?",
-                    "amount_paid=?","network_user_id=?","router_type=?","estate=?","connection_status=?",
+                    "amount_paid=?","network_user_id=?","router_type=?","estate=?",
                     "connection_date=?","installation_cost=?","field_marketer=?","installation_paid=?",
                     "on_hold_reason=?","refund_reason=?","payment_status=?","hub_id=?","updated_at=NOW()",
                 ];
@@ -139,7 +130,7 @@ if (method() === 'POST') {
                     $b['wifi_username']??'', $b['wifi_password']??'', $b['ticket_id']?:null,
                     $newStatus, $b['notes']??'', $paymentAt?:null, $slaDue,
                     ($b['amount_paid']??'')!==''?$b['amount_paid']:null, $b['network_user_id']??null, $b['router_type']??null,
-                    $b['estate']??null, $b['connection_status']?:null, $b['connection_date']?:null,
+                    $b['estate']??null, $b['connection_date']?:null,
                     ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['field_marketer']??null, $b['installation_paid']?:null,
                     $onHoldReason?:null, $refundReason?:null, $paymentStatus?:null, $hubId?:null,
                 ];
@@ -361,16 +352,15 @@ require __DIR__ . '/../includes/header.php';
   <div class="table-responsive">
     <table class="table table-hover table-sm mb-0">
       <thead class="table-light">
-        <tr><th>Customer</th><th>Plan</th><th>Stage</th><th>Connection Status</th><th>Vendor</th><th>POP</th><th>Location</th><th>Amount</th><th>SLA</th><th>Days Pending</th><th></th></tr>
+        <tr><th>Customer</th><th>Plan</th><th>Stage</th><th>Vendor</th><th>POP</th><th>Location</th><th>Amount</th><th>SLA</th><th>Days Pending</th><th></th></tr>
       </thead>
       <tbody>
-        <?php if (!$profiles): ?><tr><td colspan="11" class="text-center text-muted py-4">No profiles found</td></tr><?php endif; ?>
+        <?php if (!$profiles): ?><tr><td colspan="10" class="text-center text-muted py-4">No profiles found</td></tr><?php endif; ?>
         <?php foreach ($profiles as $p): $sla = installationSlaBadge($p); $daysPending = installationDaysPending($p); ?>
         <tr id="profile-<?= $p['id'] ?>">
           <td class="fw-semibold"><?= htmlspecialchars($p['name']) ?><?php if (!empty($p['signup_submission_id'])): ?> <i class="bi bi-arrow-repeat text-muted" title="Auto-imported from the signup site"></i><?php endif; ?><div class="text-muted small fw-normal"><?= htmlspecialchars($p['phone']??'') ?></div></td>
           <td class="small"><?= htmlspecialchars($p['plan']??'') ?></td>
           <td><span class="badge bg-<?= $STATUS_COLORS[$p['status']]??'secondary' ?>"><?= $STATUS_LABELS[$p['status']]??$p['status'] ?></span></td>
-          <td class="small"><?= htmlspecialchars($CONNECTION_STATUS_LABELS[$p['connection_status']] ?? ($p['connection_status'] ?: '—')) ?></td>
           <td class="small"><?= htmlspecialchars($p['vendor_name']??'—') ?></td>
           <td class="small"><?= htmlspecialchars($p['hub_name']??'—') ?></td>
           <td class="small"><?= htmlspecialchars($p['estate']??'—') ?></td>
@@ -429,7 +419,6 @@ require __DIR__ . '/../includes/header.php';
         <?php if (!empty($detailProfile['refunded_at'])): ?><dt class="col-4 text-muted">Date Refunded</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['refunded_at'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['installer']): ?><dt class="col-4 text-muted">Installer</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['installer']) ?></dd><?php endif; ?>
         <?php if ($detailProfile['field_marketer']): ?><dt class="col-4 text-muted">Field Marketer</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['field_marketer']) ?></dd><?php endif; ?>
-        <?php if ($detailProfile['connection_status']): ?><dt class="col-4 text-muted">Connection Status</dt><dd class="col-8"><?= htmlspecialchars($CONNECTION_STATUS_LABELS[$detailProfile['connection_status']] ?? $detailProfile['connection_status']) ?></dd><?php endif; ?>
         <?php if ($detailProfile['connection_date']): ?><dt class="col-4 text-muted">Connection Date</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['connection_date'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['amount_paid'] !== null): ?><dt class="col-4 text-muted">Amount Paid</dt><dd class="col-8"><?= number_format((float)$detailProfile['amount_paid'], 2) ?></dd><?php endif; ?>
         <?php if ($detailProfile['installation_cost'] !== null): ?><dt class="col-4 text-muted">Install Cost</dt><dd class="col-8"><?= number_format((float)$detailProfile['installation_cost'], 2) ?></dd><?php endif; ?>
@@ -611,12 +600,6 @@ require __DIR__ . '/../includes/header.php';
               <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
             </select>
           </div>
-          <div class="col-6"><label class="form-label small fw-semibold">Connection Status</label>
-            <select name="connection_status" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <?php foreach($CONNECTION_STATUS_LABELS as $cs=>$cl): ?><option value="<?=$cs?>"><?=$cl?></option><?php endforeach; ?>
-            </select>
-          </div>
           <div class="col-6"><label class="form-label small fw-semibold">Connection Date</label><input type="date" name="connection_date" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" class="form-control form-control-sm"></div>
@@ -716,12 +699,6 @@ function autoSelectHub(cityValue, selectId) {
               <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
             </select>
           </div>
-          <div class="col-6"><label class="form-label small fw-semibold">Connection Status</label>
-            <select name="connection_status" id="editConnectionStatus" class="form-select form-select-sm">
-              <option value="">— Select —</option>
-              <?php foreach($CONNECTION_STATUS_LABELS as $cs=>$cl): ?><option value="<?=$cs?>"><?=$cl?></option><?php endforeach; ?>
-            </select>
-          </div>
           <div class="col-6"><label class="form-label small fw-semibold">Connection Date</label><input type="date" name="connection_date" id="editConnectionDate" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Vendor</label>
             <select name="vendor_id" id="editVendorId" class="form-select form-select-sm"><option value="">— Unassigned —</option>
@@ -782,7 +759,6 @@ function openEditFull(p) {
   document.getElementById('editNetworkUserId').value   = p.network_user_id || '';
   document.getElementById('editRouterType').value      = p.router_type || '';
   document.getElementById('editHubId').value           = p.hub_id || '';
-  document.getElementById('editConnectionStatus').value= p.connection_status || '';
   document.getElementById('editConnectionDate').value  = p.connection_date ? p.connection_date.substring(0,10) : '';
   document.getElementById('editVendorId').value        = p.vendor_id || '';
   document.getElementById('editFieldMarketer').value   = p.field_marketer || '';
