@@ -274,10 +274,13 @@ if (method() === 'POST') {
 
 $search  = $_GET['search'] ?? '';
 $stFilter = $_GET['status'] ?? '';
+$paidFilter = $_GET['paid'] ?? '';
 
 $where=[]; $params=[];
 if ($search) { $where[]="(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $like="%$search%"; array_push($params,$like,$like,$like); }
 if ($stFilter) { $where[]="p.status=?"; $params[]=$stFilter; }
+if ($paidFilter === 'unset') { $where[]="(p.installation_paid IS NULL OR p.installation_paid='')"; }
+elseif ($paidFilter) { $where[]="p.installation_paid=?"; $params[]=$paidFilter; }
 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
@@ -293,6 +296,11 @@ $stats = [];
 foreach ($STATUS_LABELS as $s => $l) {
     $stats[$s] = (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status=?",[$s])['c'] ?? 0);
 }
+$paidStats = [
+    'Yes'   => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='Yes'")['c'] ?? 0),
+    'No'    => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='No'")['c'] ?? 0),
+    'unset' => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid IS NULL OR installation_paid=''")['c'] ?? 0),
+];
 
 // For detail view
 $detailId = $_GET['detail'] ?? null;
@@ -318,8 +326,33 @@ require __DIR__ . '/../includes/header.php';
   <?php endforeach; ?>
 </div>
 
+<!-- Installation Paid stats row -->
+<div class="row g-2 mb-3">
+  <div class="col-6 col-sm-4 col-xl-2">
+    <a href="/installations?paid=Yes" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='Yes'?'border-primary':'' ?>">
+      <div class="fw-bold fs-5"><?= $paidStats['Yes'] ?></div>
+      <div style="font-size:.7rem;color:#64748b">Installation Paid</div>
+    </a>
+  </div>
+  <div class="col-6 col-sm-4 col-xl-2">
+    <a href="/installations?paid=No" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='No'?'border-primary':'' ?>">
+      <div class="fw-bold fs-5"><?= $paidStats['No'] ?></div>
+      <div style="font-size:.7rem;color:#64748b">Installation Not Paid</div>
+    </a>
+  </div>
+  <?php if ($paidStats['unset']): ?>
+  <div class="col-6 col-sm-4 col-xl-2">
+    <a href="/installations?paid=unset" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='unset'?'border-primary':'' ?>">
+      <div class="fw-bold fs-5"><?= $paidStats['unset'] ?></div>
+      <div style="font-size:.7rem;color:#64748b">Not Set</div>
+    </a>
+  </div>
+  <?php endif; ?>
+</div>
+
 <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
   <form class="d-flex gap-2 flex-grow-1 flex-wrap" method="GET">
+    <?php if ($paidFilter): ?><input type="hidden" name="paid" value="<?= htmlspecialchars($paidFilter) ?>"><?php endif; ?>
     <div class="input-group" style="max-width:260px">
       <span class="input-group-text"><i class="bi bi-search"></i></span>
       <input type="text" name="search" class="form-control" placeholder="Search…" value="<?= htmlspecialchars($search) ?>">
@@ -328,7 +361,7 @@ require __DIR__ . '/../includes/header.php';
       <option value="">All Stages</option>
       <?php foreach($STATUS_LABELS as $s=>$l): ?><option value="<?=$s?>" <?=$stFilter===$s?'selected':''?>><?=$l?></option><?php endforeach; ?>
     </select>
-    <?php if ($search||$stFilter): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
+    <?php if ($search||$stFilter||$paidFilter): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
   </form>
   <?php if ($canEdit): ?>
   <a href="/installations/analytics" class="btn btn-outline-primary btn-sm">
