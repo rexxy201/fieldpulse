@@ -14,7 +14,6 @@ $STATUS_LABELS = [
     'on_hold_deployment'  => 'On Hold (Deployment)',
     'cable_laying'        => 'Cable Laying',
     'termination_pending' => 'Termination Pending',
-    'configured'          => 'Configured',
     'connected'           => 'Connected',
     'refunded'            => 'Refunded',
 ];
@@ -25,7 +24,6 @@ $STATUS_COLORS = [
     'on_hold_deployment'  => 'danger',
     'cable_laying'        => 'info',
     'termination_pending' => 'info',
-    'configured'          => 'primary',
     'connected'           => 'success',
     'refunded'            => 'dark',
 ];

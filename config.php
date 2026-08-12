@@ -1504,6 +1504,21 @@ if (!$_sv12) {
     }
 }
 
+// ─── Schema v13: remove the 'configured' stage ─────────────────────────────────
+// 'Configured' sat between Termination Pending and Connected; it's been dropped
+// from the stage list, so existing records in it move to 'connected' — setup was
+// already effectively done at that point.
+$_k = dbKey();
+$_sv13 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v13_migrated'");
+if (!$_sv13) {
+    try {
+        dbRun("UPDATE installation_profiles SET status = 'connected', completed_at = COALESCE(completed_at, NOW()) WHERE status = 'configured'");
+        dbUpsertConfig('schema_v13_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v13 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.
