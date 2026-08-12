@@ -67,6 +67,8 @@ if (method() === 'POST') {
         $paymentAt = trim($b['payment_confirmed_at'] ?? '');
         $slaDue = $paymentAt ? addWorkingDays($paymentAt, INSTALLATION_SLA_WORKING_DAYS) : null;
         $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['estate'] ?? '');
+        $refundedAtInput = trim($b['refunded_at'] ?? '');
+        $refundedAt = $newStatus === 'refunded' ? ($refundedAtInput ?: date('Y-m-d')) : null;
         dbRun("INSERT INTO installation_profiles
             (id,name,phone,address,email,plan,wifi_username,wifi_password,ticket_id,vendor_id,status,notes,payment_confirmed_at,sla_due_at,
              amount_paid,network_user_id,router_type,estate,connection_date,installation_cost,field_marketer,
@@ -75,7 +77,7 @@ if (method() === 'POST') {
             [$newPid,$b['name']??'',$b['phone']??'',$b['address']??'',$b['email']??'',$b['plan']??'',$b['wifi_username']??'',$b['wifi_password']??'',$b['ticket_id']??null,$b['vendor_id']??null,$newStatus,$b['notes']??'',$paymentAt?:null,$slaDue,
              $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['connection_date']?:null,
              $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,$b['field_marketer']??null,
-             $onHoldReason?:null,$refundReason?:null,$b['payment_status']?:null,$hubId?:null,$b['installation_paid']?:null,$newStatus==='refunded'?date('Y-m-d H:i:s'):null]);
+             $onHoldReason?:null,$refundReason?:null,$b['payment_status']?:null,$hubId?:null,$b['installation_paid']?:null,$refundedAt]);
         $msg = 'Profile created.';
 
         if (!empty($b['vendor_id'])) {
@@ -138,9 +140,12 @@ if (method() === 'POST') {
                 if ($newStatus === 'connected' && empty($existing['completed_at'])) {
                     $sets[] = "completed_at=NOW()";
                 }
-                // Refunded stops the SLA clock the same way — captured once, like completed_at.
-                if ($newStatus === 'refunded' && empty($existing['refunded_at'])) {
-                    $sets[] = "refunded_at=NOW()";
+                // Refunded stops the SLA clock the same way, but the date is user-editable —
+                // default to today if left blank, keep whatever was there if unchanged.
+                if ($newStatus === 'refunded') {
+                    $refundedAtInput = trim($b['refunded_at'] ?? '');
+                    $refundedAt = $refundedAtInput ?: ($existing['refunded_at'] ? date('Y-m-d', strtotime($existing['refunded_at'])) : date('Y-m-d'));
+                    $sets[] = "refunded_at=?"; $vals[] = $refundedAt;
                 }
                 $vals[] = $pid;
                 dbRun("UPDATE installation_profiles SET " . implode(',', $sets) . " WHERE id=?", $vals);
@@ -598,6 +603,7 @@ require __DIR__ . '/../includes/header.php';
           </div>
           <div class="col-6 d-none" id="addOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="addRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" class="form-control form-control-sm"></div>
+          <div class="col-6 d-none" id="addRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="date" name="refunded_at" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Starts the <?= INSTALLATION_SLA_WORKING_DAYS ?>-working-day SLA clock. Leave blank if payment isn't confirmed yet.</div>
@@ -657,6 +663,7 @@ require __DIR__ . '/../includes/header.php';
 function toggleAddReasons(v) {
   document.getElementById('addOnHoldWrap').classList.toggle('d-none', v !== 'on_hold_customer' && v !== 'on_hold_deployment');
   document.getElementById('addRefundWrap').classList.toggle('d-none', v !== 'refunded');
+  document.getElementById('addRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
 }
 var CITY_HUB_MAP = <?= json_encode(array_column(dbFetchAll("SELECT LOWER(TRIM(city_name)) AS city_name, hub_id FROM hub_city_mappings"), 'hub_id', 'city_name')) ?>;
 function autoSelectHub(cityValue, selectId) {
@@ -696,7 +703,7 @@ function autoSelectHub(cityValue, selectId) {
           </div>
           <div class="col-6 d-none" id="editOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" id="editOnHoldReason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="editRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" id="editRefundReason" class="form-control form-control-sm"></div>
-          <div class="col-6" id="editRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="text" id="editRefundedAtDisplay" class="form-control form-control-sm" disabled></div>
+          <div class="col-6 d-none" id="editRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="date" name="refunded_at" id="editRefundedAtInput" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" id="editPaymentDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Recalculates the SLA due date if changed. Setting/changing this requires Payment Status + Amount Paid below.</div>
@@ -756,6 +763,7 @@ function autoSelectHub(cityValue, selectId) {
 function toggleEditReasons(v) {
   document.getElementById('editOnHoldWrap').classList.toggle('d-none', v !== 'on_hold_customer' && v !== 'on_hold_deployment');
   document.getElementById('editRefundWrap').classList.toggle('d-none', v !== 'refunded');
+  document.getElementById('editRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
 }
 
 let editTicketTS = null, addTicketTS = null;
@@ -777,7 +785,7 @@ function openEditFull(p) {
   toggleEditReasons(p.status || 'pending');
   document.getElementById('editOnHoldReason').value    = p.on_hold_reason || '';
   document.getElementById('editRefundReason').value    = p.refund_reason || '';
-  document.getElementById('editRefundedAtDisplay').value = p.refunded_at ? p.refunded_at.substring(0,10) : '';
+  document.getElementById('editRefundedAtInput').value = p.refunded_at ? p.refunded_at.substring(0,10) : '';
   document.getElementById('editInstallationPaid').value = p.installation_paid || '';
   document.getElementById('editPaymentDate').value     = p.payment_confirmed_at ? p.payment_confirmed_at.substring(0,10) : '';
   document.getElementById('editAmountPaid').value      = p.amount_paid ?? '';
