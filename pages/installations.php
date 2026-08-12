@@ -125,7 +125,7 @@ if (method() === 'POST') {
                     "name=?","phone=?","address=?","email=?","plan=?","wifi_username=?","wifi_password=?",
                     "ticket_id=?","status=?","notes=?","payment_confirmed_at=?","sla_due_at=?",
                     "amount_paid=?","network_user_id=?","router_type=?","estate=?","pop=?","connection_status=?",
-                    "connection_date=?","installer=?","installation_cost=?","field_marketer=?",
+                    "connection_date=?","installation_cost=?","field_marketer=?",
                     "on_hold_reason=?","refund_reason=?","payment_status=?","hub_id=?","updated_at=NOW()",
                 ];
                 $vals = [
@@ -134,7 +134,7 @@ if (method() === 'POST') {
                     $newStatus, $b['notes']??'', $paymentAt?:null, $slaDue,
                     ($b['amount_paid']??'')!==''?$b['amount_paid']:null, $b['network_user_id']??null, $b['router_type']??null,
                     $b['estate']??null, $b['pop']??null, $b['connection_status']?:null, $b['connection_date']?:null,
-                    $b['installer']??null, ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['field_marketer']??null,
+                    ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['field_marketer']??null,
                     $onHoldReason?:null, $refundReason?:null, $paymentStatus?:null, $hubId?:null,
                 ];
                 // Capture the moment the work order is first marked connected (same rule as Update Stage)
@@ -597,7 +597,6 @@ require __DIR__ . '/../includes/header.php';
             </select>
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Connection Date</label><input type="date" name="connection_date" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installer</label><input type="text" name="installer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Username</label><input type="text" name="wifi_username" class="form-control form-control-sm"></div>
@@ -702,7 +701,6 @@ function autoSelectHub(cityValue, selectId) {
             </select>
             <div class="form-text">Changing this is logged in vendor history and emails the new vendor.</div>
           </div>
-          <div class="col-6"><label class="form-label small fw-semibold">Installer</label><input type="text" name="installer" id="editInstaller" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Field Marketer</label><input type="text" name="field_marketer" id="editFieldMarketer" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation</label><input type="number" step="0.01" min="0" name="installation_cost" id="editInstallationCost" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">WiFi Username</label><input type="text" name="wifi_username" id="editWifiUsername" class="form-control form-control-sm"></div>
@@ -758,7 +756,6 @@ function openEditFull(p) {
   document.getElementById('editConnectionStatus').value= p.connection_status || '';
   document.getElementById('editConnectionDate').value  = p.connection_date ? p.connection_date.substring(0,10) : '';
   document.getElementById('editVendorId').value        = p.vendor_id || '';
-  document.getElementById('editInstaller').value       = p.installer || '';
   document.getElementById('editFieldMarketer').value   = p.field_marketer || '';
   document.getElementById('editInstallationCost').value= p.installation_cost ?? '';
   document.getElementById('editWifiUsername').value    = p.wifi_username || '';
