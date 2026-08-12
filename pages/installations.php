@@ -340,14 +340,7 @@ require __DIR__ . '/../includes/header.php';
       <div style="font-size:.7rem;color:#64748b">Installation Not Paid</div>
     </a>
   </div>
-  <?php if ($paidStats['unset']): ?>
-  <div class="col-6 col-sm-4 col-xl-2">
-    <a href="/installations?paid=unset" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='unset'?'border-primary':'' ?>">
-      <div class="fw-bold fs-5"><?= $paidStats['unset'] ?></div>
-      <div style="font-size:.7rem;color:#64748b">Not Set</div>
-    </a>
-  </div>
-  <?php endif; ?>
+
 </div>
 
 <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
