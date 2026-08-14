@@ -21,10 +21,10 @@ if (method() === 'POST') {
     }
     if ($action === 'edit_user' && !empty($b['id'])) {
         $hubIds = !empty($b['hub_ids']) ? '{' . implode(',', array_map('trim', (array)$b['hub_ids'])) . '}' : null;
-        $sets = "name=?,email=?,phone=?,role=?,status=?,hub_id=?,hub_ids=?,team_id=?";
+        $sets = "name=?,email=?,phone=?,role=?,status=?,hub_id=?,hub_ids=?,team_id=?,vendor_id=?";
         dbRun("UPDATE users SET $sets WHERE id=?",
             [$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
-             $b['status']??'active',$b['hub_id']??null,$hubIds,$b['team_id']??null,$b['id']]);
+             $b['status']??'active',$b['hub_id']??null,$hubIds,$b['team_id']??null,$b['vendor_id']??null,$b['id']]);
         if (!empty($b['new_password'])) {
             dbRun("UPDATE users SET password=? WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
         }
@@ -187,7 +187,7 @@ require __DIR__ . '/../includes/header.php';
                 'id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email']??'',
                 'phone'=>$u['phone']??'','role'=>$u['role'],'status'=>$status,
                 'hub_id'=>$u['hub_id']??'','team_id'=>$u['team_id']??'',
-                'hub_ids'=>$hubNames
+                'vendor_id'=>$u['vendor_id']??'','hub_ids'=>$hubNames
               ])) ?>)' title="Edit"><i class="bi bi-pencil"></i></button>
             <form method="POST" class="d-inline" onsubmit="return confirm('Remove this member?')">
               <input type="hidden" name="_action" value="del_user">
@@ -374,6 +374,13 @@ require __DIR__ . '/../includes/header.php';
               <?php foreach($teams as $t): ?><option value="<?=$t['id']?>"><?= htmlspecialchars($t['name']) ?></option><?php endforeach; ?>
             </select>
           </div>
+          <div class="col-sm-6" id="au_vendorWrap">
+            <label class="form-label fw-semibold small">Vendor Company <span class="text-muted fw-normal">(role = Vendor only)</span></label>
+            <select name="vendor_id" class="form-select form-select-sm">
+              <option value="">— None —</option>
+              <?php foreach($vendors as $v): ?><option value="<?=$v['id']?>"><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
+            </select>
+          </div>
           <div class="col-12">
             <label class="form-label fw-semibold small">Additional Hubs (for supervisors)</label>
             <div class="d-flex flex-wrap gap-2">
@@ -436,6 +443,13 @@ require __DIR__ . '/../includes/header.php';
             <select name="team_id" id="eu_team_id" class="form-select form-select-sm">
               <option value="">— None —</option>
               <?php foreach($teams as $t): ?><option value="<?=$t['id']?>"><?= htmlspecialchars($t['name']) ?></option><?php endforeach; ?>
+            </select>
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label fw-semibold small">Vendor Company <span class="text-muted fw-normal">(role = Vendor only)</span></label>
+            <select name="vendor_id" id="eu_vendor_id" class="form-select form-select-sm">
+              <option value="">— None —</option>
+              <?php foreach($vendors as $v): ?><option value="<?=$v['id']?>"><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
             </select>
           </div>
           <div class="col-12">
@@ -570,6 +584,7 @@ function openEditUser(u) {
   document.getElementById('eu_status').value = u.status || 'active';
   document.getElementById('eu_hub_id').value = u.hub_id || '';
   document.getElementById('eu_team_id').value = u.team_id || '';
+  document.getElementById('eu_vendor_id').value = u.vendor_id || '';
   // Tick hub checkboxes
   document.querySelectorAll('.eu-hub-check').forEach(cb => {
     cb.checked = u.hub_ids && u.hub_ids.includes(cb.value);
