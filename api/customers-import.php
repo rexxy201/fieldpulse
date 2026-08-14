@@ -177,3 +177,4 @@ try {
 } catch (\Throwable $e) {
     echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
 }
+exit;

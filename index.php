@@ -13,7 +13,11 @@ $page = $segments[0] ?: 'dashboard';
 if ($page === 'api') {
     $endpoint = $segments[1] ?? '';
     $file = __DIR__ . "/api/{$endpoint}.php";
-    if (file_exists($file)) { require $file; }
+    // Always exit after an API file runs — if it doesn't exit on its own (not every
+    // endpoint uses the jsonResponse() helper, which exits internally), falling
+    // through here would hit the page router below and get redirected to
+    // /dashboard, silently discarding whatever the endpoint already echoed.
+    if (file_exists($file)) { require $file; exit; }
     else { jsonResponse(['error' => 'Not found'], 404); }
 }
 
