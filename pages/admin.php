@@ -1455,8 +1455,26 @@ function handleImportFile(input) {
   const fd = new FormData();
   fd.append('file', file);
   fetch('/api/customers-import', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(d => {
+    .then(r => r.text().then(bodyText => ({ status: r.status, bodyText })))
+    .then(({ status, bodyText }) => {
+      let d;
+      try {
+        d = JSON.parse(bodyText);
+      } catch (parseErr) {
+        // Server returned something other than clean JSON (e.g. a PHP error page) —
+        // surface the raw response instead of a silent generic failure.
+        const stats    = document.getElementById('importStats');
+        const text     = document.getElementById('importStatsText');
+        const skipList = document.getElementById('importSkipList');
+        const alertBox = stats.querySelector('.alert');
+        text.textContent = `Import failed (HTTP ${status}) — server returned an unexpected response:`;
+        alertBox.className = 'alert alert-danger alert-dismissible py-2 mb-0';
+        skipList.innerHTML = '<pre class="mb-0 small" style="white-space:pre-wrap">' +
+          bodyText.slice(0, 2000).replace(/</g, '&lt;') + '</pre>';
+        skipList.style.display = '';
+        stats.style.display = '';
+        return;
+      }
       const stats    = document.getElementById('importStats');
       const text     = document.getElementById('importStatsText');
       const skipList = document.getElementById('importSkipList');
@@ -1481,7 +1499,7 @@ function handleImportFile(input) {
       }
       stats.style.display = '';
     })
-    .catch(() => alert('Upload failed. Please try again.'))
+    .catch(err => alert('Upload failed — network error: ' + err.message))
     .finally(() => {
       btn.disabled = false;
       btn.innerHTML = origText;
