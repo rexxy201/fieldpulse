@@ -20,6 +20,7 @@ $customers  = dbFetchAll(
      ORDER BY c.name"
 );
 $hubs       = dbFetchAll("SELECT id,name FROM hubs ORDER BY name");
+$vendors    = dbFetchAll("SELECT id,name FROM vendors ORDER BY name");
 $faultTypes = dbFetchAll("SELECT id,name,category,route_to FROM fault_types WHERE enabled=1 ORDER BY category,name");
 $knownCities = dbFetchAll("SELECT TRIM(city_name) AS city_name FROM hub_city_mappings ORDER BY city_name");
 
@@ -99,11 +100,11 @@ if (method() === 'POST') {
 
             $_slaExpr = dbNowPlusInterval($hours, 'HOUR');
             dbRun(
-                "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,sla_breach_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
+                "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,sla_breach_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
                 [$newId, $ticketNum, $b['description'], $b['priority'] ?? 'p3', $type, 'open', $scope,
                  $customerId, $cname, $hubId,
-                 $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id']]
+                 $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id'], $b['vendor_id'] ?: null]
             );
 
             auditLog('create', 'ticket', $newId);
@@ -263,6 +264,17 @@ require __DIR__ . '/../includes/header.php';
       <div class="mb-3">
         <label class="form-label fw-semibold">OLT / Node <span class="text-muted fw-normal small">(optional)</span></label>
         <input type="text" name="olt" class="form-control" placeholder="e.g. OLT-A / Node 12">
+      </div>
+
+      <!-- Vendor (optional) -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Vendor <span class="text-muted fw-normal small">(optional — hand this ticket to a vendor for field work)</span></label>
+        <select name="vendor_id" class="form-select">
+          <option value="">— None —</option>
+          <?php foreach ($vendors as $v): ?>
+          <option value="<?= $v['id'] ?>"><?= htmlspecialchars($v['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
       </div>
 
       <div class="mb-4">

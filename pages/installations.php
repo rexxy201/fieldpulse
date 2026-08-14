@@ -301,11 +301,17 @@ $paidFilter = $_GET['paid'] ?? '';
 $vendorFilter = $_GET['vendor'] ?? '';
 
 $where=[]; $params=[];
+// Vendor users only ever see their own company's installation jobs — this
+// overrides any ?vendor= query param, it isn't just a default.
+if ($role === 'vendor') {
+    $where[]="p.vendor_id=?"; $params[]=$user['vendor_id'] ?? '__none__';
+} elseif ($vendorFilter) {
+    $where[]="p.vendor_id=?"; $params[]=$vendorFilter;
+}
 if ($search) { $where[]="(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $like="%$search%"; array_push($params,$like,$like,$like); }
 if ($stFilter) { $where[]="p.status=?"; $params[]=$stFilter; }
 if ($paidFilter === 'unset') { $where[]="(p.installation_paid IS NULL OR p.installation_paid='')"; }
 elseif ($paidFilter) { $where[]="p.installation_paid=?"; $params[]=$paidFilter; }
-if ($vendorFilter) { $where[]="p.vendor_id=?"; $params[]=$vendorFilter; }
 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
@@ -316,20 +322,25 @@ $tickets  = dbFetchAll("SELECT id,ticket_number,customer_name,description FROM t
 $hubs     = dbFetchAll("SELECT id,name FROM hubs ORDER BY name");
 $errMsg   = $_GET['err'] ?? '';
 
-// Stats
+// Stats — scoped to the vendor's own jobs when logged in as a vendor
+$_statsVendorSql = ''; $_statsVendorParams = [];
+if ($role === 'vendor') { $_statsVendorSql = ' AND vendor_id=?'; $_statsVendorParams = [$user['vendor_id'] ?? '__none__']; }
 $stats = [];
 foreach ($STATUS_LABELS as $s => $l) {
-    $stats[$s] = (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status=?",[$s])['c'] ?? 0);
+    $stats[$s] = (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status=?{$_statsVendorSql}",array_merge([$s],$_statsVendorParams))['c'] ?? 0);
 }
 $paidStats = [
-    'Yes'   => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='Yes'")['c'] ?? 0),
-    'No'    => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='No'")['c'] ?? 0),
-    'unset' => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid IS NULL OR installation_paid=''")['c'] ?? 0),
+    'Yes'   => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='Yes'{$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
+    'No'    => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='No'{$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
+    'unset' => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE (installation_paid IS NULL OR installation_paid=''){$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
 ];
 
-// For detail view
+// For detail view — vendors may only open their own jobs
 $detailId = $_GET['detail'] ?? null;
 $detailProfile = $detailId ? dbFetch("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id WHERE p.id=?",[$detailId]) : null;
+if ($detailProfile && $role === 'vendor' && ($detailProfile['vendor_id'] ?? null) !== ($user['vendor_id'] ?? null)) {
+    $detailProfile = null;
+}
 $detailComments = $detailId ? dbFetchAll("SELECT * FROM installation_comments WHERE profile_id=? ORDER BY created_at",[$detailId]) : [];
 
 $pageTitle = 'Installations';

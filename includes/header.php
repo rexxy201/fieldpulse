@@ -72,6 +72,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
     <i class="bi bi-ticket-perforated"></i> Tickets
   </a>
+  <?php else: ?>
+  <div class="nav-section">My Work</div>
+  <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
+    <i class="bi bi-ticket-perforated"></i> My Tickets
+  </a>
   <?php endif; ?>
 
   <?php if (hasPermission('customers.view')): ?>

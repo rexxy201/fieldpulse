@@ -25,6 +25,9 @@ $canEdit    = hasPermission('tickets.update');
 $canAssign  = hasPermission('tickets.assign');
 $canResolve = hasPermission('tickets.resolve');
 $canClose   = hasPermission('tickets.close');
+$isOwnVendorTicket = $role === 'vendor' && !empty($user['vendor_id']) && ($ticket['vendor_id'] ?? null) === $user['vendor_id'];
+$allVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors ORDER BY name") : [];
+$assignedVendor = !empty($ticket['vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['vendor_id']]) : null;
 
 if (method() === 'POST') {
     verifyCsrf();
@@ -42,6 +45,31 @@ if (method() === 'POST') {
         dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'escalation')",
             [newUuid(),$ticketId,$user['id'],$user['name'],'Ticket escalated' . ($note ? ": $note" : '.')]);
         auditLog('escalate','ticket',$ticketId);
+    }
+
+    // Hand this ticket to a vendor for field work — mirrors the same pattern as
+    // installation vendor (re)assignment.
+    if ($action === 'assign_vendor' && ($canEdit || $canAssign)) {
+        $newVendorId = trim($b['vendor_id'] ?? '');
+        $oldVendorId = $ticket['vendor_id'] ?? '';
+        dbRun("UPDATE tickets SET vendor_id=?, updated_at=NOW() WHERE id=?", [$newVendorId ?: null, $ticketId]);
+        $oldName = $oldVendorId ? (dbFetch("SELECT name FROM vendors WHERE id=?",[$oldVendorId])['name'] ?? 'Unknown') : 'Unassigned';
+        $newName = $newVendorId ? (dbFetch("SELECT name FROM vendors WHERE id=?",[$newVendorId])['name'] ?? 'Unknown') : 'Unassigned';
+        dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'vendor_assigned')",
+            [newUuid(),$ticketId,$user['id'],$user['name'],"Vendor changed from {$oldName} to {$newName}."]);
+        auditLog('assign_vendor','ticket',$ticketId);
+    }
+
+    // Vendor-side status update — limited to a small set of working statuses,
+    // no priority/assignment/RCA edits (those stay staff-only via the 'update' action).
+    if ($action === 'vendor_update' && $isOwnVendorTicket) {
+        $newVendorStatus = $b['status'] ?? '';
+        if (in_array($newVendorStatus, ['in_progress','pending_confirmation'], true)) {
+            dbRun("UPDATE tickets SET status=?, updated_at=NOW() WHERE id=?", [$newVendorStatus, $ticketId]);
+            dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'stage_change')",
+                [newUuid(),$ticketId,$user['id'],$user['name'],'Status updated to: '.str_replace('_',' ',ucfirst($newVendorStatus))]);
+            auditLog('update','ticket',$ticketId,'vendor_status_update');
+        }
     }
 
     if ($action === 'update' && ($canEdit || $canResolve || $canClose || $canAssign)) {
@@ -269,9 +297,46 @@ require __DIR__ . '/../includes/header.php';
           <?php endif; ?>
           <?php if ($ticket['olt']): ?><dt class="col-5 text-muted">OLT</dt><dd class="col-7"><?= htmlspecialchars($ticket['olt']) ?></dd><?php endif; ?>
           <?php if ($ticket['assigned_team']): ?><dt class="col-5 text-muted">Team</dt><dd class="col-7"><?= htmlspecialchars($ticket['assigned_team']) ?></dd><?php endif; ?>
+          <?php if ($assignedVendor): ?><dt class="col-5 text-muted">Vendor</dt><dd class="col-7"><?= htmlspecialchars($assignedVendor['name']) ?></dd><?php endif; ?>
         </dl>
       </div>
     </div>
+
+    <?php if ($canEdit || $canAssign): ?>
+    <div class="card-section mb-3">
+      <div class="card-header">Vendor</div>
+      <form method="POST" class="p-3">
+        <input type="hidden" name="_action" value="assign_vendor">
+        <?= csrfField() ?>
+        <label class="form-label small fw-semibold mb-1">Assign to Vendor</label>
+        <div class="d-flex gap-2">
+          <select name="vendor_id" class="form-select form-select-sm">
+            <option value="">— Unassigned —</option>
+            <?php foreach ($allVendors as $v): ?>
+            <option value="<?= $v['id'] ?>" <?= ($ticket['vendor_id']??'')===$v['id']?'selected':'' ?>><?= htmlspecialchars($v['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+        </div>
+        <div class="form-text">Hand this ticket to a vendor for field work — they'll see it under their own logins.</div>
+      </form>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($isOwnVendorTicket): ?>
+    <div class="card-section mb-3">
+      <div class="card-header">Update Status</div>
+      <form method="POST" class="p-3 d-flex gap-2">
+        <input type="hidden" name="_action" value="vendor_update">
+        <?= csrfField() ?>
+        <select name="status" class="form-select form-select-sm">
+          <option value="in_progress" <?= $ticket['status']==='in_progress'?'selected':'' ?>>In Progress</option>
+          <option value="pending_confirmation" <?= $ticket['status']==='pending_confirmation'?'selected':'' ?>>Pending Confirmation</option>
+        </select>
+        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+      </form>
+    </div>
+    <?php endif; ?>
 
     <?php if ($canEdit || $canResolve || $canClose || $canAssign): ?>
     <div class="card-section">

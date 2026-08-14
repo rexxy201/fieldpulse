@@ -3,17 +3,26 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 requirePermission('installations.view');
 
+$user = currentUser();
+$role = $user['role'];
+
 $search  = trim($_GET['search'] ?? '');
 $status  = $_GET['status'] ?? '';
 $paid    = $_GET['paid'] ?? '';
 $vendorId = $_GET['vendor'] ?? '';
 
 $where = []; $params = [];
+// Vendor users only ever export their own company's installation jobs — this
+// overrides any ?vendor= query param, it isn't just a default.
+if ($role === 'vendor') {
+    $where[] = "p.vendor_id = ?"; $params[] = $user['vendor_id'] ?? '__none__';
+} elseif ($vendorId) {
+    $where[] = "p.vendor_id = ?"; $params[] = $vendorId;
+}
 if ($search) { $where[] = "(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $like = "%$search%"; array_push($params, $like, $like, $like); }
 if ($status) { $where[] = "p.status = ?"; $params[] = $status; }
 if ($paid === 'unset') { $where[] = "(p.installation_paid IS NULL OR p.installation_paid = '')"; }
 elseif ($paid) { $where[] = "p.installation_paid = ?"; $params[] = $paid; }
-if ($vendorId) { $where[] = "p.vendor_id = ?"; $params[] = $vendorId; }
 $whereSQL = $where ? ' WHERE ' . implode(' AND ', $where) : '';
 
 $profiles = dbFetchAll(

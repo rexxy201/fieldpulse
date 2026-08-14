@@ -9,6 +9,8 @@ $sub  = $segments[3] ?? null;
 
 // ─── Comments sub-resource
 if ($id && $sub === 'comments') {
+    $ticketForAccess = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
+    if (!$ticketForAccess || !canAccessTicket($ticketForAccess)) jsonResponse(['error' => 'Forbidden'], 403);
     if (method() === 'GET') {
         jsonResponse(dbFetchAll("SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at", [$id]));
     }
@@ -56,16 +58,29 @@ if ($id === 'auto-dispatch' && method() === 'POST') {
 if ($id && method() === 'GET') {
     $t = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
     if (!$t) jsonResponse(['error' => 'Not found'], 404);
+    if (!canAccessTicket($t)) jsonResponse(['error' => 'Forbidden'], 403);
     jsonResponse($t);
 }
 
 // ─── Ticket PATCH
 if ($id && method() === 'PATCH') {
     $b = getBody();
+    $existingForPatch = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
+    if (!$existingForPatch) jsonResponse(['error' => 'Not found'], 404);
+    $isOwnVendorTicket = $role === 'vendor' && !empty($user['vendor_id']) && $existingForPatch['vendor_id'] === $user['vendor_id'];
+    if (!hasPermission('tickets.update') && !$isOwnVendorTicket) jsonResponse(['error' => 'Forbidden'], 403);
     // Resolve/close are separately permissioned — a caller without the specific
     // permission can't set the ticket to that status via the API either.
     if (($b['status'] ?? null) === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
     if (($b['status'] ?? null) === 'closed'   && !hasPermission('tickets.close'))   jsonResponse(['error' => 'Forbidden — missing tickets.close'], 403);
+    // Vendors may only move their own ticket between a limited set of working
+    // statuses — no priority/assignment/RCA edits via this endpoint.
+    if ($isOwnVendorTicket && !hasPermission('tickets.update')) {
+        if (isset($b['status']) && !in_array($b['status'], ['in_progress','pending_confirmation'], true)) {
+            jsonResponse(['error' => 'Forbidden — vendors may only set status to in_progress or pending_confirmation'], 403);
+        }
+        $b = array_intersect_key($b, ['status' => true]);
+    }
     $allowed = ['status','priority','assigned_to','description','olt','roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'];
     $sets = []; $vals = [];
     foreach ($allowed as $col) {
@@ -105,6 +120,7 @@ if ($id && method() === 'PATCH') {
 
 // ─── Delete
 if ($id && method() === 'DELETE') {
+    if (!hasPermission('tickets.delete')) jsonResponse(['error' => 'Forbidden'], 403);
     dbRun("DELETE FROM tickets WHERE id = ?", [$id]);
     jsonResponse(['ok' => true]);
 }

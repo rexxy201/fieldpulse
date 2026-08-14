@@ -789,8 +789,14 @@ function userDepartment(): string {
 function ticketScopeSql(string $alias = 't'): array {
     $u = currentUser();
     if (!$u) return ['1=0', []];
-    if (hasPermission('tickets.view_all')) return ['', []];
     $p = $alias ? $alias . '.' : '';
+    // Vendors aren't part of the internal permission tiers below — they see only
+    // tickets handed to their company for field work.
+    if (($u['role'] ?? '') === 'vendor') {
+        if (empty($u['vendor_id'])) return ['1=0', []];
+        return ["{$p}vendor_id = ?", [$u['vendor_id']]];
+    }
+    if (hasPermission('tickets.view_all')) return ['', []];
     $uid = $u['id'];
 
     if (hasPermission('tickets.view_department') && ($dept = userDepartment()) !== '') {
@@ -804,9 +810,12 @@ function ticketScopeSql(string $alias = 't'): array {
 
 /** Can the current user view this specific ticket row? */
 function canAccessTicket(array $ticket): bool {
-    if (hasPermission('tickets.view_all')) return true;
     $u = currentUser();
     if (!$u) return false;
+    if (($u['role'] ?? '') === 'vendor') {
+        return !empty($u['vendor_id']) && ($ticket['vendor_id'] ?? null) === $u['vendor_id'];
+    }
+    if (hasPermission('tickets.view_all')) return true;
     if (($ticket['assigned_to'] ?? null) === $u['id'] || ($ticket['created_by'] ?? null) === $u['id']) return true;
     if (hasPermission('tickets.view_department') && ($dept = userDepartment()) !== '' && !empty($ticket['fault_type_id'])) {
         $ft = dbFetch("SELECT route_to FROM fault_types WHERE id = ?", [$ticket['fault_type_id']]);

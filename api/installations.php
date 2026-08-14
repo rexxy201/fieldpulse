@@ -9,7 +9,11 @@ $id   = $segments[2] ?? null;
 $editRoles = ['admin','project_admin','supervisor-fiber'];
 
 if ($id && method() === 'GET') {
-    jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]) ?: ['error'=>'Not found']);
+    $p = dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]);
+    if (!$p) jsonResponse(['error'=>'Not found'],404);
+    if ($role === 'vendor' && $p['vendor_id'] !== ($user['vendor_id']??'')) jsonResponse(['error'=>'Forbidden'],403);
+    if (!in_array($role,$editRoles) && $role !== 'vendor' && !hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
+    jsonResponse($p);
 }
 
 if ($id && method() === 'PATCH') {
@@ -71,6 +75,10 @@ if ($id && method() === 'DELETE') {
 }
 
 if (method() === 'GET') {
+    if (!hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
+    if ($role === 'vendor') {
+        jsonResponse(dbFetchAll("SELECT * FROM installation_profiles WHERE vendor_id=? ORDER BY created_at DESC",[$user['vendor_id']??'__none__']));
+    }
     jsonResponse(dbFetchAll("SELECT * FROM installation_profiles ORDER BY created_at DESC"));
 }
 
