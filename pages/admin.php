@@ -1012,8 +1012,8 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               </div>
               <div class="mt-3 pt-3 border-top text-start">
                 <p class="small fw-semibold mb-1 text-muted">CSV Format (headers required):</p>
-                <code class="small d-block text-muted" style="font-size:.72rem">account_number, first_name, last_name, email, phone, address, mailing_city, mailing_state, plan, status, expiration</code>
-                <div class="small text-muted mt-1"><i class="bi bi-info-circle me-1"></i><strong>account_number</strong> is required — used to match existing records.</div>
+                <code class="small d-block text-muted" style="font-size:.72rem">account_number, name, email, phone, address, mailing_city, mailing_state, plan, status, expiration</code>
+                <div class="small text-muted mt-1"><i class="bi bi-info-circle me-1"></i><strong>account_number</strong> and <strong>name</strong> are required — account_number is used to match existing records. (first_name/last_name columns are also accepted instead of name.)</div>
                 <a href="/api/customers-export?template=1" class="small text-primary text-decoration-none mt-1 d-inline-block">
                   <i class="bi bi-download me-1"></i>Download template
                 </a>

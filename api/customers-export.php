@@ -10,9 +10,9 @@ if ($template) {
     header('Content-Disposition: attachment; filename="customers_template.csv"');
     header('Cache-Control: no-cache');
     $out = fopen('php://output', 'w');
-    fputcsv($out, ['account_number','first_name','last_name','email','phone','address','mailing_city','mailing_state','plan','status','expiration']);
-    fputcsv($out, ['02_0100','John','Smith','john@example.com','08033065348','12 Adeola Str','Iponri','Lagos','10 Mbps','active','2026-12-31']);
-    fputcsv($out, ['02_0101','Amaka','Obi','amaka@example.com','07011223344','5 Marina Close','Victoria Island','Lagos','5 Mbps','active','2026-11-30']);
+    fputcsv($out, ['account_number','name','email','phone','address','mailing_city','mailing_state','plan','status','expiration']);
+    fputcsv($out, ['02_0100','John Smith','john@example.com','08033065348','12 Adeola Str','Iponri','Lagos','10 Mbps','active','2026-12-31']);
+    fputcsv($out, ['02_0101','Amaka Obi','amaka@example.com','07011223344','5 Marina Close','Victoria Island','Lagos','5 Mbps','active','2026-11-30']);
     fclose($out);
     exit;
 }
