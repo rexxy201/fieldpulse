@@ -705,6 +705,10 @@ define('ALL_PERMISSIONS', [
     'inventory.requests.approve'  => 'Approve / reject stock requests',
     'inventory.movements.view'    => 'View stock movements',
     'inventory.refill'            => 'Refill / add stock',
+    // ── Payment Requests module ──
+    'payment_requests.create'  => 'Submit payment requests',
+    'payment_requests.view'    => 'View all payment requests (not just own)',
+    'payment_requests.approve' => 'Approve / reject / mark payment requests paid',
 ]);
 
 // ─── RBAC helpers ─────────────────────────────────────────────────────────────
@@ -1113,13 +1117,13 @@ if (!$_rbacDone) {
         $_defaults = [
             'admin'            => array_keys(ALL_PERMISSIONS),
             'project_admin'    => array_keys(ALL_PERMISSIONS),
-            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view'],
-            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view'],
-            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','analytics.view'],
-            'cx'               => ['tickets.create','customers.view','customers.create'],
-            'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view'],
-            'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view'],
-            'vendor'           => ['installations.view'],
+            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create'],
+            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create'],
+            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','analytics.view','payment_requests.create'],
+            'cx'               => ['tickets.create','customers.view','customers.create','payment_requests.create'],
+            'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view','payment_requests.create'],
+            'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','payment_requests.create'],
+            'vendor'           => ['installations.view','payment_requests.create'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
@@ -1525,6 +1529,72 @@ if (!$_sv13) {
         dbUpsertConfig('schema_v13_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v13 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v14: Payment Requests module ───────────────────────────────────────
+// Vendors submit requests for completed job payment; staff submit for expenses.
+// Optionally linked to an installation job or a ticket. Pending -> Approved ->
+// Paid, or Rejected (with a reason). Also backfills payment_requests.create
+// onto every non-viewer role — role_permissions was already seeded on existing
+// installs, so editing $_defaults above only affects fresh installs.
+$_k = dbKey();
+$_sv14 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v14_migrated'");
+if (!$_sv14) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_requests (
+                id                VARCHAR(36) PRIMARY KEY,
+                requester_id      VARCHAR(36) NOT NULL,
+                requester_name    VARCHAR(150),
+                vendor_id         VARCHAR(36) DEFAULT NULL,
+                linked_type       VARCHAR(20) DEFAULT NULL,
+                linked_id         VARCHAR(36) DEFAULT NULL,
+                amount            DECIMAL(12,2) NOT NULL,
+                description       TEXT,
+                status            VARCHAR(20) NOT NULL DEFAULT 'pending',
+                reviewed_by       VARCHAR(36) DEFAULT NULL,
+                reviewed_by_name  VARCHAR(150),
+                reviewed_at       TIMESTAMP DEFAULT NULL,
+                review_notes      TEXT,
+                paid_at           TIMESTAMP DEFAULT NULL,
+                payment_reference VARCHAR(150) DEFAULT NULL,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_requests` (
+                `id`                VARCHAR(36) NOT NULL,
+                `requester_id`      VARCHAR(36) NOT NULL,
+                `requester_name`    VARCHAR(150) DEFAULT NULL,
+                `vendor_id`         VARCHAR(36) DEFAULT NULL,
+                `linked_type`       VARCHAR(20) DEFAULT NULL,
+                `linked_id`         VARCHAR(36) DEFAULT NULL,
+                `amount`            DECIMAL(12,2) NOT NULL,
+                `description`       TEXT,
+                `status`            VARCHAR(20) NOT NULL DEFAULT 'pending',
+                `reviewed_by`       VARCHAR(36) DEFAULT NULL,
+                `reviewed_by_name`  VARCHAR(150) DEFAULT NULL,
+                `reviewed_at`       DATETIME DEFAULT NULL,
+                `review_notes`      TEXT,
+                `paid_at`           DATETIME DEFAULT NULL,
+                `payment_reference` VARCHAR(150) DEFAULT NULL,
+                `created_at`        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                `updated_at`        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        }
+        $_prRoles = ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor'];
+        foreach ($_prRoles as $_pr) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'payment_requests.create')", [newUuid(),$_pr]); } catch (\Throwable $e) {}
+        }
+        foreach (['admin','project_admin'] as $_pr) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'payment_requests.view')", [newUuid(),$_pr]); } catch (\Throwable $e) {}
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'payment_requests.approve')", [newUuid(),$_pr]); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v14_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v14 migration error: ' . $e->getMessage());
     }
 }
 

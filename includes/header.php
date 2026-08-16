@@ -77,6 +77,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
     <i class="bi bi-ticket-perforated"></i> My Tickets
   </a>
+  <?php if (hasPermission('payment_requests.create') || hasPermission('payment_requests.view')): ?>
+  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
+    <i class="bi bi-cash-coin"></i> My Payment Requests
+  </a>
+  <?php endif; ?>
   <?php endif; ?>
 
   <?php if (hasPermission('customers.view')): ?>
@@ -103,6 +108,12 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <div class="nav-section">Installations</div>
   <a href="/installations" class="nav-link <?= $activePath === 'installations' ? 'active' : '' ?>">
     <i class="bi bi-wifi"></i> Installations
+  </a>
+  <?php endif; ?>
+
+  <?php if ($role !== 'vendor' && (hasPermission('payment_requests.create') || hasPermission('payment_requests.view'))): ?>
+  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
+    <i class="bi bi-cash-coin"></i> Payment Requests
   </a>
   <?php endif; ?>
 
