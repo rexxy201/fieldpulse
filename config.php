@@ -663,6 +663,81 @@ define('INV_QR_DIR',     __DIR__ . '/uploads/qrcodes/');
 function invUploadUrl(): string { return siteBaseUrl() . '/uploads/products/'; }
 function invQrUrl(): string     { return siteBaseUrl() . '/uploads/qrcodes/'; }
 
+// ─── Payment request documents ─────────────────────────────────────────────────
+// Not under a web-guessable /uploads path with direct static access like the
+// inventory images above — these can be financial/receipt documents, so they're
+// only ever served through api/payment-request-document.php, which checks the
+// same ownership/permission rules as the module itself before streaming a file.
+define('PR_DOC_DIR', __DIR__ . '/uploads/payment_requests/');
+define('PR_DOC_MAX_FILES', 5);
+define('PR_DOC_MAX_BYTES', 10 * 1024 * 1024); // 10MB per file
+
+/**
+ * Validate the backing documents submitted alongside a Payment Request,
+ * WITHOUT touching disk or the database. Call this before creating the
+ * parent record so a bad upload never leaves an orphan payment request.
+ * $files is the raw $_FILES['documents'] sub-array (multi-file input).
+ * Returns ['ok'=>true,'count'=>N] or ['ok'=>false,'error'=>string].
+ */
+function validatePaymentRequestDocuments(array $files): array {
+    $allowedExt  = ['pdf','jpg','jpeg','png'];
+    $allowedMime = ['application/pdf','image/jpeg','image/png'];
+
+    $names = $files['name'] ?? [];
+    $count = 0;
+    foreach ($names as $n) { if ($n !== '') $count++; }
+    if ($count === 0) return ['ok' => true, 'count' => 0];
+    if ($count > PR_DOC_MAX_FILES) return ['ok' => false, 'error' => 'You can attach at most ' . PR_DOC_MAX_FILES . ' documents.'];
+
+    for ($i = 0; $i < $count; $i++) {
+        if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return ['ok' => false, 'error' => 'Upload failed for "' . ($files['name'][$i] ?? 'a file') . '".'];
+        }
+        if (($files['size'][$i] ?? 0) > PR_DOC_MAX_BYTES) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" is larger than 10MB.'];
+        }
+        $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExt, true)) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" — only PDF, JPG, or PNG files are accepted.'];
+        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->file($files['tmp_name'][$i]);
+        if (!in_array($mime, $allowedMime, true)) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" does not look like a valid PDF/JPG/PNG file.'];
+        }
+    }
+    return ['ok' => true, 'count' => $count];
+}
+
+/**
+ * Move + record already-validated documents against an existing payment
+ * request. Call validatePaymentRequestDocuments() first — this trusts its
+ * result and does not re-validate.
+ */
+function savePaymentRequestDocuments(array $files, string $paymentRequestId, string $uploaderId): int {
+    $names = $files['name'] ?? [];
+    $count = 0;
+    foreach ($names as $n) { if ($n !== '') $count++; }
+    if ($count === 0) return 0;
+
+    if (!is_dir(PR_DOC_DIR)) @mkdir(PR_DOC_DIR, 0755, true);
+    $saved = 0;
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    for ($i = 0; $i < $count; $i++) {
+        $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
+        $storedName = 'prdoc_' . newUuid() . '.' . $ext;
+        // Store the server-verified mime (from finfo), not the client-declared
+        // one — that's what gets echoed back as Content-Type on download.
+        $verifiedMime = $finfo->file($files['tmp_name'][$i]);
+        if (move_uploaded_file($files['tmp_name'][$i], PR_DOC_DIR . $storedName)) {
+            dbRun("INSERT INTO payment_request_documents (id,payment_request_id,original_name,stored_name,mime_type,size_bytes,uploaded_by) VALUES (?,?,?,?,?,?,?)",
+                [newUuid(), $paymentRequestId, $files['name'][$i], $storedName, $verifiedMime, $files['size'][$i] ?? null, $uploaderId]);
+            $saved++;
+        }
+    }
+    return $saved;
+}
+
 // ─── Role constants ───────────────────────────────────────────────────────────
 define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor']);
 
@@ -1595,6 +1670,49 @@ if (!$_sv14) {
         dbUpsertConfig('schema_v14_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v14 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v15: Payment Request backing documents ─────────────────────────────
+// Up to 5 optional attachments per request (pdf/jpg/png), served only through
+// api/payment-request-document.php — never linked as a direct static path.
+$_k = dbKey();
+$_sv15 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v15_migrated'");
+if (!$_sv15) {
+    try {
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_request_documents (
+                id                  VARCHAR(36) PRIMARY KEY,
+                payment_request_id  VARCHAR(36) NOT NULL,
+                original_name       VARCHAR(255),
+                stored_name         VARCHAR(255) NOT NULL,
+                mime_type           VARCHAR(100),
+                size_bytes          INT,
+                uploaded_by         VARCHAR(36),
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_request_documents` (
+                `id`                  VARCHAR(36) NOT NULL,
+                `payment_request_id`  VARCHAR(36) NOT NULL,
+                `original_name`       VARCHAR(255) DEFAULT NULL,
+                `stored_name`         VARCHAR(255) NOT NULL,
+                `mime_type`           VARCHAR(100) DEFAULT NULL,
+                `size_bytes`          INT DEFAULT NULL,
+                `uploaded_by`         VARCHAR(36) DEFAULT NULL,
+                `created_at`          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_prd_request` (`payment_request_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        }
+        if (!is_dir(PR_DOC_DIR)) @mkdir(PR_DOC_DIR, 0755, true);
+        // Deny direct web access to the storage folder — files are only ever
+        // served through the authenticated download endpoint.
+        @file_put_contents(PR_DOC_DIR . '.htaccess', "Require all denied\nDeny from all\n");
+        @file_put_contents(PR_DOC_DIR . 'index.php', "<?php http_response_code(403); exit;\n");
+        dbUpsertConfig('schema_v15_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v15 migration error: ' . $e->getMessage());
     }
 }
 

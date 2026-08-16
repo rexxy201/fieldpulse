@@ -45,17 +45,20 @@ $err = '';
 if (method() === 'POST' && !isset($_POST['ajax'])) {
     verifyCsrf();
     $b = $_POST;
-    if ($b['_action'] ?? '' === 'create') {
+    if (($b['_action'] ?? '') === 'create') {
         $amount = trim($b['amount'] ?? '');
         $desc   = trim($b['description'] ?? '');
         $linkedType = in_array($b['linked_type'] ?? '', ['installation','ticket'], true) ? $b['linked_type'] : null;
         $linkedId   = $linkedType ? trim($b['linked_id'] ?? '') : null;
+        $docCheck   = validatePaymentRequestDocuments($_FILES['documents'] ?? []);
         if ($amount === '' || !is_numeric($amount) || (float)$amount <= 0) {
             $err = 'A valid amount is required.';
         } elseif ($desc === '') {
             $err = 'Description is required.';
         } elseif ($linkedType && !$linkedId) {
             $err = 'Select the linked record, or set Link Type back to None.';
+        } elseif (!$docCheck['ok']) {
+            $err = $docCheck['error'];
         } else {
             // Vendors always attach their own company; staff may optionally attach
             // a vendor if the expense was incurred on that vendor's behalf.
@@ -73,6 +76,7 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
             dbRun("INSERT INTO payment_requests (id,requester_id,requester_name,vendor_id,linked_type,linked_id,amount,description,status)
                    VALUES (?,?,?,?,?,?,?,?,'pending')",
                 [$newPrId, $user['id'], $user['name'], $vendorId, $linkedType, $linkedId, $amount, $desc]);
+            if (!empty($_FILES['documents'])) savePaymentRequestDocuments($_FILES['documents'], $newPrId, $user['id']);
             auditLog('create','payment_request', $newPrId);
             header('Location: /payment-requests'); exit;
         }
@@ -115,6 +119,16 @@ $ticketLabels = [];
 if ($ticketIds) {
     $ph = implode(',', array_fill(0, count($ticketIds), '?'));
     foreach (dbFetchAll("SELECT id,ticket_number,customer_name FROM tickets WHERE id IN ($ph)", $ticketIds) as $tk) $ticketLabels[$tk['id']] = $tk['ticket_number'].' — '.$tk['customer_name'];
+}
+
+// Attached documents for the listed requests
+$docsByRequest = [];
+if ($requests) {
+    $reqIds = array_column($requests, 'id');
+    $ph = implode(',', array_fill(0, count($reqIds), '?'));
+    foreach (dbFetchAll("SELECT id,payment_request_id,original_name,mime_type FROM payment_request_documents WHERE payment_request_id IN ($ph) ORDER BY created_at", $reqIds) as $d) {
+        $docsByRequest[$d['payment_request_id']][] = $d;
+    }
 }
 
 // Stats (same scope, ignoring status filter)
@@ -176,17 +190,18 @@ require __DIR__ . '/../includes/header.php';
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light"><tr>
         <th class="ps-3">Requested By</th><th>Vendor</th><th>Linked To</th><th class="text-end">Amount</th>
-        <th>Description</th><th>Date</th><th class="text-center">Status</th>
+        <th>Description</th><th>Docs</th><th>Date</th><th class="text-center">Status</th>
         <?php if ($canApprove): ?><th class="text-end pe-3">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
         <?php if (!$requests): ?>
-        <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
+        <tr><td colspan="9" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
         <?php endif; ?>
         <?php foreach ($requests as $r):
           $sc = ['pending'=>'text-bg-warning','approved'=>'text-bg-primary','paid'=>'text-bg-success','rejected'=>'text-bg-danger'][$r['status']] ?? 'text-bg-secondary';
           $linkLabel = $r['linked_type']==='installation' ? ($installLabels[$r['linked_id']] ?? null)
                      : ($r['linked_type']==='ticket' ? ($ticketLabels[$r['linked_id']] ?? null) : null);
+          $reqDocs = $docsByRequest[$r['id']] ?? [];
         ?>
         <tr id="pr-<?= $r['id'] ?>">
           <td class="ps-3 small fw-semibold"><?= htmlspecialchars($r['requester_name'] ?? '—') ?></td>
@@ -198,6 +213,15 @@ require __DIR__ . '/../includes/header.php';
           </td>
           <td class="text-end fw-semibold">₦<?= number_format((float)$r['amount'], 2) ?></td>
           <td class="small text-truncate" style="max-width:220px" title="<?= htmlspecialchars($r['description']) ?>"><?= htmlspecialchars($r['description']) ?></td>
+          <td class="small">
+            <?php if ($reqDocs): ?>
+            <?php foreach ($reqDocs as $d): ?>
+            <a href="/api/payment-request-document?id=<?= $d['id'] ?>" target="_blank" rel="noopener" class="d-block text-truncate" style="max-width:140px" title="<?= htmlspecialchars($d['original_name']) ?>">
+              <i class="bi bi-<?= $d['mime_type']==='application/pdf'?'file-earmark-pdf':'file-earmark-image' ?> me-1"></i><?= htmlspecialchars($d['original_name']) ?>
+            </a>
+            <?php endforeach; ?>
+            <?php else: ?><span class="text-muted">—</span><?php endif; ?>
+          </td>
           <td class="small text-muted text-nowrap"><?= date('d M Y', strtotime($r['created_at'])) ?></td>
           <td class="text-center"><span class="badge <?= $sc ?>"><?= ucfirst($r['status']) ?></span></td>
           <?php if ($canApprove): ?>
@@ -219,7 +243,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($r['review_notes']): ?>
         <tr class="<?= $sc==='text-bg-danger'?'table-danger':'' ?>">
           <td></td>
-          <td colspan="<?= $canApprove?'6':'5' ?>" class="small text-muted fst-italic py-1">
+          <td colspan="<?= $canApprove?'8':'7' ?>" class="small text-muted fst-italic py-1">
             <i class="bi bi-chat-left-quote me-1"></i><?= htmlspecialchars($r['reviewed_by_name'] ?? '') ?>: “<?= htmlspecialchars($r['review_notes']) ?>”
           </td>
         </tr>
@@ -227,7 +251,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($r['status']==='paid'): ?>
         <tr class="table-success">
           <td></td>
-          <td colspan="<?= $canApprove?'6':'5' ?>" class="small text-muted py-1">
+          <td colspan="<?= $canApprove?'8':'7' ?>" class="small text-muted py-1">
             <i class="bi bi-check-circle me-1"></i>Paid <?= date('d M Y', strtotime($r['paid_at'])) ?><?= $r['payment_reference'] ? ' — Ref: '.htmlspecialchars($r['payment_reference']) : '' ?>
           </td>
         </tr>
@@ -242,7 +266,7 @@ require __DIR__ . '/../includes/header.php';
 <!-- ── New Payment Request Modal ──────────────────────────────────────────── -->
 <div class="modal fade" id="newRequestModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
-    <form method="POST">
+    <form method="POST" enctype="multipart/form-data">
       <input type="hidden" name="_action" value="create">
       <?= csrfField() ?>
       <div class="modal-header">
@@ -295,6 +319,11 @@ require __DIR__ . '/../includes/header.php';
             <option value="<?= $tk['id'] ?>"><?= htmlspecialchars($tk['ticket_number'].' — '.$tk['customer_name']) ?></option>
             <?php endforeach; ?>
           </select>
+        </div>
+        <div class="mb-1">
+          <label class="form-label fw-semibold small">Backing Documents <span class="text-muted fw-normal">(optional — up to 5, PDF/JPG/PNG)</span></label>
+          <input type="file" name="documents[]" id="docsInput" class="form-control form-control-sm" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onchange="checkDocsCount(this)">
+          <div class="form-text text-danger d-none" id="docsCountWarn">You can attach at most 5 documents.</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -371,6 +400,9 @@ let linkInstallTS = null, linkTicketTS = null;
 document.addEventListener('DOMContentLoaded', function () {
   linkInstallTS = new TomSelect('#linkInstallSelect', { create:false, sortField:{field:'text',direction:'asc'} });
   linkTicketTS  = new TomSelect('#linkTicketSelect',  { create:false, sortField:{field:'text',direction:'asc'} });
+  <?php if ($err): ?>
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
+  <?php endif; ?>
 });
 function toggleLinkPicker(v) {
   // Both selects share name="linked_id" — only the visible one should be
@@ -380,6 +412,12 @@ function toggleLinkPicker(v) {
   document.getElementById('linkInstallSelect').disabled = v !== 'installation';
   document.getElementById('linkTicketWrap').classList.toggle('d-none', v !== 'ticket');
   document.getElementById('linkTicketSelect').disabled = v !== 'ticket';
+}
+function checkDocsCount(input) {
+  const warn = document.getElementById('docsCountWarn');
+  const tooMany = input.files.length > 5;
+  warn.classList.toggle('d-none', !tooMany);
+  input.classList.toggle('is-invalid', tooMany);
 }
 </script>
 <?php endif; ?>
