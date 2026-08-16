@@ -1,9 +1,13 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/mangonetcom/public_html/fieldpulse
-    - /bin/cp index.html $DEPLOYPATH
+    - export DEPLOYPATH=/home/mangonetcom/fieldpulse.mangonetonline.com/
+    - /bin/cp -R index.php $DEPLOYPATH
+    - /bin/cp -R pages $DEPLOYPATH
+    - /bin/cp -R api $DEPLOYPATH
+    - /bin/cp -R includes $DEPLOYPATH
     - /bin/cp -R assets $DEPLOYPATH
-    - /bin/cp -R css $DEPLOYPATH
-    - /bin/cp -R js $DEPLOYPATH
-    - /bin/cp -R images $DEPLOYPATH
+    - /bin/cp -R vendor $DEPLOYPATH
+    - /bin/cp composer.json $DEPLOYPATH
+    - /bin/cp composer.lock $DEPLOYPATH
+    - /bin/cp .htaccess $DEPLOYPATH
