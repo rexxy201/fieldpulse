@@ -8,6 +8,12 @@ if (currentUser()['role'] === 'vendor' && hasPermission('installations.view')) {
     header('Location: /installations'); exit;
 }
 
+// Finance roles have no dashboard widgets either — send them to the Finance
+// dashboard IF they can access it (same redirect-loop guard as above).
+if (in_array(currentUser()['role'], ['accountant','accounts_receivable','accounts_payable'], true) && hasPermission('finance.view')) {
+    header('Location: /finance'); exit;
+}
+
 // ── Ticket visibility scope (department supervisors see only their dept) ──────
 [$_tScope, $_tParams] = ticketScopeSql('');
 $_tWhere = $_tScope ? "WHERE $_tScope" : '';          // for queries with no other WHERE

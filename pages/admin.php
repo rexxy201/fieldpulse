@@ -141,6 +141,11 @@ if (method() === 'POST') {
         dbUpsertConfig('opsDigestEmails', trim($b['opsDigestEmails'] ?? ''));
         $msg = 'Ops digest settings saved.';
     }
+    if ($action === 'save_finance_digest_settings') {
+        dbUpsertConfig('financeDigestEnabled', !empty($b['financeDigestEnabled']) ? '1' : '0');
+        dbUpsertConfig('financeDigestEmails', trim($b['financeDigestEmails'] ?? ''));
+        $msg = 'Finance digest settings saved.';
+    }
     if ($action === 'save_permissions') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
@@ -833,6 +838,40 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         <div class="alert alert-light border mt-3 mb-0 small">
           <i class="bi bi-info-circle me-1"></i>Add a cPanel Cron Job (weekly is typical) hitting:
           <code>https://<?= htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') ?>/api/ops-digest</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Finance Digest -->
+    <div class="card-section mt-3">
+      <div class="card-header">
+        <i class="bi bi-cash-coin me-1 text-primary"></i>Automated Finance Digest
+      </div>
+      <div class="p-4">
+        <p class="text-muted small mb-4">
+          A narrative summary of payment request + installation payment activity, emailed to whoever you list below.
+          Needs a cron job to actually send on a schedule — see the note after saving.
+        </p>
+        <form method="POST" id="financeDigestForm">
+          <input type="hidden" name="_action" value="save_finance_digest_settings">
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="financeDigestEnabledSwitch" name="financeDigestEnabled" value="1"
+              <?= ($cfg['financeDigestEnabled'] ?? '0') === '1' ? 'checked' : '' ?>>
+            <label class="form-check-label fw-semibold" for="financeDigestEnabledSwitch">Enable finance digest</label>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Recipient Emails</label>
+            <input type="text" name="financeDigestEmails" class="form-control"
+              value="<?= htmlspecialchars($cfg['financeDigestEmails'] ?? '') ?>" placeholder="accountant@mangonetonline.com, finance@mangonetonline.com">
+            <div class="form-text">Comma-separated. Sent to all of them each time the digest runs.</div>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-floppy me-1"></i>Save Finance Digest Settings
+          </button>
+        </form>
+        <div class="alert alert-light border mt-3 mb-0 small">
+          <i class="bi bi-info-circle me-1"></i>Add a cPanel Cron Job (weekly is typical) hitting:
+          <code>https://<?= htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') ?>/api/finance-digest</code>
         </div>
       </div>
     </div>

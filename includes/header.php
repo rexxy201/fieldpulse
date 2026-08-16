@@ -111,7 +111,15 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   </a>
   <?php endif; ?>
 
-  <?php if ($role !== 'vendor' && (hasPermission('payment_requests.create') || hasPermission('payment_requests.view'))): ?>
+  <?php if (hasPermission('finance.view')): ?>
+  <div class="nav-section">Finance</div>
+  <a href="/finance" class="nav-link <?= $activePath === 'finance' ? 'active' : '' ?>">
+    <i class="bi bi-graph-up-arrow"></i> Finance Dashboard
+  </a>
+  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
+    <i class="bi bi-cash-coin"></i> Payment Requests
+  </a>
+  <?php elseif ($role !== 'vendor' && (hasPermission('payment_requests.create') || hasPermission('payment_requests.view'))): ?>
   <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
     <i class="bi bi-cash-coin"></i> Payment Requests
   </a>

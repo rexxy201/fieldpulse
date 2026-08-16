@@ -739,7 +739,7 @@ function savePaymentRequestDocuments(array $files, string $paymentRequestId, str
 }
 
 // ─── Role constants ───────────────────────────────────────────────────────────
-define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor']);
+define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable']);
 
 // ─── Permission definitions ────────────────────────────────────────────────────
 define('ALL_PERMISSIONS', [
@@ -758,6 +758,7 @@ define('ALL_PERMISSIONS', [
     'installations.view'   => 'View installations',
     'installations.create' => 'Create installation profiles',
     'installations.update' => 'Update installations',
+    'installations.financial' => 'Update payment fields only (Amount Paid, Cost, Payment Confirmed Date, Installation Paid) — no stage/vendor/plan',
     'schedule.view'        => 'View schedule',
     'map.view'             => 'View field map',
     'team.view'            => 'View team page',
@@ -784,6 +785,8 @@ define('ALL_PERMISSIONS', [
     'payment_requests.create'  => 'Submit payment requests',
     'payment_requests.view'    => 'View all payment requests (not just own)',
     'payment_requests.approve' => 'Approve / reject / mark payment requests paid',
+    // ── Finance module ──
+    'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
 ]);
 
 // ─── RBAC helpers ─────────────────────────────────────────────────────────────
@@ -1199,6 +1202,9 @@ if (!$_rbacDone) {
             'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view','payment_requests.create'],
             'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','payment_requests.create'],
             'vendor'           => ['installations.view','payment_requests.create'],
+            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.approve','reports.view','analytics.view','finance.view'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
@@ -1713,6 +1719,44 @@ if (!$_sv15) {
         dbUpsertConfig('schema_v15_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v15 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v16: Finance department roles ──────────────────────────────────────
+// Accountant = full financial oversight (Payment Requests + installation
+// financials + customer billing + reports). Accounts Receivable = money coming
+// in (installation payments, customer billing). Accounts Payable = money going
+// out (Payment Request approvals). Mirrors the existing cx_supervisor/cx split.
+$_k = dbKey();
+$_sv16 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v16_migrated'");
+if (!$_sv16) {
+    try {
+        $_financeRoles = [
+            ['accountant',           'Accountant'],
+            ['accounts_receivable',  'Accounts Receivable'],
+            ['accounts_payable',     'Accounts Payable'],
+        ];
+        foreach ($_financeRoles as [$_rn, $_rl]) {
+            dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES (?,?,?,1)", [$_rn, $_rl, 'finance']);
+        }
+
+        $_financePerms = [
+            'accountant' => ['payment_requests.create','payment_requests.view','payment_requests.approve',
+                              'installations.view','installations.financial','customers.view',
+                              'reports.view','analytics.view','finance.view'],
+            'accounts_receivable' => ['installations.view','installations.financial','customers.view',
+                                       'reports.view','analytics.view','finance.view'],
+            'accounts_payable' => ['payment_requests.create','payment_requests.view','payment_requests.approve',
+                                    'reports.view','analytics.view','finance.view'],
+        ];
+        foreach ($_financePerms as $_r => $_perms) {
+            foreach ($_perms as $_p) {
+                try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),$_r,$_p]); } catch (\Throwable $e) {}
+            }
+        }
+        dbUpsertConfig('schema_v16_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v16 migration error: ' . $e->getMessage());
     }
 }
 

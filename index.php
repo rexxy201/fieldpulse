@@ -65,6 +65,7 @@ $pages = [
     'reports'       => 'reports',
     'admin'         => 'admin',
     'payment-requests' => 'payment-requests',
+    'finance'       => 'finance',
 ];
 
 if (isset($pages[$page])) {

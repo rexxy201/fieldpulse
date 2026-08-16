@@ -6,6 +6,9 @@ requirePermission('installations.view');
 $user     = currentUser();
 $role     = $user['role'];
 $canEdit  = hasPermission('installations.create') || hasPermission('installations.update');
+// Finance roles: payment fields only, no stage/vendor/plan/etc. If a user has
+// full edit rights too (e.g. admin), the full Edit modal already covers this.
+$canFinance = !$canEdit && hasPermission('installations.financial');
 
 $STATUS_LABELS = [
     'pending'             => 'Unassigned',
@@ -189,6 +192,32 @@ if (method() === 'POST') {
                 }
 
                 $msg = 'Profile updated.';
+            }
+        }
+    }
+    if ($action === 'update_financial' && $canFinance) {
+        $pid = $b['profile_id'] ?? '';
+        if ($pid) {
+            $existing = dbFetch("SELECT payment_confirmed_at FROM installation_profiles WHERE id=?", [$pid]);
+            if ($existing) {
+                $paymentAt = trim($b['payment_confirmed_at'] ?? '');
+                $amountPaidRaw = $b['amount_paid'] ?? '';
+                $financeErr = null;
+                if (trim($b['installation_cost'] ?? '') === '') {
+                    $financeErr = 'Cost of Installation is required.';
+                } elseif (trim($b['installation_paid'] ?? '') === '') {
+                    $financeErr = 'Installation Paid is required.';
+                } elseif ($paymentAt !== '' && $paymentAt !== ($existing['payment_confirmed_at'] ? date('Y-m-d', strtotime($existing['payment_confirmed_at'])) : '') && $amountPaidRaw === '') {
+                    $financeErr = 'Amount paid is required when setting the payment confirmation date.';
+                }
+                if ($financeErr) {
+                    header('Location: /installations?err=' . urlencode($financeErr) . '#profile-'.$pid); exit;
+                }
+                $slaDue = $paymentAt ? addWorkingDays($paymentAt, INSTALLATION_SLA_WORKING_DAYS) : null;
+                dbRun("UPDATE installation_profiles SET payment_confirmed_at=?, sla_due_at=?, amount_paid=?, installation_cost=?, installation_paid=?, updated_at=NOW() WHERE id=?",
+                    [$paymentAt?:null, $slaDue, $amountPaidRaw!==''?$amountPaidRaw:null, trim($b['installation_cost']??''), $b['installation_paid']?:null, $pid]);
+                auditLog('update_financial', 'installation_profile', $pid);
+                $msg = 'Payment info updated.';
             }
         }
     }
@@ -442,6 +471,8 @@ require __DIR__ . '/../includes/header.php';
                 <?= csrfField() ?>
                 <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
               </form>
+              <?php elseif ($canFinance): ?>
+              <button class="btn btn-sm btn-outline-primary py-0" onclick="openEditFinancial(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)" title="Update Payment Info"><i class="bi bi-cash-coin"></i></button>
               <?php endif; ?>
             </div>
           </td>
@@ -601,6 +632,48 @@ require __DIR__ . '/../includes/header.php';
     </div>
   </div>
 </div>
+<?php endif; ?>
+
+<!-- Update Payment Info Modal — finance roles (installations.financial), no full edit -->
+<?php if ($canFinance): ?>
+<div class="modal fade" id="editFinancialModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="POST"><input type="hidden" name="_action" value="update_financial">
+      <input type="hidden" name="profile_id" id="efProfileId">
+      <?= csrfField() ?>
+      <div class="modal-header"><h5 class="modal-title" id="efModalTitle"><i class="bi bi-cash-coin me-1 text-primary"></i>Update Payment Info</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
+            <input type="date" name="payment_confirmed_at" id="efPaymentDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
+            <div class="form-text">Setting/changing this requires Amount Paid below.</div>
+          </div>
+          <div class="col-6"><label class="form-label small fw-semibold">Amount Paid</label><input type="number" step="0.01" min="0" name="amount_paid" id="efAmountPaid" class="form-control form-control-sm"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Cost of Installation <span class="text-danger">*</span></label><input type="number" step="0.01" min="0" name="installation_cost" id="efInstallationCost" class="form-control form-control-sm" required></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Installation Paid <span class="text-danger">*</span></label>
+            <select name="installation_paid" id="efInstallationPaid" class="form-select form-select-sm" required>
+              <option value="">— Select —</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-floppy me-1"></i>Save</button></div>
+    </form>
+  </div></div>
+</div>
+<script>
+function openEditFinancial(p) {
+  document.getElementById('efProfileId').value       = p.id || '';
+  document.getElementById('efModalTitle').innerHTML   = '<i class="bi bi-cash-coin me-1 text-primary"></i>Update Payment Info: ' + (p.name || '');
+  document.getElementById('efPaymentDate').value      = p.payment_confirmed_at ? p.payment_confirmed_at.substring(0,10) : '';
+  document.getElementById('efAmountPaid').value       = p.amount_paid ?? '';
+  document.getElementById('efInstallationCost').value = p.installation_cost ?? '';
+  document.getElementById('efInstallationPaid').value = p.installation_paid || '';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('editFinancialModal')).show();
+}
+</script>
 <?php endif; ?>
 
 <!-- Add Profile Modal -->
