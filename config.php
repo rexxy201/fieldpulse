@@ -2087,6 +2087,28 @@ if (!$_sv23) {
     }
 }
 
+// ─── Schema v24: Payment Request type (Customer / Deployment / Operational) ──
+// Customer-tied requests must carry customer_name + customer_user_id (feeds
+// the Customers module); Deployment requests aren't tied to a specific
+// customer so those fields stay optional; Operational requests don't involve
+// a customer at all. Existing records default to 'deployment' — the closest
+// fit to the old behavior where customer fields were always optional.
+$_k = dbKey();
+$_sv24 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v24_migrated'");
+if (!$_sv24) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `request_type` VARCHAR(20) DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS request_type VARCHAR(20)"); } catch (\Throwable $e) {}
+        }
+        try { dbRun("UPDATE payment_requests SET request_type='deployment' WHERE request_type IS NULL"); } catch (\Throwable $e) {}
+        dbUpsertConfig('schema_v24_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v24 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.

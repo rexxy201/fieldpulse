@@ -29,6 +29,7 @@ $balance = round((float)$r['amount'] - (float)$r['amount_paid'], 2);
 $appCfg = getAppConfig();
 $co = htmlspecialchars($appCfg['companyName'] ?? 'MangoNet Integrated Technologies Limited');
 $categories = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials'];
+$requestTypes = ['customer' => 'Customer', 'deployment' => 'Deployment', 'operational' => 'Operational'];
 $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
 ?>
 <!DOCTYPE html>
@@ -92,9 +93,19 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
     <div class="field"><label>Department</label><div class="value"><?= htmlspecialchars($r['department'] ?? '') ?></div></div>
   </div>
   <div class="field-row">
+    <div class="field checkbox-group">
+      <label>Request Type</label>
+      <?php foreach ($requestTypes as $rtKey => $rtLabel): ?>
+      <span class="<?= $r['request_type']===$rtKey?'checked':'' ?>"><?= $r['request_type']===$rtKey?'☑':'☐' ?> <?= $rtLabel ?></span>
+      <?php endforeach; ?>
+    </div>
+  </div>
+  <?php if ($r['request_type'] !== 'operational'): ?>
+  <div class="field-row">
     <div class="field"><label>Customer Name</label><div class="value"><?= htmlspecialchars($r['customer_name'] ?? '') ?></div></div>
     <div class="field"><label>Customer User ID</label><div class="value"><?= htmlspecialchars($r['customer_user_id'] ?? '') ?></div></div>
   </div>
+  <?php endif; ?>
   <div class="field-row">
     <div class="field"><label>Location / City</label><div class="value"><?= htmlspecialchars($r['location'] ?? '') ?></div></div>
     <div class="field"><label>POP</label><div class="value"><?= htmlspecialchars($r['hub_name'] ?? '') ?></div></div>

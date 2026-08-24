@@ -60,8 +60,11 @@ $co = htmlspecialchars($appCfg['companyName'] ?? 'MangoNet Integrated Technologi
     <div class="field"><label>Department</label><div class="line"></div></div>
   </div>
   <div class="field-row">
-    <div class="field"><label>Customer Name</label><div class="line"></div></div>
-    <div class="field"><label>Customer User ID</label><div class="line"></div></div>
+    <div class="field checkbox-group"><label>Request Type</label><span>☐ Customer</span><span>☐ Deployment</span><span>☐ Operational</span></div>
+  </div>
+  <div class="field-row">
+    <div class="field"><label>Customer Name <span style="font-weight:normal">(required for Customer type)</span></label><div class="line"></div></div>
+    <div class="field"><label>Customer User ID <span style="font-weight:normal">(required for Customer type)</span></label><div class="line"></div></div>
   </div>
   <div class="field-row">
     <div class="field"><label>Location / City</label><div class="line"></div></div>

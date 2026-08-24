@@ -18,6 +18,12 @@ if (!$canCreate && !$canView) { header('Location: /dashboard'); exit; }
 $isVendor = $role === 'vendor';
 
 const PR_CATEGORIES = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials','Other'];
+// Request Type controls whether this voucher is tied to a customer record.
+// 'customer' — Customer Name + Customer User ID are compulsory (feeds the
+//   Customers module). 'deployment' — customer fields shown but optional
+//   (not tied to a specific customer). 'operational' — customer fields are
+//   not offered at all (internal/admin spend, no customer involved).
+const PR_REQUEST_TYPES = ['customer' => 'Customer', 'deployment' => 'Deployment', 'operational' => 'Operational'];
 
 // ─── AJAX authorize / approve / reject / return / disburse ──────────────────
 if (method() === 'POST' && isset($_POST['ajax'])) {
@@ -134,6 +140,9 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
         $capexOpex  = in_array($b['capex_opex'] ?? '', ['Capex','Opex'], true) ? $b['capex_opex'] : '';
         $priority   = in_array($b['priority'] ?? '', ['High','Medium','Low'], true) ? $b['priority'] : '';
         $dateOfReq  = trim($b['date_of_request'] ?? '') ?: date('Y-m-d');
+        $requestType = array_key_exists($b['request_type'] ?? '', PR_REQUEST_TYPES) ? $b['request_type'] : '';
+        $custName   = trim($b['customer_name'] ?? '');
+        $custUserId = trim($b['customer_user_id'] ?? '');
         $docCheck   = validatePaymentRequestDocuments($_FILES['documents'] ?? []);
 
         // Build + validate line items — empty rows (no description and no price) are dropped.
@@ -164,6 +173,10 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
             $err = 'Category is required.';
         } elseif ($category === 'Other' && $categoryOther === '') {
             $err = 'Please specify the category under "Other".';
+        } elseif ($requestType === '') {
+            $err = 'Request Type is required.';
+        } elseif ($requestType === 'customer' && ($custName === '' || $custUserId === '')) {
+            $err = 'Customer Name and Customer User ID are required for a Customer request.';
         } elseif ($capexOpex === '') {
             $err = 'Capex / Opex is required.';
         } elseif ($priority === '') {
@@ -186,12 +199,16 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                 if (!$t || $t['vendor_id'] !== $vendorId) { $linkedId = null; $linkedType = null; }
             }
             $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['location'] ?? '');
+            // Operational requests never carry a customer, regardless of what
+            // was posted — the fields are hidden client-side, enforce it server-side too.
+            $storedCustName   = $requestType === 'operational' ? null : ($custName ?: null);
+            $storedCustUserId = $requestType === 'operational' ? null : ($custUserId ?: null);
 
             if ($formAction === 'resubmit') {
                 $prId = $resubmitId;
                 dbRun("UPDATE payment_requests SET
                         vendor_id=?, linked_type=?, linked_id=?, amount=?, description=?, status='pending',
-                        date_of_request=?, department=?, customer_name=?, customer_user_id=?, location=?, hub_id=?,
+                        date_of_request=?, department=?, request_type=?, customer_name=?, customer_user_id=?, location=?, hub_id=?,
                         category=?, category_other=?, capex_opex=?, receiver=?, priority=?,
                         original_amount=NULL,
                         authorized_by=NULL, authorized_by_name=NULL, authorized_at=NULL,
@@ -200,7 +217,7 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                         returned_by=NULL, returned_by_name=NULL, returned_at=NULL, return_notes=NULL
                        WHERE id=?",
                     [$vendorId, $linkedType, $linkedId, $grandTotal, $desc,
-                     $dateOfReq, trim($b['department']??'')?:null, trim($b['customer_name']??'')?:null, trim($b['customer_user_id']??'')?:null,
+                     $dateOfReq, trim($b['department']??'')?:null, $requestType, $storedCustName, $storedCustUserId,
                      trim($b['location']??'')?:null, $hubId?:null, $category, $category==='Other'?$categoryOther:null,
                      $capexOpex, trim($b['receiver']??'')?:null, $priority, $prId]);
                 dbRun("DELETE FROM payment_request_items WHERE payment_request_id=?", [$prId]);
@@ -209,11 +226,11 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                 $prId = newUuid();
                 dbRun("INSERT INTO payment_requests
                         (id,requester_id,requester_name,vendor_id,linked_type,linked_id,amount,description,status,
-                         date_of_request,department,customer_name,customer_user_id,location,hub_id,category,category_other,
+                         date_of_request,department,request_type,customer_name,customer_user_id,location,hub_id,category,category_other,
                          capex_opex,receiver,priority)
-                       VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?)",
+                       VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,?)",
                     [$prId, $user['id'], $user['name'], $vendorId, $linkedType, $linkedId, $grandTotal, $desc,
-                     $dateOfReq, trim($b['department']??'')?:null, trim($b['customer_name']??'')?:null, trim($b['customer_user_id']??'')?:null,
+                     $dateOfReq, trim($b['department']??'')?:null, $requestType, $storedCustName, $storedCustUserId,
                      trim($b['location']??'')?:null, $hubId?:null, $category, $category==='Other'?$categoryOther:null,
                      $capexOpex, trim($b['receiver']??'')?:null, $priority]);
                 auditLog('create','payment_request', $prId);
@@ -292,6 +309,7 @@ if ($ownReturnedIds) {
         $resubmitData[$r['id']] = [
             'date_of_request'  => $r['date_of_request'],
             'department'       => $r['department'],
+            'request_type'     => $r['request_type'],
             'customer_name'    => $r['customer_name'],
             'customer_user_id' => $r['customer_user_id'],
             'location'         => $r['location'],
@@ -431,13 +449,13 @@ require __DIR__ . '/../includes/header.php';
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light"><tr>
-        <th class="ps-3">Requested By</th><th>Vendor</th><th>Category</th><th>Priority</th><th>Linked To</th><th class="text-end">Amount</th>
+        <th class="ps-3">Requested By</th><th>Vendor</th><th>Type</th><th>Category</th><th>Priority</th><th>Linked To</th><th class="text-end">Amount</th>
         <th>Docs</th><th>Date</th><th class="text-center">Status</th><th></th>
         <?php if ($canReview || $canCreate): ?><th class="text-end pe-3">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
         <?php if (!$requests): ?>
-        <tr><td colspan="11" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
+        <tr><td colspan="12" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
         <?php endif; ?>
         <?php foreach ($requests as $r):
           $sc = $STATUS_COLORS[$r['status']] ?? 'text-bg-secondary';
@@ -450,6 +468,7 @@ require __DIR__ . '/../includes/header.php';
         <tr id="pr-<?= $r['id'] ?>">
           <td class="ps-3 small fw-semibold"><?= htmlspecialchars($r['requester_name'] ?? '—') ?></td>
           <td class="small"><?= htmlspecialchars($r['vendor_name'] ?? '—') ?></td>
+          <td class="small"><?= htmlspecialchars(PR_REQUEST_TYPES[$r['request_type']] ?? '—') ?></td>
           <td class="small"><?= htmlspecialchars($r['category'] ?: '—') ?></td>
           <td class="small fw-semibold <?= $prioColor ?>"><?= htmlspecialchars($r['priority'] ?: '—') ?></td>
           <td class="small">
@@ -506,7 +525,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($r['review_notes']): ?>
         <tr class="<?= $sc==='text-bg-danger'?'table-danger':'' ?>">
           <td></td>
-          <td colspan="<?= ($canReview||$canCreate)?10:9 ?>" class="small text-muted fst-italic py-1">
+          <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-muted fst-italic py-1">
             <i class="bi bi-chat-left-quote me-1"></i><?= htmlspecialchars($r['reviewed_by_name'] ?? '') ?>: “<?= htmlspecialchars($r['review_notes']) ?>”
           </td>
         </tr>
@@ -514,7 +533,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($r['status']==='returned' && $r['return_notes']): ?>
         <tr class="table-warning">
           <td></td>
-          <td colspan="<?= ($canReview||$canCreate)?10:9 ?>" class="small text-muted fst-italic py-1">
+          <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-muted fst-italic py-1">
             <i class="bi bi-arrow-return-left me-1"></i><?= htmlspecialchars($r['returned_by_name'] ?? '') ?> returned this for edits: “<?= htmlspecialchars($r['return_notes']) ?>”
           </td>
         </tr>
@@ -522,7 +541,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($r['status']==='disbursed'): ?>
         <tr class="table-success">
           <td></td>
-          <td colspan="<?= ($canReview||$canCreate)?10:9 ?>" class="small text-muted py-1">
+          <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-muted py-1">
             <i class="bi bi-check-circle me-1"></i>Disbursed <?= date('d M Y', strtotime($r['paid_at'])) ?><?= $r['payment_reference'] ? ' — Ref: '.htmlspecialchars($r['payment_reference']) : '' ?>
           </td>
         </tr>
@@ -555,8 +574,15 @@ require __DIR__ . '/../includes/header.php';
             <input type="date" name="date_of_request" id="prDate" class="form-control form-control-sm" value="<?= date('Y-m-d') ?>" max="<?= date('Y-m-d') ?>">
           </div>
           <div class="col-6"><label class="form-label small fw-semibold">Department</label><input type="text" name="department" id="prDept" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Customer Name</label><input type="text" name="customer_name" id="prCustName" class="form-control form-control-sm"></div>
-          <div class="col-6"><label class="form-label small fw-semibold">Customer User ID</label><input type="text" name="customer_user_id" id="prCustUserId" class="form-control form-control-sm"></div>
+          <div class="col-6"><label class="form-label small fw-semibold">Request Type <span class="text-danger">*</span></label>
+            <select name="request_type" id="prRequestType" class="form-select form-select-sm" onchange="toggleRequestType(this.value)" required>
+              <option value="">— Select —</option>
+              <?php foreach (PR_REQUEST_TYPES as $rtKey => $rtLabel): ?><option value="<?=$rtKey?>"><?=$rtLabel?></option><?php endforeach; ?>
+            </select>
+            <div class="form-text">Customer — tied to a specific customer (Name/User ID required). Deployment — not tied to one customer. Operational — no customer involved.</div>
+          </div>
+          <div class="col-6" id="prCustNameWrap"><label class="form-label small fw-semibold">Customer Name <span class="text-danger d-none" id="prCustNameReq">*</span></label><input type="text" name="customer_name" id="prCustName" class="form-control form-control-sm"></div>
+          <div class="col-6" id="prCustUserIdWrap"><label class="form-label small fw-semibold">Customer User ID <span class="text-danger d-none" id="prCustUserIdReq">*</span></label><input type="text" name="customer_user_id" id="prCustUserId" class="form-control form-control-sm"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Location / City</label>
             <input type="text" name="location" id="prLocation" class="form-control form-control-sm" list="prLocationsList" onchange="autoSelectHub(this.value,'prHubId')">
           </div>
@@ -821,6 +847,17 @@ document.addEventListener('DOMContentLoaded', function () {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
   <?php endif; ?>
 });
+function toggleRequestType(v) {
+  const showFields = v !== 'operational'; // Operational: no customer involved at all
+  const required = v === 'customer';       // Customer: name + user ID compulsory
+  document.getElementById('prCustNameWrap').classList.toggle('d-none', !showFields);
+  document.getElementById('prCustUserIdWrap').classList.toggle('d-none', !showFields);
+  document.getElementById('prCustName').required = required;
+  document.getElementById('prCustUserId').required = required;
+  document.getElementById('prCustNameReq').classList.toggle('d-none', !required);
+  document.getElementById('prCustUserIdReq').classList.toggle('d-none', !required);
+  if (!showFields) { document.getElementById('prCustName').value = ''; document.getElementById('prCustUserId').value = ''; }
+}
 function resetForCreate() {
   document.getElementById('prForm').reset();
   document.getElementById('prFormAction').value = 'create';
@@ -828,6 +865,7 @@ function resetForCreate() {
   document.getElementById('prModalTitle').innerHTML = '<i class="bi bi-cash-coin me-1 text-primary"></i>New Payment Request Voucher';
   document.getElementById('prResubmitNotice').classList.add('d-none');
   document.getElementById('prCategoryOtherWrap').classList.add('d-none');
+  toggleRequestType('');
   // Collapse the item breakdown back to a single blank row.
   const tbody = document.getElementById('itemsBody');
   tbody.innerHTML = '';
@@ -848,6 +886,8 @@ function openResubmit(id) {
 
   document.getElementById('prDate').value = rec.date_of_request || '';
   document.getElementById('prDept').value = rec.department || '';
+  document.getElementById('prRequestType').value = rec.request_type || '';
+  toggleRequestType(rec.request_type || '');
   document.getElementById('prCustName').value = rec.customer_name || '';
   document.getElementById('prCustUserId').value = rec.customer_user_id || '';
   document.getElementById('prLocation').value = rec.location || '';
