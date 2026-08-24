@@ -54,7 +54,7 @@ $out = fopen('php://output', 'w');
 fputcsv($out, [
     'name','phone','email','address','estate','plan','stage','vendor','pop_hub','amount_paid','installation_paid',
     'network_user_id','router_type','on_hold_reason','refund_reason','payment_confirmed_at','sla_due_at',
-    'completed_at','refunded_at','installation_cost','connection_date','notes','created_at',
+    'completed_at','refunded_at','installation_cost','connection_date','cable_laid_date','notes','created_at',
 ]);
 foreach ($profiles as $p) {
     fputcsv($out, [
@@ -79,6 +79,7 @@ foreach ($profiles as $p) {
         $p['refunded_at'] ?? '',
         $p['installation_cost'] ?? '',
         $p['connection_date'] ?? '',
+        $p['cable_laid_date'] ?? '',
         $p['notes'] ?? '',
         $p['created_at'] ?? '',
     ]);

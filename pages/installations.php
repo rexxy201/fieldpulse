@@ -15,7 +15,7 @@ $STATUS_LABELS = [
     'in_progress'         => 'Assigned',
     'on_hold_customer'    => 'On Hold (Customer)',
     'on_hold_deployment'  => 'On Hold (Deployment)',
-    'cable_laying'        => 'Cable Laying',
+    'cable_laying'        => 'Cable Laid',
     'termination_pending' => 'Termination Pending',
     'connected'           => 'Connected',
     'refunded'            => 'Refunded',
@@ -71,6 +71,8 @@ if (method() === 'POST') {
             $createErr = 'A refund reason is required.';
         } elseif ($newStatus === 'connected' && trim($b['network_user_id'] ?? '') === '') {
             $createErr = 'User ID is required when Stage is Connected.';
+        } elseif ($newStatus === 'cable_laying' && trim($b['cable_laid_date'] ?? '') === '') {
+            $createErr = 'Cable Laid Date is required when Stage is Cable Laid.';
         }
         if ($createErr) {
             header('Location: /installations?err=' . urlencode($createErr)); exit;
@@ -83,12 +85,12 @@ if (method() === 'POST') {
         dbRun("INSERT INTO installation_profiles
             (id,name,phone,address,email,plan,wifi_username,wifi_password,ticket_id,vendor_id,status,notes,payment_confirmed_at,sla_due_at,
              amount_paid,network_user_id,router_type,estate,connection_date,installation_cost,
-             on_hold_reason,refund_reason,hub_id,installation_paid,refunded_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             on_hold_reason,refund_reason,hub_id,installation_paid,refunded_at,cable_laid_date)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [$newPid,$b['name']??'',$b['phone']??'',$b['address']??'',$b['email']??'',$b['plan']??'',$b['wifi_username']??'',$b['wifi_password']??'',$b['ticket_id']??null,$b['vendor_id']??null,$newStatus,$b['notes']??'',$paymentAt?:null,$slaDue,
              $b['amount_paid']!==''&&isset($b['amount_paid'])?$b['amount_paid']:null,$b['network_user_id']??null,$b['router_type']??null,$b['estate']??null,$b['connection_date']?:null,
              $b['installation_cost']!==''&&isset($b['installation_cost'])?$b['installation_cost']:null,
-             $onHoldReason?:null,$refundReason?:null,$hubId?:null,$b['installation_paid']?:null,$refundedAt]);
+             $onHoldReason?:null,$refundReason?:null,$hubId?:null,$b['installation_paid']?:null,$refundedAt,$b['cable_laid_date']?:null]);
         $msg = 'Profile created.';
 
         if (!empty($b['vendor_id'])) {
@@ -128,6 +130,8 @@ if (method() === 'POST') {
                     $updateErr = 'A refund reason is required.';
                 } elseif ($newStatus === 'connected' && trim($b['network_user_id'] ?? '') === '') {
                     $updateErr = 'User ID is required when Stage is Connected.';
+                } elseif ($newStatus === 'cable_laying' && trim($b['cable_laid_date'] ?? '') === '') {
+                    $updateErr = 'Cable Laid Date is required when Stage is Cable Laid.';
                 } elseif ($paymentAt !== '' && $paymentAt !== ($existing['payment_confirmed_at'] ? date('Y-m-d', strtotime($existing['payment_confirmed_at'])) : '') && $amountPaidRaw === '') {
                     $updateErr = 'Amount paid is required when setting the payment confirmation date.';
                 }
@@ -143,7 +147,7 @@ if (method() === 'POST') {
                     "ticket_id=?","status=?","notes=?","payment_confirmed_at=?","sla_due_at=?",
                     "amount_paid=?","network_user_id=?","router_type=?","estate=?",
                     "connection_date=?","installation_cost=?","installation_paid=?",
-                    "on_hold_reason=?","refund_reason=?","hub_id=?","updated_at=NOW()",
+                    "on_hold_reason=?","refund_reason=?","hub_id=?","cable_laid_date=?","updated_at=NOW()",
                 ];
                 $vals = [
                     $b['name']??'', $b['phone']??'', $b['address']??'', $b['email']??'', $b['plan']??'',
@@ -152,7 +156,7 @@ if (method() === 'POST') {
                     ($b['amount_paid']??'')!==''?$b['amount_paid']:null, $b['network_user_id']??null, $b['router_type']??null,
                     $b['estate']??null, $b['connection_date']?:null,
                     ($b['installation_cost']??'')!==''?$b['installation_cost']:null, $b['installation_paid']?:null,
-                    $onHoldReason?:null, $refundReason?:null, $hubId?:null,
+                    $onHoldReason?:null, $refundReason?:null, $hubId?:null, $b['cable_laid_date']?:null,
                 ];
                 // Capture the moment the work order is first marked connected (same rule as Update Stage)
                 if ($newStatus === 'connected' && empty($existing['completed_at'])) {
@@ -228,6 +232,7 @@ if (method() === 'POST') {
         if ($allowed) {
             $newStatus = $b['status'] ?? 'pending';
             $reason = trim($b['reason'] ?? '');
+            $cableLaidDate = trim($b['cable_laid_date'] ?? '');
             if (in_array($newStatus, $ON_HOLD_STATUSES, true) && $reason === '') {
                 header('Location: /installations?err=' . urlencode('An On Hold reason is required.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
             }
@@ -237,10 +242,14 @@ if (method() === 'POST') {
             if ($newStatus === 'connected' && empty(dbFetch("SELECT network_user_id FROM installation_profiles WHERE id=?", [$pid])['network_user_id'])) {
                 header('Location: /installations?err=' . urlencode('User ID is required when Stage is Connected — set it via Edit first.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
             }
+            if ($newStatus === 'cable_laying' && $cableLaidDate === '') {
+                header('Location: /installations?err=' . urlencode('Cable Laid Date is required when Stage is Cable Laid.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
+            }
             $existing = dbFetch("SELECT status, completed_at, refunded_at FROM installation_profiles WHERE id=?", [$pid]);
             $sets = ["status=?", "updated_at=NOW()"]; $vals = [$newStatus];
             if (in_array($newStatus, $ON_HOLD_STATUSES, true)) { $sets[] = "on_hold_reason=?"; $vals[] = $reason; }
             if ($newStatus === 'refunded') { $sets[] = "refund_reason=?"; $vals[] = $reason; }
+            if ($newStatus === 'cable_laying') { $sets[] = "cable_laid_date=?"; $vals[] = $cableLaidDate; }
             // Capture the moment the work order is first marked connected
             if ($newStatus === 'connected' && $existing && empty($existing['completed_at'])) {
                 $sets[] = "completed_at=NOW()";
@@ -252,7 +261,7 @@ if (method() === 'POST') {
             $vals[] = $pid;
             dbRun("UPDATE installation_profiles SET " . implode(',', $sets) . " WHERE id=?", $vals);
             $cid = newUuid();
-            $stageMsg = 'Stage updated to: '.($STATUS_LABELS[$b['status']]??$b['status']).($reason?" — {$reason}":'');
+            $stageMsg = 'Stage updated to: '.($STATUS_LABELS[$b['status']]??$b['status']).($reason?" — {$reason}":'').($cableLaidDate?" — Cable Laid ".date('d M Y', strtotime($cableLaidDate)):'');
             dbRun("INSERT INTO installation_comments (id,profile_id,user_id,user_name,user_role,content,type) VALUES (?,?,?,?,?,?,?)",
                 [$cid,$pid,$user['id'],$user['name'],$role,$stageMsg,'stage_change']);
             $msg = 'Stage updated.';
@@ -370,6 +379,12 @@ $detailProfile = $detailId ? dbFetch("SELECT p.*,v.name AS vendor_name,h.name AS
 if ($detailProfile && $role === 'vendor' && ($detailProfile['vendor_id'] ?? null) !== ($user['vendor_id'] ?? null)) {
     $detailProfile = null;
 }
+// The ticket linked to this job (if any) — vendors need to see and open it
+// to manage tickets on the installation without full edit access to the
+// profile itself.
+$linkedTicket = ($detailProfile && $detailProfile['ticket_id'])
+    ? dbFetch("SELECT id,ticket_number,customer_name,status,priority,type,created_at FROM tickets WHERE id=?", [$detailProfile['ticket_id']])
+    : null;
 $detailComments = $detailId ? dbFetchAll("SELECT * FROM installation_comments WHERE profile_id=? ORDER BY created_at",[$detailId]) : [];
 
 $pageTitle = 'Installations';
@@ -510,6 +525,8 @@ require __DIR__ . '/../includes/header.php';
         <?php if (!empty($detailProfile['installation_paid'])): ?><dt class="col-4 text-muted">Installation Paid</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['installation_paid']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['on_hold_reason'])): ?><dt class="col-4 text-muted">On Hold Reason</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['on_hold_reason']) ?></dd><?php endif; ?>
         <?php if (!empty($detailProfile['refund_reason'])): ?><dt class="col-4 text-muted">Refund Reason</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['refund_reason']) ?></dd><?php endif; ?>
+        <?php if (!empty($detailProfile['cable_laid_date'])): ?><dt class="col-4 text-muted">Cable Laid Date</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['cable_laid_date'])) ?></dd><?php endif; ?>
+        <?php if ($linkedTicket): ?><dt class="col-4 text-muted">Linked Ticket</dt><dd class="col-8"><a href="/ticket/<?= $linkedTicket['id'] ?>"><?= htmlspecialchars($linkedTicket['ticket_number']) ?></a> <span class="badge bg-light text-dark border"><?= htmlspecialchars($linkedTicket['status']) ?></span></dd><?php endif; ?>
         <?php if (!empty($detailProfile['refunded_at'])): ?><dt class="col-4 text-muted">Date Refunded</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['refunded_at'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['installer']): ?><dt class="col-4 text-muted">Installer</dt><dd class="col-8"><?= htmlspecialchars($detailProfile['installer']) ?></dd><?php endif; ?>
         <?php if ($detailProfile['connection_date']): ?><dt class="col-4 text-muted">Connection Date</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['connection_date'])) ?></dd><?php endif; ?>
@@ -538,11 +555,16 @@ require __DIR__ . '/../includes/header.php';
           </select>
           <button type="submit" class="btn btn-sm btn-primary">Apply</button>
         </div>
-        <textarea name="reason" id="stageQuickReason" class="form-control form-control-sm d-none" rows="2" placeholder="Reason (required for On Hold / Refunded)…"><?= htmlspecialchars($detailProfile['on_hold_reason'] ?: $detailProfile['refund_reason'] ?: '') ?></textarea>
+        <textarea name="reason" id="stageQuickReason" class="form-control form-control-sm d-none mb-2" rows="2" placeholder="Reason (required for On Hold / Refunded)…"><?= htmlspecialchars($detailProfile['on_hold_reason'] ?: $detailProfile['refund_reason'] ?: '') ?></textarea>
+        <div id="stageQuickCableWrap" class="d-none">
+          <label class="form-label small fw-semibold mb-1">Cable Laid Date <span class="text-danger">*</span></label>
+          <input type="date" name="cable_laid_date" id="stageQuickCableDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>" value="<?= htmlspecialchars($detailProfile['cable_laid_date'] ?? '') ?>">
+        </div>
       </form>
       <script>
         function toggleStageReason(v) {
           document.getElementById('stageQuickReason').classList.toggle('d-none', !['on_hold_customer','on_hold_deployment','refunded'].includes(v));
+          document.getElementById('stageQuickCableWrap').classList.toggle('d-none', v !== 'cable_laying');
         }
         toggleStageReason(document.getElementById('stageQuickSelect').value);
       </script>
@@ -708,6 +730,7 @@ function openEditFinancial(p) {
           <div class="col-6 d-none" id="addOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="addRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="addRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="date" name="refunded_at" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
+          <div class="col-6 d-none" id="addCableLaidWrap"><label class="form-label small fw-semibold">Cable Laid Date <span class="text-danger">*</span></label><input type="date" name="cable_laid_date" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Starts the <?= INSTALLATION_SLA_WORKING_DAYS ?>-working-day SLA clock. Leave blank if payment isn't confirmed yet.</div>
@@ -760,6 +783,7 @@ function toggleAddReasons(v) {
   document.getElementById('addRefundWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('addRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('addUserIdWrap').classList.toggle('d-none', v !== 'connected');
+  document.getElementById('addCableLaidWrap').classList.toggle('d-none', v !== 'cable_laying');
 }
 var CITY_HUB_MAP = <?= json_encode(array_column(dbFetchAll("SELECT LOWER(TRIM(city_name)) AS city_name, hub_id FROM hub_city_mappings"), 'hub_id', 'city_name')) ?>;
 function autoSelectHub(cityValue, selectId) {
@@ -800,6 +824,7 @@ function autoSelectHub(cityValue, selectId) {
           <div class="col-6 d-none" id="editOnHoldWrap"><label class="form-label small fw-semibold">On Hold Reason <span class="text-danger">*</span></label><input type="text" name="on_hold_reason" id="editOnHoldReason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="editRefundWrap"><label class="form-label small fw-semibold">Refund Reason <span class="text-danger">*</span></label><input type="text" name="refund_reason" id="editRefundReason" class="form-control form-control-sm"></div>
           <div class="col-6 d-none" id="editRefundedAtWrap"><label class="form-label small fw-semibold">Date Refunded</label><input type="date" name="refunded_at" id="editRefundedAtInput" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
+          <div class="col-6 d-none" id="editCableLaidWrap"><label class="form-label small fw-semibold">Cable Laid Date <span class="text-danger">*</span></label><input type="date" name="cable_laid_date" id="editCableLaidDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>"></div>
           <div class="col-6"><label class="form-label small fw-semibold">Payment Confirmed Date</label>
             <input type="date" name="payment_confirmed_at" id="editPaymentDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>">
             <div class="form-text">Recalculates the SLA due date if changed. Setting/changing this requires Amount Paid below.</div>
@@ -852,6 +877,7 @@ function toggleEditReasons(v) {
   document.getElementById('editRefundWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('editRefundedAtWrap').classList.toggle('d-none', v !== 'refunded');
   document.getElementById('editUserIdWrap').classList.toggle('d-none', v !== 'connected');
+  document.getElementById('editCableLaidWrap').classList.toggle('d-none', v !== 'cable_laying');
 }
 
 let editTicketTS = null, addTicketTS = null;
@@ -874,6 +900,7 @@ function openEditFull(p) {
   document.getElementById('editOnHoldReason').value    = p.on_hold_reason || '';
   document.getElementById('editRefundReason').value    = p.refund_reason || '';
   document.getElementById('editRefundedAtInput').value = p.refunded_at ? p.refunded_at.substring(0,10) : '';
+  document.getElementById('editCableLaidDate').value   = p.cable_laid_date ? p.cable_laid_date.substring(0,10) : '';
   document.getElementById('editInstallationPaid').value = p.installation_paid || '';
   document.getElementById('editPaymentDate').value     = p.payment_confirmed_at ? p.payment_confirmed_at.substring(0,10) : '';
   document.getElementById('editAmountPaid').value      = p.amount_paid ?? '';

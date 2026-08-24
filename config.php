@@ -2047,6 +2047,25 @@ if (!$_sv21) {
     }
 }
 
+// ─── Schema v22: Cable Laid date ────────────────────────────────────────────
+// The 'cable_laying' stage is relabeled "Cable Laid" (status value unchanged,
+// existing records need no migration) and now requires a date — the day the
+// cable was actually laid — the same way On Hold/Refunded require a reason.
+$_k = dbKey();
+$_sv22 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v22_migrated'");
+if (!$_sv22) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `cable_laid_date` DATE DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN IF NOT EXISTS cable_laid_date DATE"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v22_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v22 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.

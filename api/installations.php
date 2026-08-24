@@ -22,7 +22,16 @@ if ($id && method() === 'PATCH') {
         if ($role === 'vendor') {
             $p = dbFetch("SELECT vendor_id FROM installation_profiles WHERE id=?",[$id]);
             if (!$p || $p['vendor_id'] !== ($user['vendor_id']??'')) jsonResponse(['error'=>'Forbidden'],403);
-            dbRun("UPDATE installation_profiles SET status=?, updated_at=NOW() WHERE id=?",[$b['status']??'',$id]);
+            // Vendors may only progress the stage — not edit the record's other
+            // fields — and Cable Laid still requires its date, same as the UI.
+            if (($b['status'] ?? '') === 'cable_laying' && empty($b['cable_laid_date'])) {
+                jsonResponse(['error'=>'Cable Laid Date is required when Stage is Cable Laid.'],400);
+            }
+            if (($b['status'] ?? '') === 'cable_laying') {
+                dbRun("UPDATE installation_profiles SET status=?, cable_laid_date=?, updated_at=NOW() WHERE id=?",[$b['status'],$b['cable_laid_date'],$id]);
+            } else {
+                dbRun("UPDATE installation_profiles SET status=?, updated_at=NOW() WHERE id=?",[$b['status']??'',$id]);
+            }
             jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]));
         }
         jsonResponse(['error'=>'Forbidden'],403);
@@ -31,7 +40,7 @@ if ($id && method() === 'PATCH') {
 
     $allowed=['name','phone','address','email','plan','wifi_username','wifi_password','ticket_id','vendor_id','status','notes',
         'amount_paid','network_user_id','router_type','estate','pop','connection_status','connection_date','installer','installation_cost','field_marketer',
-        'on_hold_reason','refund_reason','payment_status','hub_id'];
+        'on_hold_reason','refund_reason','payment_status','hub_id','cable_laid_date'];
     $sets=[]; $vals=[];
     foreach($allowed as $c){if(array_key_exists($c,$b)){$sets[]="$c=?";$vals[]=$b[$c];}}
 
