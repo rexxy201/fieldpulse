@@ -18,10 +18,20 @@ require_once __DIR__ . '/includes/ai.php';
 // Auto-detects environment:
 //   Replit  → uses DATABASE_URL (PostgreSQL, no SSL for internal connections)
 //   cPanel  → uses MySQL credentials below
+//
+// The real DB password lives ONLY in secrets.php, a file that exists solely on
+// the live server, is gitignored, and is never touched by git pull/deploy —
+// this file (config.php) is now identical between GitHub and the live site,
+// safe to auto-deploy, and can never again silently overwrite the live
+// password with this placeholder (the cause of two past outages and a git
+// merge conflict). See secrets.example.php for the one-time server setup.
+$_secretsFile = __DIR__ . '/secrets.php';
+if (file_exists($_secretsFile)) require_once $_secretsFile;
+
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'mangonetcom_fieldpulse');
 define('DB_USER', 'mangonetcom_fieldpulse');
-define('DB_PASS', 'YOUR_DATABASE_PASSWORD');   // ← change this for cPanel
+define('DB_PASS', defined('DB_PASS_FROM_SECRETS') ? DB_PASS_FROM_SECRETS : 'YOUR_DATABASE_PASSWORD');
 
 $_dbUrl = getenv('DATABASE_URL');
 if ($_dbUrl) {

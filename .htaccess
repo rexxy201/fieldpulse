@@ -16,6 +16,13 @@ RewriteRule ^ index.php [QSA,L]
     Deny from all
 </FilesMatch>
 
+# Block direct execution of config/secrets — these must only ever be loaded via
+# require/include from index.php, never requested as a URL.
+<FilesMatch "^(config|secrets|secrets\.example)\.php$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
 # Allow access to PHP files only through the router
 <FilesMatch "^(index)\.php$">
     Allow from all
