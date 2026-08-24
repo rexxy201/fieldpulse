@@ -32,25 +32,26 @@ $days = max(1, (int)($_GET['days'] ?? 7));
 $_ivPeriod = dbNowMinusInterval($days, 'DAY');
 
 // ── Payment Requests ─────────────────────────────────────────────────────
+// 3-stage flow: pending -> authorized -> approved -> disbursed, or rejected.
 $prPeriod = dbFetch(
     "SELECT COUNT(*) AS submitted,
-            SUM(status='approved') AS approved,
+            SUM(status IN ('authorized','approved')) AS approved,
             SUM(status='rejected') AS rejected,
-            SUM(status='paid') AS paid,
-            SUM(CASE WHEN status='paid' THEN amount ELSE 0 END) AS paid_amount
+            SUM(status='disbursed') AS paid,
+            SUM(CASE WHEN status='disbursed' THEN amount ELSE 0 END) AS paid_amount
      FROM payment_requests WHERE created_at >= {$_ivPeriod}"
 );
 $prOutstanding = dbFetch(
     "SELECT SUM(status='pending') AS pending_count,
             SUM(CASE WHEN status='pending' THEN amount ELSE 0 END) AS pending_amount,
-            SUM(status='approved') AS approved_count,
-            SUM(CASE WHEN status='approved' THEN amount ELSE 0 END) AS approved_amount
+            SUM(status IN ('authorized','approved')) AS approved_count,
+            SUM(CASE WHEN status IN ('authorized','approved') THEN amount ELSE 0 END) AS approved_amount
      FROM payment_requests"
 );
 $topVendorsOwed = dbFetchAll(
     "SELECT v.name, SUM(pr.amount) AS total
      FROM payment_requests pr JOIN vendors v ON v.id = pr.vendor_id
-     WHERE pr.status IN ('pending','approved')
+     WHERE pr.status IN ('pending','authorized','approved')
      GROUP BY v.id, v.name ORDER BY total DESC LIMIT 5"
 );
 

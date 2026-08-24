@@ -1760,6 +1760,77 @@ if (!$_sv16) {
     }
 }
 
+// ─── Schema v17: Payment Request Voucher fields + line items ──────────────────
+// Expands Payment Requests to match the company's paper "Request Voucher" —
+// job/customer context, a line-item cost breakdown, and a 3-stage sign-off
+// (Authorized -> Approved -> Disbursed) instead of the old 2-stage one.
+$_k = dbKey();
+$_sv17 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v17_migrated'");
+if (!$_sv17) {
+    try {
+        $_prCols = [
+            'date_of_request'    => 'DATE DEFAULT NULL',
+            'department'         => 'VARCHAR(100) DEFAULT NULL',
+            'customer_name'      => 'VARCHAR(150) DEFAULT NULL',
+            'customer_user_id'   => 'VARCHAR(100) DEFAULT NULL',
+            'location'           => 'VARCHAR(150) DEFAULT NULL',
+            'hub_id'             => 'VARCHAR(36) DEFAULT NULL',
+            'category'           => 'VARCHAR(50) DEFAULT NULL',
+            'category_other'     => 'VARCHAR(150) DEFAULT NULL',
+            'capex_opex'         => 'VARCHAR(10) DEFAULT NULL',
+            'receiver'           => 'VARCHAR(150) DEFAULT NULL',
+            'priority'           => 'VARCHAR(10) DEFAULT NULL',
+            'authorized_by'      => 'VARCHAR(36) DEFAULT NULL',
+            'authorized_by_name' => 'VARCHAR(150) DEFAULT NULL',
+            'disbursed_by'       => 'VARCHAR(36) DEFAULT NULL',
+            'disbursed_by_name'  => 'VARCHAR(150) DEFAULT NULL',
+        ];
+        foreach ($_prCols as $_col => $_def) {
+            try {
+                if (DB_TYPE === 'pgsql') { db()->exec("ALTER TABLE payment_requests ADD COLUMN {$_col} {$_def}"); }
+                else { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `{$_col}` {$_def}"); }
+            } catch (\Throwable $e) {}
+        }
+        try {
+            if (DB_TYPE === 'pgsql') { db()->exec("ALTER TABLE payment_requests ADD COLUMN authorized_at TIMESTAMP DEFAULT NULL"); }
+            else { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `authorized_at` DATETIME DEFAULT NULL"); }
+        } catch (\Throwable $e) {}
+
+        if (DB_TYPE === 'pgsql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_request_items (
+                id                  VARCHAR(36) PRIMARY KEY,
+                payment_request_id  VARCHAR(36) NOT NULL,
+                description         TEXT,
+                qty                 DECIMAL(10,2) DEFAULT 1,
+                unit_price          DECIMAL(12,2) DEFAULT 0,
+                line_total          DECIMAL(12,2) DEFAULT 0,
+                sort_order          INT DEFAULT 0
+            )");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_request_items` (
+                `id`                  VARCHAR(36) NOT NULL,
+                `payment_request_id`  VARCHAR(36) NOT NULL,
+                `description`         TEXT,
+                `qty`                 DECIMAL(10,2) DEFAULT 1,
+                `unit_price`          DECIMAL(12,2) DEFAULT 0,
+                `line_total`          DECIMAL(12,2) DEFAULT 0,
+                `sort_order`          INT DEFAULT 0,
+                PRIMARY KEY (`id`),
+                KEY `idx_pri_request` (`payment_request_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        }
+
+        // Old 2-stage flow used 'paid' as the terminal state — carry those
+        // records forward as 'disbursed' under the new 3-stage flow so
+        // nothing already paid looks unpaid.
+        dbRun("UPDATE payment_requests SET status = 'disbursed' WHERE status = 'paid'");
+
+        dbUpsertConfig('schema_v17_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v17 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.

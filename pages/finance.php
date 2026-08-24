@@ -4,17 +4,18 @@ requireAuth();
 requirePermission('finance.view');
 
 // ─── Payment Requests aggregates ────────────────────────────────────────────
+// Now a 3-stage flow: pending -> authorized -> approved -> disbursed, or rejected.
 $prByStatus = dbFetch(
-    "SELECT SUM(status='pending') AS pending, SUM(status='approved') AS approved,
-            SUM(status='paid') AS paid, SUM(status='rejected') AS rejected
+    "SELECT SUM(status='pending') AS pending, SUM(status='authorized') AS authorized, SUM(status='approved') AS approved,
+            SUM(status='disbursed') AS paid, SUM(status='rejected') AS rejected
      FROM payment_requests"
 );
 $prAmounts = dbFetch(
     "SELECT
         SUM(CASE WHEN status='pending'  THEN amount ELSE 0 END) AS pending_amount,
-        SUM(CASE WHEN status='approved' THEN amount ELSE 0 END) AS approved_amount,
-        SUM(CASE WHEN status='paid'     THEN amount ELSE 0 END) AS paid_amount,
-        SUM(CASE WHEN status='paid' AND paid_at >= " . dbNowMinusInterval(30, 'DAY') . " THEN amount ELSE 0 END) AS paid_last_30d
+        SUM(CASE WHEN status IN ('authorized','approved') THEN amount ELSE 0 END) AS approved_amount,
+        SUM(CASE WHEN status='disbursed'     THEN amount ELSE 0 END) AS paid_amount,
+        SUM(CASE WHEN status='disbursed' AND paid_at >= " . dbNowMinusInterval(30, 'DAY') . " THEN amount ELSE 0 END) AS paid_last_30d
      FROM payment_requests"
 );
 $prByVendor = dbFetchAll(
@@ -67,19 +68,19 @@ require __DIR__ . '/../includes/header.php';
       <div class="col-6 col-md-3">
         <div class="stat-card py-2 text-center">
           <div class="fw-bold fs-5" style="color:#3b82f6">₦<?= number_format((float)($prAmounts['approved_amount']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['approved']??0) ?> Approved (unpaid)</div>
+          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) ?> Authorized/Approved (undisbursed)</div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card py-2 text-center">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($prAmounts['paid_amount']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['paid']??0) ?> Paid (all-time)</div>
+          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['paid']??0) ?> Disbursed (all-time)</div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card py-2 text-center">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($prAmounts['paid_last_30d']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b">Paid — last 30 days</div>
+          <div style="font-size:.7rem;color:#64748b">Disbursed — last 30 days</div>
         </div>
       </div>
     </div>

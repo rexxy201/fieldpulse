@@ -65,6 +65,8 @@ $pages = [
     'reports'       => 'reports',
     'admin'         => 'admin',
     'payment-requests' => 'payment-requests',
+    'payment-request-template' => 'payment-request-template',
+    'payment-request-print' => 'payment-request-print',
     'finance'       => 'finance',
 ];
 
