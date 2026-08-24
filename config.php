@@ -689,14 +689,19 @@ define('PR_DOC_MAX_BYTES', 10 * 1024 * 1024); // 10MB per file
  * $files is the raw $_FILES['documents'] sub-array (multi-file input).
  * Returns ['ok'=>true,'count'=>N] or ['ok'=>false,'error'=>string].
  */
-function validatePaymentRequestDocuments(array $files): array {
+function validatePaymentRequestDocuments(array $files, bool $required = false, int $existingCount = 0): array {
     $allowedExt  = ['pdf','jpg','jpeg','png'];
     $allowedMime = ['application/pdf','image/jpeg','image/png'];
 
     $names = $files['name'] ?? [];
     $count = 0;
     foreach ($names as $n) { if ($n !== '') $count++; }
-    if ($count === 0) return ['ok' => true, 'count' => 0];
+    if ($count === 0) {
+        if ($required && $existingCount === 0) {
+            return ['ok' => false, 'error' => 'At least one backing document is required.'];
+        }
+        return ['ok' => true, 'count' => 0];
+    }
     if ($count > PR_DOC_MAX_FILES) return ['ok' => false, 'error' => 'You can attach at most ' . PR_DOC_MAX_FILES . ' documents.'];
 
     for ($i = 0; $i < $count; $i++) {
@@ -2106,6 +2111,57 @@ if (!$_sv24) {
         dbUpsertConfig('schema_v24_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v24 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v25: Payment Request type relabel + customer linking ──────────────
+// Request Type is redefined from 3 values to 4: the old 'customer' (tied to a
+// customer, required fields) becomes 'operational'; the old 'operational'
+// (no customer at all) becomes 'admin'; 'deployment' is unchanged; a new
+// 'expansion' type is added, splitting what used to be lumped under
+// Category's "Deployment/Expansion". A single CASE UPDATE remaps existing
+// rows using their pre-update value, so the 'customer'->'operational' and
+// 'operational'->'admin' renames can't collide with each other.
+// Also adds a proper many-to-many link from a Customer-type request to real
+// records in the customers table (a request can now name more than one
+// customer), replacing the old free-text customer_name/customer_user_id as
+// the source of truth for that link — those columns remain for legacy data.
+$_k = dbKey();
+$_sv25 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v25_migrated'");
+if (!$_sv25) {
+    try {
+        try {
+            dbRun("UPDATE payment_requests SET request_type = CASE request_type
+                    WHEN 'customer' THEN 'operational'
+                    WHEN 'operational' THEN 'admin'
+                    ELSE request_type END");
+        } catch (\Throwable $e) {
+            error_log('Schema v25: request_type relabel failed: ' . $e->getMessage());
+        }
+
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_request_customers` (
+                `id`                  VARCHAR(36) NOT NULL,
+                `payment_request_id`  VARCHAR(36) NOT NULL,
+                `customer_id`         VARCHAR(36) NOT NULL,
+                `created_at`          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uniq_prc_request_customer` (`payment_request_id`,`customer_id`),
+                KEY `idx_prc_request` (`payment_request_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_request_customers (
+                id                  VARCHAR(36) PRIMARY KEY,
+                payment_request_id  VARCHAR(36) NOT NULL,
+                customer_id         VARCHAR(36) NOT NULL,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (payment_request_id, customer_id)
+            )");
+        }
+
+        dbUpsertConfig('schema_v25_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v25 migration error: ' . $e->getMessage());
     }
 }
 

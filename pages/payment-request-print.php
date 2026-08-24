@@ -24,12 +24,16 @@ if (!$allowed) { http_response_code(403); exit('Forbidden'); }
 
 $items = dbFetchAll("SELECT * FROM payment_request_items WHERE payment_request_id=? ORDER BY sort_order", [$id]);
 $payments = dbFetchAll("SELECT * FROM payment_request_payments WHERE payment_request_id=? ORDER BY paid_at", [$id]);
+$linkedCustomers = dbFetchAll(
+    "SELECT c.name, c.account_number FROM payment_request_customers pc JOIN customers c ON c.id = pc.customer_id WHERE pc.payment_request_id=? ORDER BY c.name",
+    [$id]
+);
 $balance = round((float)$r['amount'] - (float)$r['amount_paid'], 2);
 
 $appCfg = getAppConfig();
 $co = htmlspecialchars($appCfg['companyName'] ?? 'MangoNet Integrated Technologies Limited');
 $categories = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials'];
-$requestTypes = ['customer' => 'Customer', 'deployment' => 'Deployment', 'operational' => 'Operational'];
+$requestTypes = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests'];
 $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
 ?>
 <!DOCTYPE html>
@@ -100,10 +104,18 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
       <?php endforeach; ?>
     </div>
   </div>
-  <?php if ($r['request_type'] !== 'operational'): ?>
+  <?php if ($r['request_type'] !== 'admin'): ?>
   <div class="field-row">
-    <div class="field"><label>Customer Name</label><div class="value"><?= htmlspecialchars($r['customer_name'] ?? '') ?></div></div>
-    <div class="field"><label>Customer User ID</label><div class="value"><?= htmlspecialchars($r['customer_user_id'] ?? '') ?></div></div>
+    <div class="field">
+      <label>Customer(s)</label>
+      <div class="value">
+        <?php if ($linkedCustomers): ?>
+          <?= htmlspecialchars(implode('; ', array_map(fn($c) => $c['name'] . ($c['account_number'] ? ' ('.$c['account_number'].')' : ''), $linkedCustomers))) ?>
+        <?php else: ?>
+          <?= htmlspecialchars($r['customer_name'] ?? '—') ?>
+        <?php endif; ?>
+      </div>
+    </div>
   </div>
   <?php endif; ?>
   <div class="field-row">

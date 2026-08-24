@@ -18,12 +18,14 @@ if (!$canCreate && !$canView) { header('Location: /dashboard'); exit; }
 $isVendor = $role === 'vendor';
 
 const PR_CATEGORIES = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials','Other'];
-// Request Type controls whether this voucher is tied to a customer record.
-// 'customer' — Customer Name + Customer User ID are compulsory (feeds the
-//   Customers module). 'deployment' — customer fields shown but optional
-//   (not tied to a specific customer). 'operational' — customer fields are
-//   not offered at all (internal/admin spend, no customer involved).
-const PR_REQUEST_TYPES = ['customer' => 'Customer', 'deployment' => 'Deployment', 'operational' => 'Operational'];
+// Request Type controls whether this voucher is tied to one or more real
+// customer records. 'operational' — Customer-type: at least one customer
+// must be linked (feeds the Customers module). 'expansion' / 'deployment' —
+// not tied to a specific customer; the customer picker is shown but optional.
+// 'admin' — Admin Requests: no customer involved, the picker isn't offered.
+const PR_REQUEST_TYPES = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests'];
+const PR_CUSTOMER_REQUIRED_TYPES = ['operational'];
+const PR_CUSTOMER_HIDDEN_TYPES = ['admin'];
 
 // ─── AJAX authorize / approve / reject / return / disburse ──────────────────
 if (method() === 'POST' && isset($_POST['ajax'])) {
@@ -141,9 +143,20 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
         $priority   = in_array($b['priority'] ?? '', ['High','Medium','Low'], true) ? $b['priority'] : '';
         $dateOfReq  = trim($b['date_of_request'] ?? '') ?: date('Y-m-d');
         $requestType = array_key_exists($b['request_type'] ?? '', PR_REQUEST_TYPES) ? $b['request_type'] : '';
-        $custName   = trim($b['customer_name'] ?? '');
-        $custUserId = trim($b['customer_user_id'] ?? '');
-        $docCheck   = validatePaymentRequestDocuments($_FILES['documents'] ?? []);
+        // One or more real customers, selected from the Customers module —
+        // required for Customer-type (Operational) requests.
+        $customerIds = array_values(array_unique(array_filter(array_map('trim', $b['customer_ids'] ?? []))));
+        if ($customerIds) {
+            $ph = implode(',', array_fill(0, count($customerIds), '?'));
+            $validCustomers = dbFetchAll("SELECT id,name,account_number FROM customers WHERE id IN ($ph)", $customerIds);
+            $customerIds = array_column($validCustomers, 'id'); // drop any bogus/deleted ids
+        } else {
+            $validCustomers = [];
+        }
+        $existingDocCount = $formAction === 'resubmit'
+            ? (int)(dbFetch("SELECT COUNT(*) c FROM payment_request_documents WHERE payment_request_id=?", [$resubmitId])['c'] ?? 0)
+            : 0;
+        $docCheck   = validatePaymentRequestDocuments($_FILES['documents'] ?? [], true, $existingDocCount);
 
         // Build + validate line items — empty rows (no description and no price) are dropped.
         $itemDescs  = $b['item_description'] ?? [];
@@ -175,8 +188,8 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
             $err = 'Please specify the category under "Other".';
         } elseif ($requestType === '') {
             $err = 'Request Type is required.';
-        } elseif ($requestType === 'customer' && ($custName === '' || $custUserId === '')) {
-            $err = 'Customer Name and Customer User ID are required for a Customer request.';
+        } elseif (in_array($requestType, PR_CUSTOMER_REQUIRED_TYPES, true) && !$customerIds) {
+            $err = 'Select at least one customer for an Operational (Customer-type) request.';
         } elseif ($capexOpex === '') {
             $err = 'Capex / Opex is required.';
         } elseif ($priority === '') {
@@ -186,9 +199,10 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
         } elseif (!$docCheck['ok']) {
             $err = $docCheck['error'];
         } else {
-            // Vendors always attach their own company; staff may optionally attach
-            // a vendor if the expense was incurred on that vendor's behalf.
-            $vendorId = $isVendor ? ($user['vendor_id'] ?? null) : (trim($b['vendor_id'] ?? '') ?: null);
+            // Vendors always attach their own company; staff have no manual
+            // vendor picker on this form (removed — vendor is inferred from
+            // the linked Installation/Ticket, if any).
+            $vendorId = $isVendor ? ($user['vendor_id'] ?? null) : null;
             // Ownership check on the linked record — vendors may only link their own jobs/tickets.
             if ($isVendor && $linkedType === 'installation') {
                 $p = dbFetch("SELECT vendor_id FROM installation_profiles WHERE id=?", [$linkedId]);
@@ -199,10 +213,14 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                 if (!$t || $t['vendor_id'] !== $vendorId) { $linkedId = null; $linkedType = null; }
             }
             $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['location'] ?? '');
-            // Operational requests never carry a customer, regardless of what
-            // was posted — the fields are hidden client-side, enforce it server-side too.
-            $storedCustName   = $requestType === 'operational' ? null : ($custName ?: null);
-            $storedCustUserId = $requestType === 'operational' ? null : ($custUserId ?: null);
+            // Admin Requests never carry a customer, regardless of what was
+            // posted — the picker is hidden client-side, enforce it server-side
+            // too. customer_name/customer_user_id are kept in sync from the
+            // linked customer(s) for back-compat display (list, print voucher).
+            $applyCustomers = !in_array($requestType, PR_CUSTOMER_HIDDEN_TYPES, true) ? $validCustomers : [];
+            $storedCustName   = $applyCustomers ? implode(', ', array_column($applyCustomers, 'name')) : null;
+            $storedCustUserId = $applyCustomers ? implode(', ', array_filter(array_column($applyCustomers, 'account_number'))) ?: null : null;
+            $applyCustomerIds = array_column($applyCustomers, 'id');
 
             if ($formAction === 'resubmit') {
                 $prId = $resubmitId;
@@ -234,6 +252,12 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                      trim($b['location']??'')?:null, $hubId?:null, $category, $category==='Other'?$categoryOther:null,
                      $capexOpex, trim($b['receiver']??'')?:null, $priority]);
                 auditLog('create','payment_request', $prId);
+            }
+            if ($formAction === 'resubmit') {
+                dbRun("DELETE FROM payment_request_customers WHERE payment_request_id=?", [$prId]);
+            }
+            foreach ($applyCustomerIds as $cid) {
+                dbInsertIgnore("INSERT INTO payment_request_customers (id,payment_request_id,customer_id) VALUES (?,?,?)", [newUuid(), $prId, $cid]);
             }
             foreach ($items as $idx => $it) {
                 dbRun("INSERT INTO payment_request_items (id,payment_request_id,description,qty,unit_price,line_total,sort_order) VALUES (?,?,?,?,?,?,?)",
@@ -304,14 +328,22 @@ if ($ownReturnedIds) {
     foreach (dbFetchAll("SELECT payment_request_id,description,qty,unit_price FROM payment_request_items WHERE payment_request_id IN ($ph) ORDER BY sort_order", $ownReturnedIds) as $it) {
         $itemsByReq[$it['payment_request_id']][] = $it;
     }
+    $customerIdsByReq = [];
+    foreach (dbFetchAll("SELECT payment_request_id,customer_id FROM payment_request_customers WHERE payment_request_id IN ($ph)", $ownReturnedIds) as $pc) {
+        $customerIdsByReq[$pc['payment_request_id']][] = $pc['customer_id'];
+    }
+    $docCountByReq = [];
+    foreach (dbFetchAll("SELECT payment_request_id, COUNT(*) c FROM payment_request_documents WHERE payment_request_id IN ($ph) GROUP BY payment_request_id", $ownReturnedIds) as $dc) {
+        $docCountByReq[$dc['payment_request_id']] = (int)$dc['c'];
+    }
     foreach ($requests as $r) {
         if (!in_array($r['id'], $ownReturnedIds, true)) continue;
         $resubmitData[$r['id']] = [
             'date_of_request'  => $r['date_of_request'],
             'department'       => $r['department'],
             'request_type'     => $r['request_type'],
-            'customer_name'    => $r['customer_name'],
-            'customer_user_id' => $r['customer_user_id'],
+            'customer_ids'     => $customerIdsByReq[$r['id']] ?? [],
+            'doc_count'        => $docCountByReq[$r['id']] ?? 0,
             'location'         => $r['location'],
             'hub_id'           => $r['hub_id'],
             'category'         => $r['category'],
@@ -395,7 +427,7 @@ if ($isVendor && !empty($user['vendor_id'])) {
     $linkInstalls = $canCreate ? dbFetchAll("SELECT id,name FROM installation_profiles ORDER BY created_at DESC LIMIT 500") : [];
     $linkTickets  = $canCreate ? dbFetchAll("SELECT id,ticket_number,customer_name FROM tickets ORDER BY created_at DESC LIMIT 500") : [];
 }
-$allVendors = (!$isVendor && $canCreate) ? dbFetchAll("SELECT id,name FROM vendors ORDER BY name") : [];
+$allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM customers ORDER BY name LIMIT 2000") : [];
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
 $locations = $canCreate ? dbFetchAll("SELECT name FROM locations ORDER BY name") : [];
 
@@ -579,10 +611,14 @@ require __DIR__ . '/../includes/header.php';
               <option value="">— Select —</option>
               <?php foreach (PR_REQUEST_TYPES as $rtKey => $rtLabel): ?><option value="<?=$rtKey?>"><?=$rtLabel?></option><?php endforeach; ?>
             </select>
-            <div class="form-text">Customer — tied to a specific customer (Name/User ID required). Deployment — not tied to one customer. Operational — no customer involved.</div>
+            <div class="form-text">Operational — tied to one or more customers (required). Expansion / Deployment — customer optional. Admin Requests — no customer.</div>
           </div>
-          <div class="col-6" id="prCustNameWrap"><label class="form-label small fw-semibold">Customer Name <span class="text-danger d-none" id="prCustNameReq">*</span></label><input type="text" name="customer_name" id="prCustName" class="form-control form-control-sm"></div>
-          <div class="col-6" id="prCustUserIdWrap"><label class="form-label small fw-semibold">Customer User ID <span class="text-danger d-none" id="prCustUserIdReq">*</span></label><input type="text" name="customer_user_id" id="prCustUserId" class="form-control form-control-sm"></div>
+          <div class="col-12 d-none" id="prCustomersWrap">
+            <label class="form-label small fw-semibold">Customer(s) <span class="text-danger d-none" id="prCustomersReq">*</span></label>
+            <select name="customer_ids[]" id="prCustomerIds" class="form-select form-select-sm" multiple>
+              <?php foreach ($allCustomers as $c): ?><option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name'] . ($c['account_number'] ? ' — '.$c['account_number'] : '')) ?></option><?php endforeach; ?>
+            </select>
+          </div>
           <div class="col-6"><label class="form-label small fw-semibold">Location / City</label>
             <input type="text" name="location" id="prLocation" class="form-control form-control-sm" list="prLocationsList" onchange="autoSelectHub(this.value,'prHubId')">
           </div>
@@ -637,14 +673,6 @@ require __DIR__ . '/../includes/header.php';
 
         <div class="row g-2 mb-3">
           <div class="col-6"><label class="form-label small fw-semibold">Receiver</label><input type="text" name="receiver" id="prReceiver" class="form-control form-control-sm" placeholder="Who will receive this payment/item?"></div>
-          <?php if (!$isVendor && $allVendors): ?>
-          <div class="col-6"><label class="form-label small fw-semibold">On behalf of Vendor <span class="text-muted fw-normal">(optional)</span></label>
-            <select name="vendor_id" id="prVendorId" class="form-select form-select-sm">
-              <option value="">— None —</option>
-              <?php foreach ($allVendors as $v): ?><option value="<?= $v['id'] ?>"><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
-            </select>
-          </div>
-          <?php endif; ?>
           <div class="col-6"><label class="form-label small fw-semibold">Link Type</label>
             <select name="linked_type" id="linkType" class="form-select form-select-sm" onchange="toggleLinkPicker(this.value)">
               <option value="">— None —</option>
@@ -667,8 +695,9 @@ require __DIR__ . '/../includes/header.php';
             </select>
           </div>
           <div class="col-12">
-            <label class="form-label small fw-semibold">Backing Documents <span class="text-muted fw-normal">(optional — up to 5, PDF/JPG/PNG)</span></label>
-            <input type="file" name="documents[]" id="docsInput" class="form-control form-control-sm" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onchange="checkDocsCount(this)">
+            <label class="form-label small fw-semibold">Backing Documents <span class="text-danger">*</span> <span class="text-muted fw-normal">(up to 5, PDF/JPG/PNG)</span></label>
+            <input type="file" name="documents[]" id="docsInput" class="form-control form-control-sm" multiple accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onchange="checkDocsCount(this)" required>
+            <div class="form-text" id="docsExistingNote"></div>
             <div class="form-text text-danger d-none" id="docsCountWarn">You can attach at most 5 documents.</div>
           </div>
         </div>
@@ -840,23 +869,25 @@ async function confirmMarkDisbursed(){
 <script>
 let linkInstallTS = null, linkTicketTS = null;
 const RESUBMIT_DATA = <?= json_encode($resubmitData, JSON_HEX_TAG) ?>;
+let customerIdsTS = null;
 document.addEventListener('DOMContentLoaded', function () {
   linkInstallTS = new TomSelect('#linkInstallSelect', { create:false, sortField:{field:'text',direction:'asc'} });
   linkTicketTS  = new TomSelect('#linkTicketSelect',  { create:false, sortField:{field:'text',direction:'asc'} });
+  customerIdsTS = new TomSelect('#prCustomerIds', { plugins:['remove_button'], sortField:{field:'text',direction:'asc'} });
   <?php if ($err): ?>
   bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
   <?php endif; ?>
 });
+// Types whose customer picker is required / hidden — kept in sync with
+// PR_CUSTOMER_REQUIRED_TYPES / PR_CUSTOMER_HIDDEN_TYPES in payment-requests.php.
+const PR_CUSTOMER_REQUIRED_TYPES = <?= json_encode(PR_CUSTOMER_REQUIRED_TYPES) ?>;
+const PR_CUSTOMER_HIDDEN_TYPES   = <?= json_encode(PR_CUSTOMER_HIDDEN_TYPES) ?>;
 function toggleRequestType(v) {
-  const showFields = v !== 'operational'; // Operational: no customer involved at all
-  const required = v === 'customer';       // Customer: name + user ID compulsory
-  document.getElementById('prCustNameWrap').classList.toggle('d-none', !showFields);
-  document.getElementById('prCustUserIdWrap').classList.toggle('d-none', !showFields);
-  document.getElementById('prCustName').required = required;
-  document.getElementById('prCustUserId').required = required;
-  document.getElementById('prCustNameReq').classList.toggle('d-none', !required);
-  document.getElementById('prCustUserIdReq').classList.toggle('d-none', !required);
-  if (!showFields) { document.getElementById('prCustName').value = ''; document.getElementById('prCustUserId').value = ''; }
+  const showFields = !PR_CUSTOMER_HIDDEN_TYPES.includes(v);
+  const required   = PR_CUSTOMER_REQUIRED_TYPES.includes(v);
+  document.getElementById('prCustomersWrap').classList.toggle('d-none', !showFields);
+  document.getElementById('prCustomersReq').classList.toggle('d-none', !required);
+  if (!showFields && customerIdsTS) customerIdsTS.clear();
 }
 function resetForCreate() {
   document.getElementById('prForm').reset();
@@ -865,7 +896,10 @@ function resetForCreate() {
   document.getElementById('prModalTitle').innerHTML = '<i class="bi bi-cash-coin me-1 text-primary"></i>New Payment Request Voucher';
   document.getElementById('prResubmitNotice').classList.add('d-none');
   document.getElementById('prCategoryOtherWrap').classList.add('d-none');
+  if (customerIdsTS) customerIdsTS.clear();
   toggleRequestType('');
+  document.getElementById('docsInput').required = true;
+  document.getElementById('docsExistingNote').textContent = '';
   // Collapse the item breakdown back to a single blank row.
   const tbody = document.getElementById('itemsBody');
   tbody.innerHTML = '';
@@ -888,8 +922,7 @@ function openResubmit(id) {
   document.getElementById('prDept').value = rec.department || '';
   document.getElementById('prRequestType').value = rec.request_type || '';
   toggleRequestType(rec.request_type || '');
-  document.getElementById('prCustName').value = rec.customer_name || '';
-  document.getElementById('prCustUserId').value = rec.customer_user_id || '';
+  if (customerIdsTS) { customerIdsTS.clear(); (rec.customer_ids || []).forEach(id => customerIdsTS.addItem(id)); }
   document.getElementById('prLocation').value = rec.location || '';
   document.getElementById('prHubId').value = rec.hub_id || '';
   document.getElementById('prCategory').value = rec.category || '';
@@ -899,8 +932,10 @@ function openResubmit(id) {
   document.getElementById('prPriority').value = rec.priority || 'Medium';
   document.getElementById('prDescription').value = rec.description || '';
   document.getElementById('prReceiver').value = rec.receiver || '';
-  const vendorSel = document.getElementById('prVendorId');
-  if (vendorSel) vendorSel.value = rec.vendor_id || '';
+  const hasExistingDocs = (rec.doc_count || 0) > 0;
+  document.getElementById('docsInput').required = !hasExistingDocs;
+  document.getElementById('docsExistingNote').textContent = hasExistingDocs
+    ? rec.doc_count + ' document(s) already attached — only upload here if adding more.' : '';
 
   if (rec.linked_type) {
     document.getElementById('linkType').value = rec.linked_type;
