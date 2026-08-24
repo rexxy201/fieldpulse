@@ -5,6 +5,21 @@ requirePermission('admin.access');
 
 $msg = ''; $msgType = 'success';
 
+// Permissions shown/managed on the Roles & Permissions matrix (tab-permissions
+// below). Kept as a single source of truth so the save handler only ever
+// touches permissions actually represented on screen — anything granted
+// elsewhere (e.g. Payment Requests / Finance stage permissions, which aren't
+// shown in this matrix) is left alone rather than being silently wiped on
+// every save.
+$PERMISSION_GROUPS = [
+    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
+    'Customers'     => ['customers.view','customers.create','customers.update','customers.delete'],
+    'Installations' => ['installations.view','installations.create','installations.update','installations.delete'],
+    'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view'],
+    'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill'],
+    'System'        => ['admin.access'],
+];
+
 if (method() === 'POST') {
     verifyCsrf();
     $b = $_POST;
@@ -149,13 +164,18 @@ if (method() === 'POST') {
     if ($action === 'save_permissions') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
+        // Only ever touch permissions actually shown on the matrix — leave
+        // anything else (Payment Requests / Finance stage grants, etc.)
+        // untouched so this save can't silently wipe grants made elsewhere.
+        $managedPerms = array_merge(...array_values($PERMISSION_GROUPS));
+        $ph = implode(',', array_fill(0, count($managedPerms), '?'));
         foreach (roleKeys() as $r) {
             if ($r === 'admin') continue; // admin always has all, skip
-            // Remove existing permissions for this role
-            dbRun("DELETE FROM role_permissions WHERE role = ?", [$r]);
+            // Remove only the managed permissions for this role
+            dbRun("DELETE FROM role_permissions WHERE role = ? AND permission IN ($ph)", array_merge([$r], $managedPerms));
             // Re-insert checked ones
             $rolePerms = $submitted[$r] ?? [];
-            foreach (array_keys(ALL_PERMISSIONS) as $p) {
+            foreach ($managedPerms as $p) {
                 if (!empty($rolePerms[$p])) {
                     try {
                         dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),$r,$p]);
@@ -978,15 +998,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               </thead>
               <tbody>
                 <?php
-                $groups = [
-                    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
-                    'Customers'     => ['customers.view','customers.create','customers.update','customers.delete'],
-                    'Installations' => ['installations.view','installations.create','installations.update'],
-                    'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view'],
-                    'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill'],
-                    'System'        => ['admin.access'],
-                ];
-                foreach ($groups as $groupName => $perms):
+                foreach ($PERMISSION_GROUPS as $groupName => $perms):
                 ?>
                 <tr class="table-light">
                   <td colspan="<?= count($editableRoles)+1 ?>" class="fw-semibold text-muted small py-1 px-2">

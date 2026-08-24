@@ -78,7 +78,9 @@ if ($id && method() === 'PATCH') {
 }
 
 if ($id && method() === 'DELETE') {
-    if (!in_array($role,$editRoles)) jsonResponse(['error'=>'Forbidden'],403);
+    // Its own permission, deliberately not tied to $editRoles/installations.update —
+    // a role opened up for editing should not automatically be able to delete.
+    if (!hasPermission('installations.delete')) jsonResponse(['error'=>'Forbidden'],403);
     dbRun("DELETE FROM installation_profiles WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }

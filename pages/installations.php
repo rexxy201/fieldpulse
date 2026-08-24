@@ -6,6 +6,10 @@ requirePermission('installations.view');
 $user     = currentUser();
 $role     = $user['role'];
 $canEdit  = hasPermission('installations.create') || hasPermission('installations.update');
+// Delete is its own permission, deliberately separate from create/update —
+// a role opened up for editing (e.g. a vendor granted stage/field updates)
+// should not automatically be able to delete records outright.
+$canDelete = hasPermission('installations.delete');
 // Finance roles: payment fields only, no stage/vendor/plan/etc. If a user has
 // full edit rights too (e.g. admin), the full Edit modal already covers this.
 $canFinance = !$canEdit && hasPermission('installations.financial');
@@ -326,7 +330,7 @@ if (method() === 'POST') {
             $msg = 'Comment added.';
         }
     }
-    if ($action === 'delete' && $canEdit) {
+    if ($action === 'delete' && $canDelete) {
         dbRun("DELETE FROM installation_profiles WHERE id=?",[$b['profile_id']??'']);
         $msg = 'Profile deleted.';
     }
@@ -480,13 +484,16 @@ require __DIR__ . '/../includes/header.php';
               <a href="/installations?detail=<?= $p['id'] ?>" class="btn btn-sm btn-outline-secondary py-0" title="View details"><i class="bi bi-chat-left-text"></i></a>
               <?php if ($canEdit): ?>
               <button class="btn btn-sm btn-outline-primary py-0" onclick="openEditFull(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)" title="Edit"><i class="bi bi-pencil"></i></button>
+              <?php endif; ?>
+              <?php if ($canDelete): ?>
               <form method="POST" style="display:inline" onsubmit="return confirm('Delete?')">
                 <input type="hidden" name="_action" value="delete">
                 <input type="hidden" name="profile_id" value="<?= $p['id'] ?>">
                 <?= csrfField() ?>
                 <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
               </form>
-              <?php elseif ($canFinance): ?>
+              <?php endif; ?>
+              <?php if (!$canEdit && $canFinance): ?>
               <button class="btn btn-sm btn-outline-primary py-0" onclick="openEditFinancial(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)" title="Update Payment Info"><i class="bi bi-cash-coin"></i></button>
               <?php endif; ?>
             </div>

@@ -768,6 +768,7 @@ define('ALL_PERMISSIONS', [
     'installations.view'   => 'View installations',
     'installations.create' => 'Create installation profiles',
     'installations.update' => 'Update installations',
+    'installations.delete' => 'Delete installation records',
     'installations.financial' => 'Update payment fields only (Amount Paid, Cost, Payment Confirmed Date, Installation Paid) — no stage/vendor/plan',
     'schedule.view'        => 'View schedule',
     'map.view'             => 'View field map',
@@ -2063,6 +2064,26 @@ if (!$_sv22) {
         dbUpsertConfig('schema_v22_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v22 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v23: installations.delete as its own toggleable permission ────────
+// Deleting an installation record used to ride on installations.update/.create
+// (the same "full edit" gate) — so any role granted edit access (including a
+// vendor role an admin had opened up for stage/field updates) could also
+// delete records outright, with no way to separate the two. This is a brand
+// new permission key; only project_admin is explicitly granted it here since
+// 'admin' bypasses permission checks entirely — every other role (vendor,
+// supervisors, etc.) starts with none, and only gets it if explicitly toggled
+// on in Admin → Roles & Permissions.
+$_k = dbKey();
+$_sv23 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v23_migrated'");
+if (!$_sv23) {
+    try {
+        dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(), 'project_admin', 'installations.delete']);
+        dbUpsertConfig('schema_v23_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v23 migration error: ' . $e->getMessage());
     }
 }
 
