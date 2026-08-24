@@ -170,7 +170,7 @@ if (method() === 'POST') {
         $rname = strtolower(trim($b['name'] ?? ''));
         $rname = preg_replace('/[^a-z0-9_-]/', '', str_replace(' ', '-', $rname));
         $rlabel = trim($b['label'] ?? '');
-        $rdept  = in_array($b['department'] ?? '', ['fiber','noc','installation','cx']) ? $b['department'] : '';
+        $rdept  = in_array($b['department'] ?? '', ['fiber','noc','installation','cx','finance']) ? $b['department'] : '';
         if ($rname === '' || $rlabel === '') {
             $msg = 'Role name and label are required.'; $msgType = 'error';
         } elseif (isset(getRoles()[$rname])) {
@@ -185,7 +185,7 @@ if (method() === 'POST') {
     if ($action === 'edit_role' && !empty($b['name'])) {
         $rname  = $b['name'];
         $rlabel = trim($b['label'] ?? '');
-        $rdept  = in_array($b['department'] ?? '', ['fiber','noc','installation','cx']) ? $b['department'] : '';
+        $rdept  = in_array($b['department'] ?? '', ['fiber','noc','installation','cx','finance']) ? $b['department'] : '';
         if ($rlabel === '') { $msg = 'Label is required.'; $msgType = 'error'; }
         else {
             dbRun("UPDATE roles SET label=?, department=? WHERE name=?", [$rlabel,$rdept,$rname]);
@@ -881,7 +881,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
   <div class="tab-pane fade" id="tab-permissions">
 
     <!-- ── Roles management ─────────────────────────────────────────────── -->
-    <?php $rolesAll = getRoles(); $deptLabels = ['fiber'=>'Fiber','noc'=>'NOC','installation'=>'Installation','cx'=>'CX']; ?>
+    <?php $rolesAll = getRoles(); $deptLabels = ['fiber'=>'Fiber','noc'=>'NOC','installation'=>'Installation','cx'=>'CX','finance'=>'Finance']; ?>
     <div class="card-section mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-people me-1 text-primary"></i>Roles</span>
@@ -936,6 +936,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               <option value="">— None (sees all or own per permissions) —</option>
               <option value="fiber">Fiber</option><option value="noc">NOC</option>
               <option value="installation">Installation</option><option value="cx">CX</option>
+              <option value="finance">Finance</option>
             </select>
             <div class="form-text">If set and the role has “View own department tickets”, members see only this department's tickets.</div>
           </div>
