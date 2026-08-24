@@ -23,6 +23,8 @@ $allowed = hasPermission('payment_requests.view') || hasPermission('payment_requ
 if (!$allowed) { http_response_code(403); exit('Forbidden'); }
 
 $items = dbFetchAll("SELECT * FROM payment_request_items WHERE payment_request_id=? ORDER BY sort_order", [$id]);
+$payments = dbFetchAll("SELECT * FROM payment_request_payments WHERE payment_request_id=? ORDER BY paid_at", [$id]);
+$balance = round((float)$r['amount'] - (float)$r['amount_paid'], 2);
 
 $appCfg = getAppConfig();
 $co = htmlspecialchars($appCfg['companyName'] ?? 'MangoNet Integrated Technologies Limited');
@@ -66,8 +68,8 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
   <div class="company"><?= $co ?></div>
   <h1>REQUEST VOUCHER
     <?php
-    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','returned'=>'#64748b','disbursed'=>'#10b981','rejected'=>'#ef4444'];
-    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','returned'=>'RETURNED','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
+    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','returned'=>'#64748b','partially_disbursed'=>'#eab308','disbursed'=>'#10b981','rejected'=>'#ef4444'];
+    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','returned'=>'RETURNED','partially_disbursed'=>'PARTIALLY PAID','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
     ?>
     <span class="status-badge" style="background:<?= $statusColors[$r['status']] ?? '#64748b' ?>"><?= $statusLabels[$r['status']] ?? strtoupper($r['status']) ?></span>
   </h1>
@@ -146,6 +148,25 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
   <div class="field-row" style="font-size:11px;color:#555">
     <div class="field">Note: the requested amount was revised from ₦<?= number_format((float)$r['original_amount'], 2) ?> to ₦<?= number_format((float)$r['amount'], 2) ?> by <?= htmlspecialchars($r['authorized_by_name'] ?? '') ?> at the Authorize stage.</div>
   </div>
+  <?php endif; ?>
+
+  <?php if ($payments): ?>
+  <div class="section-title">Payment History</div>
+  <table>
+    <thead><tr><th style="width:120px">Date</th><th>Recorded By</th><th>Reference / Note</th><th style="width:120px">Amount (NGN)</th></tr></thead>
+    <tbody>
+      <?php foreach ($payments as $p): ?>
+      <tr>
+        <td><?= $fmtDate($p['paid_at']) ?></td>
+        <td><?= htmlspecialchars($p['paid_by_name'] ?? '') ?></td>
+        <td><?= htmlspecialchars($p['note'] ?: ($p['payment_reference'] ?? '')) ?></td>
+        <td><?= number_format((float)$p['amount'], 2) ?></td>
+      </tr>
+      <?php endforeach; ?>
+      <tr><td colspan="3" style="text-align:right">Total Paid (NGN)</td><td><?= number_format((float)$r['amount_paid'], 2) ?></td></tr>
+      <tr><td colspan="3" style="text-align:right"><strong>Balance Due (NGN)</strong></td><td><strong><?= number_format($balance, 2) ?></strong></td></tr>
+    </tbody>
+  </table>
   <?php endif; ?>
 
   <div class="field-row">

@@ -1987,6 +1987,66 @@ if (!$_sv20) {
     }
 }
 
+// ─── Schema v21: Partial disbursements (bill-style payment tracking) ──────────
+// Finance can now record one or more payments against an approved request —
+// like a Zoho Books bill — instead of a single all-or-nothing "Disburse".
+// amount_paid is the running total; balance = amount - amount_paid. A new
+// 'partially_disbursed' status covers the in-between state; 'disbursed' means
+// amount_paid has reached the full amount. Existing 'disbursed' records are
+// backfilled with amount_paid = amount and a single historical payment row
+// built from their old paid_at/payment_reference/disbursed_by fields, so no
+// payment history is lost.
+$_k = dbKey();
+$_sv21 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v21_migrated'");
+if (!$_sv21) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_request_payments` (
+                `id`                  VARCHAR(36) NOT NULL,
+                `payment_request_id`  VARCHAR(36) NOT NULL,
+                `amount`              DECIMAL(14,2) NOT NULL,
+                `payment_reference`   VARCHAR(191) DEFAULT NULL,
+                `note`                VARCHAR(255) DEFAULT NULL,
+                `paid_by`             VARCHAR(36) DEFAULT NULL,
+                `paid_by_name`        VARCHAR(191) DEFAULT NULL,
+                `paid_at`             DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_prp_request` (`payment_request_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `amount_paid` DECIMAL(14,2) NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_request_payments (
+                id                  VARCHAR(36) PRIMARY KEY,
+                payment_request_id  VARCHAR(36) NOT NULL,
+                amount              NUMERIC(14,2) NOT NULL,
+                payment_reference   VARCHAR(191),
+                note                VARCHAR(255),
+                paid_by             VARCHAR(36),
+                paid_by_name        VARCHAR(191),
+                paid_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+            try { db()->exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(14,2) NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+        }
+
+        // Backfill: every already-disbursed request is fully paid.
+        foreach (dbFetchAll("SELECT id, amount, paid_at, payment_reference, disbursed_by, disbursed_by_name FROM payment_requests WHERE status='disbursed'") as $_pr) {
+            try {
+                dbRun("UPDATE payment_requests SET amount_paid=? WHERE id=?", [$_pr['amount'], $_pr['id']]);
+                dbInsertIgnore(
+                    "INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?)",
+                    [newUuid(), $_pr['id'], $_pr['amount'], $_pr['payment_reference'], $_pr['disbursed_by'], $_pr['disbursed_by_name'], $_pr['paid_at'] ?: date('Y-m-d H:i:s')]
+                );
+            } catch (\Throwable $e) {
+                error_log('Schema v21: failed backfilling payment history for ' . $_pr['id'] . ': ' . $e->getMessage());
+            }
+        }
+
+        dbUpsertConfig('schema_v21_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v21 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.

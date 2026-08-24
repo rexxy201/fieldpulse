@@ -4,21 +4,25 @@ requireAuth();
 requirePermission('finance.view');
 
 // ─── Payment Requests aggregates ────────────────────────────────────────────
-// 4-stage flow: pending -> authorized -> approved -> [finance check] -> disbursed,
-// or returned (sent back to requester for edits) / rejected (terminal, Authorize/Approve stage only).
+// 4-stage flow: pending -> authorized -> approved -> [finance check] -> disbursed
+// (which may pass through partially_disbursed if paid in installments, like a
+// Zoho Books bill), or returned (sent back to requester for edits) / rejected
+// (terminal, Authorize/Approve stage only).
 $prByStatus = dbFetch(
     "SELECT SUM(status='pending') AS pending, SUM(status='authorized') AS authorized, SUM(status='approved') AS approved,
-            SUM(status='returned') AS returned, SUM(status='disbursed') AS paid, SUM(status='rejected') AS rejected
+            SUM(status='returned') AS returned, SUM(status='partially_disbursed') AS partial, SUM(status='disbursed') AS paid, SUM(status='rejected') AS rejected
      FROM payment_requests"
 );
 $prAmounts = dbFetch(
     "SELECT
         SUM(CASE WHEN status='pending'  THEN amount ELSE 0 END) AS pending_amount,
-        SUM(CASE WHEN status IN ('authorized','approved') THEN amount ELSE 0 END) AS approved_amount,
-        SUM(CASE WHEN status='disbursed'     THEN amount ELSE 0 END) AS paid_amount,
-        SUM(CASE WHEN status='disbursed' AND paid_at >= " . dbNowMinusInterval(30, 'DAY') . " THEN amount ELSE 0 END) AS paid_last_30d
+        SUM(CASE WHEN status IN ('authorized','approved','partially_disbursed') THEN amount - amount_paid ELSE 0 END) AS approved_amount,
+        SUM(amount_paid) AS paid_amount
      FROM payment_requests"
 );
+$prAmounts['paid_last_30d'] = (float)(dbFetch(
+    "SELECT SUM(amount) AS total FROM payment_request_payments WHERE paid_at >= " . dbNowMinusInterval(30, 'DAY')
+)['total'] ?? 0);
 $prByVendor = dbFetchAll(
     "SELECT v.name, COUNT(pr.id) AS cnt, SUM(pr.amount) AS total
      FROM payment_requests pr JOIN vendors v ON v.id = pr.vendor_id
@@ -69,13 +73,13 @@ require __DIR__ . '/../includes/header.php';
       <div class="col-6 col-md-3">
         <div class="stat-card py-2 text-center">
           <div class="fw-bold fs-5" style="color:#3b82f6">₦<?= number_format((float)($prAmounts['approved_amount']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) ?> Authorized/Approved (undisbursed)<?php if (($prByStatus['returned']??0) > 0): ?> · <?= (int)$prByStatus['returned'] ?> Returned<?php endif; ?></div>
+          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) + (int)($prByStatus['partial']??0) ?> Authorized/Approved (outstanding balance)<?php if (($prByStatus['partial']??0) > 0): ?> · <?= (int)$prByStatus['partial'] ?> Partial<?php endif; ?><?php if (($prByStatus['returned']??0) > 0): ?> · <?= (int)$prByStatus['returned'] ?> Returned<?php endif; ?></div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card py-2 text-center">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($prAmounts['paid_amount']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['paid']??0) ?> Disbursed (all-time)</div>
+          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['paid']??0) ?> Fully Disbursed (all-time)</div>
         </div>
       </div>
       <div class="col-6 col-md-3">

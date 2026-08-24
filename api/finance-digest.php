@@ -36,18 +36,20 @@ $_ivPeriod = dbNowMinusInterval($days, 'DAY');
 // or returned (sent back to requester for edits) / rejected (Authorize/Approve stage only).
 $prPeriod = dbFetch(
     "SELECT COUNT(*) AS submitted,
-            SUM(status IN ('authorized','approved')) AS approved,
+            SUM(status IN ('authorized','approved','partially_disbursed')) AS approved,
             SUM(status='returned') AS returned,
             SUM(status='rejected') AS rejected,
-            SUM(status='disbursed') AS paid,
-            SUM(CASE WHEN status='disbursed' THEN amount ELSE 0 END) AS paid_amount
+            SUM(status='disbursed') AS paid
      FROM payment_requests WHERE created_at >= {$_ivPeriod}"
 );
+$prPeriod['paid_amount'] = (float)(dbFetch(
+    "SELECT SUM(amount) AS total FROM payment_request_payments WHERE paid_at >= {$_ivPeriod}"
+)['total'] ?? 0);
 $prOutstanding = dbFetch(
     "SELECT SUM(status='pending') AS pending_count,
             SUM(CASE WHEN status='pending' THEN amount ELSE 0 END) AS pending_amount,
-            SUM(status IN ('authorized','approved')) AS approved_count,
-            SUM(CASE WHEN status IN ('authorized','approved') THEN amount ELSE 0 END) AS approved_amount
+            SUM(status IN ('authorized','approved','partially_disbursed')) AS approved_count,
+            SUM(CASE WHEN status IN ('authorized','approved','partially_disbursed') THEN amount - amount_paid ELSE 0 END) AS approved_amount
      FROM payment_requests"
 );
 $topVendorsOwed = dbFetchAll(

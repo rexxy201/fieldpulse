@@ -65,19 +65,46 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
     if ($action === 'return') {
         if (!$canFinanceCheck) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
         if ($notes === '') { echo json_encode(['ok'=>false,'msg'=>'A reason is required to return a request to the requester.']); exit; }
+        // Only returnable before any money has moved — once a partial payment
+        // has been recorded, the bill must be paid off, not sent back.
         dbRun("UPDATE payment_requests SET status='returned', returned_by=?, returned_by_name=?, returned_at=NOW(), return_notes=? WHERE id=? AND status='approved'",
             [$user['id'], $user['name'], $notes, $reqId]);
         echo json_encode(['ok'=>true]); exit;
     }
     if ($action === 'disburse') {
         if (!$canFinanceCheck) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
-        $ref = trim($_POST['payment_reference'] ?? '');
+        // Bill-style payment recording — Finance can pay an approved request
+        // off in one or more installments. Each call records a payment row
+        // and advances amount_paid; the request moves to 'partially_disbursed'
+        // until the running total reaches the full amount, then 'disbursed'.
+        $payAmt = $_POST['pay_amount'] ?? '';
+        $ref    = trim($_POST['payment_reference'] ?? '');
+        $note   = trim($_POST['payment_note'] ?? '');
+        if ($payAmt === '' || !is_numeric($payAmt) || (float)$payAmt <= 0) {
+            echo json_encode(['ok'=>false,'msg'=>'Enter a valid payment amount.']); exit;
+        }
+        $payAmt = round((float)$payAmt, 2);
+        $pr = dbFetch("SELECT amount, amount_paid FROM payment_requests WHERE id=? AND status IN ('approved','partially_disbursed')", [$reqId]);
+        if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Request not found or not awaiting payment.']); exit; }
+        $balance = round((float)$pr['amount'] - (float)$pr['amount_paid'], 2);
+        if ($payAmt > $balance + 0.01) {
+            echo json_encode(['ok'=>false,'msg'=>'Payment of ₦'.number_format($payAmt,2).' exceeds the outstanding balance of ₦'.number_format($balance,2).'.']); exit;
+        }
         // TODO: Zoho Books integration — once the API is wired up, post this
-        // disbursement as a bill/payment in Zoho Books here. Not built yet
-        // per the user's request; this is a placeholder note only.
-        dbRun("UPDATE payment_requests SET status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=? AND status='approved'",
-            [$ref ?: null, $user['id'], $user['name'], $reqId]);
-        echo json_encode(['ok'=>true]); exit;
+        // payment against the corresponding bill in Zoho Books here. Not
+        // built yet per the user's request; this is a placeholder note only.
+        dbRun("INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,note,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?,NOW())",
+            [newUuid(), $reqId, $payAmt, $ref ?: null, $note ?: null, $user['id'], $user['name']]);
+        $newPaid = round((float)$pr['amount_paid'] + $payAmt, 2);
+        $isFull  = $newPaid >= round((float)$pr['amount'] - 0.01, 2);
+        if ($isFull) {
+            dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
+                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
+        } else {
+            dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
+                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
+        }
+        echo json_encode(['ok'=>true,'full'=>$isFull]); exit;
     }
     echo json_encode(['ok'=>false,'msg'=>'Unknown action']); exit;
 }
@@ -202,7 +229,7 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
 }
 
 $status = $_GET['status'] ?? 'all';
-if (!in_array($status, ['all','pending','authorized','approved','disbursed','rejected','returned'], true)) $status = 'all';
+if (!in_array($status, ['all','pending','authorized','approved','partially_disbursed','disbursed','rejected','returned'], true)) $status = 'all';
 
 // Scope: approvers/viewers see everyone's; vendors see their own vendor_id;
 // everyone else sees only what they personally submitted.
@@ -285,6 +312,54 @@ if ($ownReturnedIds) {
     }
 }
 
+// Full bill-view + payment history for requests awaiting Finance action —
+// powers the "View & Record Payment" modal (Zoho-Books-style bill view)
+// without a second round trip.
+$disburseData = [];
+if ($canFinanceCheck) {
+    $payableIds = array_values(array_map(fn($r) => $r['id'], array_filter($requests, fn($r) => in_array($r['status'], ['approved','partially_disbursed'], true))));
+    if ($payableIds) {
+        $ph = implode(',', array_fill(0, count($payableIds), '?'));
+        $itemsByPr = [];
+        foreach (dbFetchAll("SELECT payment_request_id,description,qty,unit_price,line_total FROM payment_request_items WHERE payment_request_id IN ($ph) ORDER BY sort_order", $payableIds) as $it) {
+            $itemsByPr[$it['payment_request_id']][] = $it;
+        }
+        $paymentsByPr = [];
+        foreach (dbFetchAll("SELECT payment_request_id,amount,payment_reference,note,paid_by_name,paid_at FROM payment_request_payments WHERE payment_request_id IN ($ph) ORDER BY paid_at", $payableIds) as $p) {
+            $paymentsByPr[$p['payment_request_id']][] = $p;
+        }
+        foreach ($requests as $r) {
+            if (!in_array($r['id'], $payableIds, true)) continue;
+            $linkLbl = $r['linked_type']==='installation' ? ($installLabels[$r['linked_id']] ?? null)
+                     : ($r['linked_type']==='ticket' ? ($ticketLabels[$r['linked_id']] ?? null) : null);
+            $disburseData[$r['id']] = [
+                'requester_name'   => $r['requester_name'],
+                'date_of_request'  => $r['date_of_request'],
+                'department'       => $r['department'],
+                'customer_name'    => $r['customer_name'],
+                'customer_user_id' => $r['customer_user_id'],
+                'location'         => $r['location'],
+                'hub_name'         => $r['hub_name'],
+                'category'         => $r['category'],
+                'category_other'   => $r['category_other'],
+                'capex_opex'       => $r['capex_opex'],
+                'priority'         => $r['priority'],
+                'description'      => $r['description'],
+                'receiver'         => $r['receiver'],
+                'vendor_name'      => $r['vendor_name'],
+                'linked_label'     => $linkLbl,
+                'amount'           => (float)$r['amount'],
+                'original_amount'  => $r['original_amount'] !== null ? (float)$r['original_amount'] : null,
+                'amount_paid'      => (float)$r['amount_paid'],
+                'balance'          => round((float)$r['amount'] - (float)$r['amount_paid'], 2),
+                'items'            => $itemsByPr[$r['id']] ?? [],
+                'payments'         => $paymentsByPr[$r['id']] ?? [],
+                'docs'             => array_map(fn($d) => ['id'=>$d['id'],'name'=>$d['original_name']], $docsByRequest[$r['id']] ?? []),
+            ];
+        }
+    }
+}
+
 // Stats (same scope, ignoring status filter)
 $sw = []; $sp = [];
 if (!$canView) {
@@ -292,7 +367,7 @@ if (!$canView) {
     else { $sw[] = "requester_id = ?"; $sp[] = $user['id']; }
 }
 $swSql = $sw ? ' WHERE ' . implode(' AND ', $sw) : '';
-$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='returned') returned, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
+$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='returned') returned, SUM(status='partially_disbursed') partially_disbursed, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
 
 // Records available to link, scoped to the current user
 if ($isVendor && !empty($user['vendor_id'])) {
@@ -306,8 +381,8 @@ $allVendors = (!$isVendor && $canCreate) ? dbFetchAll("SELECT id,name FROM vendo
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
 $locations = $canCreate ? dbFetchAll("SELECT name FROM locations ORDER BY name") : [];
 
-$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','returned'=>'Returned','disbursed'=>'Disbursed','rejected'=>'Rejected'];
-$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','returned'=>'text-bg-secondary','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
+$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','returned'=>'Returned','partially_disbursed'=>'Partial Payment','disbursed'=>'Disbursed','rejected'=>'Rejected'];
+$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','returned'=>'text-bg-secondary','partially_disbursed'=>'text-bg-warning','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
 
 $pageTitle = 'Payment Requests';
 require __DIR__ . '/../includes/header.php';
@@ -338,9 +413,10 @@ require __DIR__ . '/../includes/header.php';
     ['Authorized','#0ea5e9',(int)($stats['authorized']??0),'authorized'],
     ['Approved','#3b82f6',(int)($stats['approved']??0),'approved'],
     ['Returned','#64748b',(int)($stats['returned']??0),'returned'],
+    ['Partial Payment','#eab308',(int)($stats['partially_disbursed']??0),'partially_disbursed'],
     ['Disbursed','#10b981',(int)($stats['disbursed']??0),'disbursed'],
     ['Rejected','#ef4444',(int)($stats['rejected']??0),'rejected'],
-    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['returned']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
+    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['returned']??0)+($stats['partially_disbursed']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
   ] as [$lbl,$clr,$val,$sf]): ?>
   <div class="col-6 col-md-4 col-xl-2">
     <a href="?status=<?= $sf ?>" class="stat-card py-2 d-block text-center text-decoration-none <?= $status===$sf?'border-primary':'' ?>">
@@ -386,6 +462,9 @@ require __DIR__ . '/../includes/header.php';
             <?php if ($r['original_amount'] !== null): ?>
             <div class="small text-muted fw-normal text-decoration-line-through" title="Original requested amount, revised at Authorize">₦<?= number_format((float)$r['original_amount'], 2) ?></div>
             <?php endif; ?>
+            <?php if ($r['status']==='partially_disbursed'): ?>
+            <div class="small text-warning fw-normal">Paid ₦<?= number_format((float)$r['amount_paid'], 2) ?> · Bal ₦<?= number_format((float)$r['amount'] - (float)$r['amount_paid'], 2) ?></div>
+            <?php endif; ?>
           </td>
           <td class="small">
             <?php if ($reqDocs): ?>
@@ -411,10 +490,12 @@ require __DIR__ . '/../includes/header.php';
               <button class="btn btn-sm btn-primary" onclick="review('<?= $r['id'] ?>','approve')" title="Approve"><i class="bi bi-check-lg"></i> Approve</button>
               <button class="btn btn-sm btn-danger" onclick="review('<?= $r['id'] ?>','reject')" title="Reject"><i class="bi bi-x-lg"></i></button>
             </div>
-            <?php elseif ($canFinanceCheck && $r['status']==='approved'): ?>
+            <?php elseif ($canFinanceCheck && in_array($r['status'], ['approved','partially_disbursed'], true)): ?>
             <div class="d-inline-flex gap-1">
-              <button class="btn btn-sm btn-outline-success" onclick="markDisbursed('<?= $r['id'] ?>')" title="Disburse"><i class="bi bi-cash-stack me-1"></i>Disburse</button>
+              <button class="btn btn-sm btn-outline-success" onclick="openDisburse('<?= $r['id'] ?>')" title="View &amp; Record Payment"><i class="bi bi-cash-stack me-1"></i><?= $r['status']==='partially_disbursed' ? 'Record Payment' : 'Disburse' ?></button>
+              <?php if ($r['status']==='approved'): ?>
               <button class="btn btn-sm btn-warning" onclick="review('<?= $r['id'] ?>','return')" title="Return to requester for edits"><i class="bi bi-arrow-return-left"></i> Return</button>
+              <?php endif; ?>
             </div>
             <?php elseif ($isOwnReturned): ?>
             <button class="btn btn-sm btn-outline-warning" onclick="openResubmit('<?= $r['id'] ?>')" title="Edit &amp; Resubmit"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Resubmit</button>
@@ -594,15 +675,46 @@ require __DIR__ . '/../includes/header.php';
   <div class="modal-footer"><button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary btn-sm" id="rmConfirm" onclick="confirmReview()">Confirm</button></div>
 </div></div></div>
 
-<div class="modal fade" id="paidModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-  <div class="modal-header"><h5 class="modal-title">Mark as Disbursed</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal fade" id="paidModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title"><i class="bi bi-receipt me-1 text-success"></i>View &amp; Record Payment</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
   <div class="modal-body">
     <div class="alert alert-danger py-2 d-none" id="pmErr"></div>
     <input type="hidden" id="pmId">
-    <label class="form-label fw-semibold small">Payment Reference <span class="text-muted fw-normal">(optional — transaction ID, cheque #, etc.)</span></label>
-    <input type="text" id="pmRef" class="form-control form-control-sm">
+
+    <!-- Read-only bill view -->
+    <div id="pmDetail" class="border rounded p-3 mb-3" style="background:#f8fafc;font-size:.85rem;"></div>
+
+    <!-- Payment history -->
+    <div id="pmHistoryWrap" class="mb-3 d-none">
+      <p class="small fw-semibold text-muted text-uppercase mb-2">Payment History</p>
+      <table class="table table-sm mb-0"><tbody id="pmHistoryBody"></tbody></table>
+    </div>
+
+    <!-- Balance summary -->
+    <div class="d-flex justify-content-between align-items-center mb-3 p-2 rounded" style="background:#eef2f7;">
+      <div class="small">Total: <strong>₦<span id="pmTotal">0.00</span></strong> &nbsp;·&nbsp; Paid: <strong class="text-success">₦<span id="pmPaidSoFar">0.00</span></strong></div>
+      <div>Balance Due: <strong class="text-danger fs-6">₦<span id="pmBalance">0.00</span></strong></div>
+    </div>
+
+    <!-- Record a payment -->
+    <p class="small fw-semibold text-muted text-uppercase mb-2">Record Payment</p>
+    <div class="row g-2">
+      <div class="col-6">
+        <label class="form-label small fw-semibold">Amount (₦)</label>
+        <input type="number" id="pmAmount" step="0.01" min="0.01" class="form-control form-control-sm">
+        <div class="form-text"><a href="#" onclick="fillFullBalance();return false;">Pay full balance</a></div>
+      </div>
+      <div class="col-6">
+        <label class="form-label small fw-semibold">Payment Reference <span class="text-muted fw-normal">(optional)</span></label>
+        <input type="text" id="pmRef" class="form-control form-control-sm" placeholder="Transaction ID, cheque #, etc.">
+      </div>
+      <div class="col-12">
+        <label class="form-label small fw-semibold">Note <span class="text-muted fw-normal">(optional)</span></label>
+        <input type="text" id="pmNote" class="form-control form-control-sm" placeholder="e.g. First installment, final payment…">
+      </div>
+    </div>
   </div>
-  <div class="modal-footer"><button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button><button class="btn btn-sm btn-success" onclick="confirmMarkDisbursed()">Confirm Disbursed</button></div>
+  <div class="modal-footer"><button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button><button class="btn btn-sm btn-success" onclick="confirmMarkDisbursed()">Record Payment</button></div>
 </div></div></div>
 
 <script>
@@ -632,14 +744,63 @@ async function confirmReview(){
   location.reload();
 }
 function paidModalEl(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('paidModal')); }
-function markDisbursed(id){
-  document.getElementById('pmId').value=id; document.getElementById('pmRef').value='';
+const DISBURSE_DATA = <?= json_encode($disburseData, JSON_HEX_TAG) ?>;
+function fmtMoney(n){ return (Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function esc(s){ const d=document.createElement('div'); d.textContent = s==null?'':String(s); return d.innerHTML; }
+function openDisburse(id){
+  const rec = DISBURSE_DATA[id];
+  if (!rec) return;
+  document.getElementById('pmId').value = id;
+  document.getElementById('pmRef').value = '';
+  document.getElementById('pmNote').value = '';
   document.getElementById('pmErr').classList.add('d-none');
+
+  const itemsRows = (rec.items||[]).map(it =>
+    `<tr><td>${esc(it.description)}</td><td class="text-end">${esc(it.qty)}</td><td class="text-end">₦${fmtMoney(it.unit_price)}</td><td class="text-end">₦${fmtMoney(it.line_total)}</td></tr>`
+  ).join('') || '<tr><td colspan="4" class="text-muted">No line items</td></tr>';
+  const docsHtml = (rec.docs||[]).map(d => `<a href="/api/payment-request-document?id=${esc(d.id)}" target="_blank" rel="noopener" class="d-block">${esc(d.name)}</a>`).join('') || '<span class="text-muted">—</span>';
+
+  document.getElementById('pmDetail').innerHTML = `
+    <div class="row g-2 mb-2">
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">REQUESTED BY</div><div class="fw-semibold">${esc(rec.requester_name)||'—'}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">DATE OF REQUEST</div><div>${esc(rec.date_of_request)||'—'}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">DEPARTMENT</div><div>${esc(rec.department)||'—'}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">CATEGORY</div><div>${esc(rec.category)||'—'}${rec.category==='Other' && rec.category_other ? ' ('+esc(rec.category_other)+')' : ''}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">CAPEX/OPEX</div><div>${esc(rec.capex_opex)||'—'}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">PRIORITY</div><div>${esc(rec.priority)||'—'}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">CUSTOMER</div><div>${esc(rec.customer_name)||'—'} ${rec.customer_user_id?'('+esc(rec.customer_user_id)+')':''}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">LOCATION / POP</div><div>${esc(rec.location)||'—'} ${rec.hub_name?'/ '+esc(rec.hub_name):''}</div></div>
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">RECEIVER</div><div>${esc(rec.receiver)||'—'}</div></div>
+      ${rec.vendor_name ? `<div class="col-4"><div class="text-muted" style="font-size:.7rem">VENDOR</div><div>${esc(rec.vendor_name)}</div></div>` : ''}
+      ${rec.linked_label ? `<div class="col-4"><div class="text-muted" style="font-size:.7rem">LINKED TO</div><div>${esc(rec.linked_label)}</div></div>` : ''}
+    </div>
+    <div class="mb-2"><div class="text-muted" style="font-size:.7rem">REASON / DESCRIPTION</div><div>${esc(rec.description)||'—'}</div></div>
+    <table class="table table-sm mb-1"><thead><tr><th>Description</th><th class="text-end">Qty</th><th class="text-end">Unit Price</th><th class="text-end">Total</th></tr></thead><tbody>${itemsRows}</tbody></table>
+    <div class="mb-2"><div class="text-muted" style="font-size:.7rem">BACKING DOCUMENTS</div>${docsHtml}</div>
+  `;
+
+  const hist = rec.payments || [];
+  document.getElementById('pmHistoryWrap').classList.toggle('d-none', hist.length === 0);
+  document.getElementById('pmHistoryBody').innerHTML = hist.map(p =>
+    `<tr><td class="small">${esc(p.paid_at)}</td><td class="small">${esc(p.paid_by_name)}</td><td class="small">${esc(p.note||p.payment_reference)}</td><td class="text-end fw-semibold">₦${fmtMoney(p.amount)}</td></tr>`
+  ).join('');
+
+  document.getElementById('pmTotal').textContent = fmtMoney(rec.amount);
+  document.getElementById('pmPaidSoFar').textContent = fmtMoney(rec.amount_paid);
+  document.getElementById('pmBalance').textContent = fmtMoney(rec.balance);
+  document.getElementById('pmAmount').value = rec.balance > 0 ? rec.balance.toFixed(2) : '';
+  document.getElementById('pmAmount').max = rec.balance;
+
   paidModalEl().show();
 }
+function fillFullBalance(){
+  const id = document.getElementById('pmId').value;
+  const rec = DISBURSE_DATA[id];
+  if (rec) document.getElementById('pmAmount').value = rec.balance.toFixed(2);
+}
 async function confirmMarkDisbursed(){
-  const id=document.getElementById('pmId').value,ref=document.getElementById('pmRef').value.trim(),err=document.getElementById('pmErr');
-  const fd=new FormData();fd.append('ajax','1');fd.append('action','disburse');fd.append('req_id',id);fd.append('payment_reference',ref);
+  const id=document.getElementById('pmId').value,amt=document.getElementById('pmAmount').value,ref=document.getElementById('pmRef').value.trim(),note=document.getElementById('pmNote').value.trim(),err=document.getElementById('pmErr');
+  const fd=new FormData();fd.append('ajax','1');fd.append('action','disburse');fd.append('req_id',id);fd.append('pay_amount',amt);fd.append('payment_reference',ref);fd.append('payment_note',note);
   const d=await(await fetch('',{method:'POST',body:fd})).json();
   if(!d.ok){err.textContent=d.msg||'Error';err.classList.remove('d-none');return;}
   paidModalEl().hide();
