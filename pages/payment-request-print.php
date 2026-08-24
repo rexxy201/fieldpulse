@@ -16,7 +16,8 @@ $r = $id ? dbFetch(
 if (!$r) { http_response_code(404); exit('Not found'); }
 
 // Same authorization as the module itself and its document downloads.
-$allowed = hasPermission('payment_requests.view') || hasPermission('payment_requests.approve')
+$allowed = hasPermission('payment_requests.view') || hasPermission('payment_requests.authorize')
+    || hasPermission('payment_requests.approve') || hasPermission('payment_requests.finance_check')
     || $r['requester_id'] === $user['id']
     || ($role === 'vendor' && !empty($user['vendor_id']) && $r['vendor_id'] === $user['vendor_id']);
 if (!$allowed) { http_response_code(403); exit('Forbidden'); }
@@ -65,8 +66,8 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
   <div class="company"><?= $co ?></div>
   <h1>REQUEST VOUCHER
     <?php
-    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','disbursed'=>'#10b981','rejected'=>'#ef4444'];
-    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
+    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','returned'=>'#64748b','disbursed'=>'#10b981','rejected'=>'#ef4444'];
+    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','returned'=>'RETURNED','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
     ?>
     <span class="status-badge" style="background:<?= $statusColors[$r['status']] ?? '#64748b' ?>"><?= $statusLabels[$r['status']] ?? strtoupper($r['status']) ?></span>
   </h1>
@@ -75,7 +76,7 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
     <strong>For Finance Use Only:</strong>
     <div>Voucher No.: <?= htmlspecialchars(substr($r['id'], 0, 8)) ?></div>
     <div>Date Received: <?= $fmtDate($r['created_at']) ?></div>
-    <div>Recorded By (Finance): <?= htmlspecialchars($r['reviewed_by_name'] ?? '') ?></div>
+    <div>Recorded By (Finance): <?= htmlspecialchars($r['disbursed_by_name'] ?? $r['returned_by_name'] ?? '') ?></div>
     <div>Bank: __________________________</div>
     <div>Posted: <?= $r['status']==='disbursed' ? $fmtDate($r['paid_at']) : '' ?></div>
     <div>Reconciliation: <?= htmlspecialchars($r['payment_reference'] ?? '') ?></div>
@@ -156,9 +157,9 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
       </tr>
       <tr>
         <td><strong>Approved</strong></td>
-        <td><?= htmlspecialchars(in_array($r['status'],['approved','disbursed']) ? ($r['reviewed_by_name'] ?? '') : '') ?></td>
+        <td><?= htmlspecialchars($r['approved_by_name'] ?? '') ?></td>
         <td></td>
-        <td><?= in_array($r['status'],['approved','disbursed']) ? $fmtDate($r['reviewed_at']) : '' ?></td>
+        <td><?= $fmtDate($r['approved_at']) ?></td>
       </tr>
       <tr>
         <td><strong>Disbursed</strong></td>
@@ -166,6 +167,13 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
         <td></td>
         <td><?= $r['status']==='disbursed' ? $fmtDate($r['paid_at']) : '' ?></td>
       </tr>
+      <?php if ($r['status'] === 'returned'): ?>
+      <tr>
+        <td><strong>Returned to Requester</strong></td>
+        <td><?= htmlspecialchars($r['returned_by_name'] ?? '') ?></td>
+        <td colspan="2"><?= htmlspecialchars($r['return_notes'] ?? '') ?> — <?= $fmtDate($r['returned_at']) ?></td>
+      </tr>
+      <?php endif; ?>
       <?php if ($r['status'] === 'rejected'): ?>
       <tr>
         <td><strong>Rejected</strong></td>

@@ -792,9 +792,11 @@ define('ALL_PERMISSIONS', [
     'inventory.movements.view'    => 'View stock movements',
     'inventory.refill'            => 'Refill / add stock',
     // ── Payment Requests module ──
-    'payment_requests.create'  => 'Submit payment requests',
-    'payment_requests.view'    => 'View all payment requests (not just own)',
-    'payment_requests.approve' => 'Approve / reject / mark payment requests paid',
+    'payment_requests.create'      => 'Submit payment requests',
+    'payment_requests.view'        => 'View all payment requests (not just own)',
+    'payment_requests.authorize'   => 'Authorize payment requests (Line Manager / Supervisor stage)',
+    'payment_requests.approve'     => 'Approve payment requests (COO / senior management stage)',
+    'payment_requests.finance_check' => 'Finance check — disburse or return to requester',
     // ── Finance module ──
     'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
 ]);
@@ -1205,16 +1207,16 @@ if (!$_rbacDone) {
         $_defaults = [
             'admin'            => array_keys(ALL_PERMISSIONS),
             'project_admin'    => array_keys(ALL_PERMISSIONS),
-            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create'],
-            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create'],
-            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','analytics.view','payment_requests.create'],
+            'supervisor-fiber' => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','installations.view','installations.create','installations.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create','payment_requests.authorize'],
+            'supervisor-noc'   => ['tickets.view_all','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','schedule.view','map.view','team.view','analytics.view','payment_requests.create','payment_requests.authorize'],
+            'cx_supervisor'    => ['tickets.create','tickets.update','tickets.resolve','tickets.close','customers.view','customers.create','customers.update','analytics.view','payment_requests.create','payment_requests.authorize'],
             'cx'               => ['tickets.create','customers.view','customers.create','payment_requests.create'],
             'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view','payment_requests.create'],
             'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','payment_requests.create'],
             'vendor'           => ['installations.view','payment_requests.create'],
-            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
             'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
-            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.approve','reports.view','analytics.view','finance.view'],
+            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
@@ -1875,6 +1877,77 @@ if (!$_sv18) {
         dbUpsertConfig('schema_v18_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v18 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v19: Payment Request 4-stage workflow (Authorize→Approve→Finance Check) ──
+// Splits the old single "Approve" stage (done entirely by Finance) into three
+// distinct stages: Authorize (Line Manager / Supervisor), Approve (COO /
+// senior management), Finance Check (Accountant / Accounts Payable — either
+// disburses or returns to the requester for edits). Adds a new non-terminal
+// 'returned' status. reviewed_by/_name/_at/review_notes remain in use for the
+// Reject action only; approved_by/_name/_at and returned_by/_name/_at/return_notes
+// are new, distinct columns so Approve and Finance's Return don't collide with
+// the existing Reject fields.
+$_k = dbKey();
+$_sv19 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v19_migrated'");
+if (!$_sv19) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            $_v19Cols = [
+                "ALTER TABLE `payment_requests` ADD COLUMN `approved_by` VARCHAR(64) DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `approved_by_name` VARCHAR(191) DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `approved_at` DATETIME DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `returned_by` VARCHAR(64) DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `returned_by_name` VARCHAR(191) DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `returned_at` DATETIME DEFAULT NULL",
+                "ALTER TABLE `payment_requests` ADD COLUMN `return_notes` TEXT DEFAULT NULL",
+            ];
+        } else {
+            $_v19Cols = [
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS approved_by VARCHAR(64)",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS approved_by_name VARCHAR(191)",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS returned_by VARCHAR(64)",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS returned_by_name VARCHAR(191)",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP",
+                "ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS return_notes TEXT",
+            ];
+        }
+        foreach ($_v19Cols as $_sql) {
+            try { db()->exec($_sql); } catch (\Throwable $e) {}
+        }
+
+        // Revoke the stale finance-wide "approve" permission from Finance roles —
+        // they now get "finance_check" instead. Approve belongs to COO/Manager tier.
+        try {
+            db()->exec("DELETE FROM role_permissions WHERE role IN ('accountant','accounts_payable') AND permission = 'payment_requests.approve'");
+        } catch (\Throwable $e) {
+            error_log('Schema v19: failed revoking stale approve grant: ' . $e->getMessage());
+        }
+
+        $_v19Grants = [
+            'supervisor-fiber' => ['payment_requests.authorize'],
+            'supervisor-noc'   => ['payment_requests.authorize'],
+            'cx_supervisor'    => ['payment_requests.authorize'],
+            'project_admin'    => ['payment_requests.authorize','payment_requests.approve','payment_requests.finance_check'],
+            'admin'            => ['payment_requests.authorize','payment_requests.approve','payment_requests.finance_check'],
+            'accountant'          => ['payment_requests.finance_check'],
+            'accounts_payable'    => ['payment_requests.finance_check'],
+        ];
+        foreach ($_v19Grants as $_r => $_perms) {
+            foreach ($_perms as $_p) {
+                try {
+                    dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),$_r,$_p]);
+                } catch (\Throwable $e) {
+                    error_log("Schema v19: failed granting {$_p} to {$_r}: " . $e->getMessage());
+                }
+            }
+        }
+
+        dbUpsertConfig('schema_v19_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v19 migration error: ' . $e->getMessage());
     }
 }
 

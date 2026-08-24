@@ -12,9 +12,10 @@ if (!$doc) { http_response_code(404); exit('Not found'); }
 $pr = dbFetch("SELECT * FROM payment_requests WHERE id=?", [$doc['payment_request_id']]);
 if (!$pr) { http_response_code(404); exit('Not found'); }
 
-// Same authorization the module itself uses: approvers/viewers see everything,
+// Same authorization the module itself uses: reviewers/viewers see everything,
 // vendors see their own company's requests, everyone else sees only their own.
-$allowed = hasPermission('payment_requests.view') || hasPermission('payment_requests.approve')
+$allowed = hasPermission('payment_requests.view') || hasPermission('payment_requests.authorize')
+    || hasPermission('payment_requests.approve') || hasPermission('payment_requests.finance_check')
     || $pr['requester_id'] === $user['id']
     || ($role === 'vendor' && !empty($user['vendor_id']) && $pr['vendor_id'] === $user['vendor_id']);
 if (!$allowed) { http_response_code(403); exit('Forbidden'); }

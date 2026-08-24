@@ -32,10 +32,12 @@ $days = max(1, (int)($_GET['days'] ?? 7));
 $_ivPeriod = dbNowMinusInterval($days, 'DAY');
 
 // ── Payment Requests ─────────────────────────────────────────────────────
-// 3-stage flow: pending -> authorized -> approved -> disbursed, or rejected.
+// 4-stage flow: pending -> authorized -> approved -> [finance check] -> disbursed,
+// or returned (sent back to requester for edits) / rejected (Authorize/Approve stage only).
 $prPeriod = dbFetch(
     "SELECT COUNT(*) AS submitted,
             SUM(status IN ('authorized','approved')) AS approved,
+            SUM(status='returned') AS returned,
             SUM(status='rejected') AS rejected,
             SUM(status='disbursed') AS paid,
             SUM(CASE WHEN status='disbursed' THEN amount ELSE 0 END) AS paid_amount
@@ -67,6 +69,7 @@ $summary = [
     'period_days'               => $days,
     'payment_requests_submitted'=> (int)($prPeriod['submitted'] ?? 0),
     'payment_requests_approved' => (int)($prPeriod['approved'] ?? 0),
+    'payment_requests_returned' => (int)($prPeriod['returned'] ?? 0),
     'payment_requests_rejected' => (int)($prPeriod['rejected'] ?? 0),
     'payment_requests_paid'     => (int)($prPeriod['paid'] ?? 0),
     'amount_paid_this_period'   => (float)($prPeriod['paid_amount'] ?? 0),
@@ -101,7 +104,7 @@ if ($narrative) {
 } else {
     // Fallback: plain numbers, no AI narrative
     $bodyHtml = "<ul>
-        <li>Payment requests submitted: {$summary['payment_requests_submitted']}, approved: {$summary['payment_requests_approved']}, rejected: {$summary['payment_requests_rejected']}, paid: {$summary['payment_requests_paid']}</li>
+        <li>Payment requests submitted: {$summary['payment_requests_submitted']}, approved: {$summary['payment_requests_approved']}, returned to requester: {$summary['payment_requests_returned']}, rejected: {$summary['payment_requests_rejected']}, paid: {$summary['payment_requests_paid']}</li>
         <li>Paid this period: ₦" . number_format($summary['amount_paid_this_period']) . "</li>
         <li>Currently pending: {$summary['pending_count']} (₦" . number_format($summary['pending_amount']) . "), approved but unpaid: {$summary['approved_unpaid_count']} (₦" . number_format($summary['approved_unpaid_amount']) . ")</li>
         <li>Installation payments received this period: ₦" . number_format($summary['installation_amount_paid_this_period']) . " — installations not yet paid: {$summary['installations_not_yet_paid']}</li>
