@@ -30,6 +30,19 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
 
     if ($action === 'authorize') {
         if (!$canAuthorize) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        // The Authorizer may revise the requested amount (e.g. trimming an
+        // inflated figure) before it moves on to Approve. The requester's
+        // original figure is preserved in original_amount for audit/print.
+        $overrideRaw = $_POST['amount'] ?? '';
+        if ($overrideRaw !== '' && is_numeric($overrideRaw)) {
+            $newAmt = round((float)$overrideRaw, 2);
+            if ($newAmt <= 0) { echo json_encode(['ok'=>false,'msg'=>'Amount must be greater than zero.']); exit; }
+            $cur = dbFetch("SELECT amount, original_amount FROM payment_requests WHERE id=? AND status='pending'", [$reqId]);
+            if ($cur && $newAmt != (float)$cur['amount']) {
+                $origToStore = $cur['original_amount'] !== null ? $cur['original_amount'] : $cur['amount'];
+                dbRun("UPDATE payment_requests SET amount=?, original_amount=? WHERE id=? AND status='pending'", [$newAmt, $origToStore, $reqId]);
+            }
+        }
         dbRun("UPDATE payment_requests SET status='authorized', authorized_by=?, authorized_by_name=?, authorized_at=NOW() WHERE id=? AND status='pending'",
             [$user['id'], $user['name'], $reqId]);
         echo json_encode(['ok'=>true]); exit;
@@ -153,6 +166,7 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                         vendor_id=?, linked_type=?, linked_id=?, amount=?, description=?, status='pending',
                         date_of_request=?, department=?, customer_name=?, customer_user_id=?, location=?, hub_id=?,
                         category=?, category_other=?, capex_opex=?, receiver=?, priority=?,
+                        original_amount=NULL,
                         authorized_by=NULL, authorized_by_name=NULL, authorized_at=NULL,
                         approved_by=NULL, approved_by_name=NULL, approved_at=NULL,
                         reviewed_by=NULL, reviewed_by_name=NULL, reviewed_at=NULL, review_notes=NULL,
@@ -367,7 +381,12 @@ require __DIR__ . '/../includes/header.php';
             <span class="badge bg-light text-dark border"><i class="bi bi-<?= $r['linked_type']==='installation'?'wifi':'ticket-perforated' ?> me-1"></i><?= htmlspecialchars($linkLabel) ?></span>
             <?php else: ?><span class="text-muted">—</span><?php endif; ?>
           </td>
-          <td class="text-end fw-semibold">₦<?= number_format((float)$r['amount'], 2) ?></td>
+          <td class="text-end fw-semibold">
+            ₦<?= number_format((float)$r['amount'], 2) ?>
+            <?php if ($r['original_amount'] !== null): ?>
+            <div class="small text-muted fw-normal text-decoration-line-through" title="Original requested amount, revised at Authorize">₦<?= number_format((float)$r['original_amount'], 2) ?></div>
+            <?php endif; ?>
+          </td>
           <td class="small">
             <?php if ($reqDocs): ?>
             <?php foreach ($reqDocs as $d): ?>
@@ -384,7 +403,7 @@ require __DIR__ . '/../includes/header.php';
           <td class="text-end pe-3">
             <?php if ($canAuthorize && $r['status']==='pending'): ?>
             <div class="d-inline-flex gap-1">
-              <button class="btn btn-sm btn-info text-white" onclick="review('<?= $r['id'] ?>','authorize')" title="Authorize"><i class="bi bi-check-lg"></i> Authorize</button>
+              <button class="btn btn-sm btn-info text-white" onclick="review('<?= $r['id'] ?>','authorize',<?= (float)$r['amount'] ?>)" title="Authorize"><i class="bi bi-check-lg"></i> Authorize</button>
               <button class="btn btn-sm btn-danger" onclick="review('<?= $r['id'] ?>','reject')" title="Reject"><i class="bi bi-x-lg"></i></button>
             </div>
             <?php elseif ($canApproveStage && $r['status']==='authorized'): ?>
@@ -565,6 +584,10 @@ require __DIR__ . '/../includes/header.php';
   <div class="modal-body">
     <div class="alert alert-danger py-2 d-none" id="rmErr"></div>
     <input type="hidden" id="rmId"><input type="hidden" id="rmAction">
+    <div class="mb-3 d-none" id="rmAmountWrap">
+      <label class="form-label fw-semibold small">Amount (₦) <span class="text-muted fw-normal">— you may revise the requested figure</span></label>
+      <input type="number" id="rmAmount" step="0.01" min="0.01" class="form-control form-control-sm">
+    </div>
     <label class="form-label fw-semibold small" id="rmNotesLabel">Note (optional)</label>
     <textarea id="rmNotes" rows="3" class="form-control form-control-sm" placeholder="Add a comment or reason…"></textarea>
   </div>
@@ -586,11 +609,14 @@ require __DIR__ . '/../includes/header.php';
 function reviewModalEl(){ return bootstrap.Modal.getOrCreateInstance(document.getElementById('reviewModal')); }
 const ACTION_LABELS = { authorize:'Authorize', approve:'Approve', reject:'Reject', return:'Return to Requester' };
 const NOTES_REQUIRED_ACTIONS = ['reject','return'];
-function review(id, action){
+function review(id, action, amount){
   document.getElementById('rmId').value=id; document.getElementById('rmAction').value=action;
   document.getElementById('rmNotes').value=''; document.getElementById('rmErr').classList.add('d-none');
   document.getElementById('rmTitle').textContent=(ACTION_LABELS[action]||action)+' Payment Request';
   document.getElementById('rmNotesLabel').textContent = NOTES_REQUIRED_ACTIONS.includes(action) ? 'Reason (required)' : 'Note (optional)';
+  const amtWrap = document.getElementById('rmAmountWrap');
+  amtWrap.classList.toggle('d-none', action !== 'authorize');
+  if (action === 'authorize') document.getElementById('rmAmount').value = (amount || 0).toFixed(2);
   const b=document.getElementById('rmConfirm');
   b.className='btn btn-sm '+(action==='reject'?'btn-danger':(action==='return'?'btn-warning':'btn-primary'));
   b.textContent=ACTION_LABELS[action]||action;
@@ -599,6 +625,7 @@ function review(id, action){
 async function confirmReview(){
   const id=document.getElementById('rmId').value,action=document.getElementById('rmAction').value,notes=document.getElementById('rmNotes').value.trim(),err=document.getElementById('rmErr');
   const fd=new FormData();fd.append('ajax','1');fd.append('action',action);fd.append('req_id',id);fd.append('review_notes',notes);
+  if (action === 'authorize') fd.append('amount', document.getElementById('rmAmount').value);
   const d=await(await fetch('',{method:'POST',body:fd})).json();
   if(!d.ok){err.textContent=d.msg||'Error';err.classList.remove('d-none');return;}
   reviewModalEl().hide();

@@ -749,7 +749,7 @@ function savePaymentRequestDocuments(array $files, string $paymentRequestId, str
 }
 
 // ─── Role constants ───────────────────────────────────────────────────────────
-define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable']);
+define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
 
 // ─── Permission definitions ────────────────────────────────────────────────────
 define('ALL_PERMISSIONS', [
@@ -1217,6 +1217,7 @@ if (!$_rbacDone) {
             'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
             'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
             'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view'],
+            'coo_manager'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
@@ -1948,6 +1949,41 @@ if (!$_sv19) {
         dbUpsertConfig('schema_v19_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v19 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v20: COO / Manager role, and Authorize-stage amount override ──────
+// Dedicated Approve-stage role — previously Project Admin/Admin filled this
+// gap since no "COO" role existed in the system. Also adds original_amount so
+// the Authorizer (Line Manager / Supervisor) can revise the requested amount
+// at the Authorize stage without losing the figure the requester originally
+// submitted (kept for audit and shown on the printed voucher).
+$_k = dbKey();
+$_sv20 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v20_migrated'");
+if (!$_sv20) {
+    try {
+        dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES (?,?,?,1)", ['coo_manager', 'COO / Manager', 'executive']);
+
+        $_v20Grants = ['payment_requests.create','payment_requests.view','payment_requests.approve',
+                       'installations.view','installations.financial','customers.view',
+                       'reports.view','analytics.view','finance.view'];
+        foreach ($_v20Grants as $_p) {
+            try {
+                dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),'coo_manager',$_p]);
+            } catch (\Throwable $e) {
+                error_log("Schema v20: failed granting {$_p} to coo_manager: " . $e->getMessage());
+            }
+        }
+
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `original_amount` DECIMAL(14,2) DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS original_amount NUMERIC(14,2)"); } catch (\Throwable $e) {}
+        }
+
+        dbUpsertConfig('schema_v20_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v20 migration error: ' . $e->getMessage());
     }
 }
 

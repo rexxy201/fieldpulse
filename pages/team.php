@@ -564,6 +564,7 @@ require __DIR__ . '/../includes/header.php';
             <option value="fiber">Fiber</option><option value="noc">NOC</option>
             <option value="cx">CX</option><option value="installation">Installation</option>
             <option value="finance">Finance</option>
+            <option value="executive">Executive</option>
           </select>
         </div>
       </div>

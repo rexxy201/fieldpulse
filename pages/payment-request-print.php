@@ -136,9 +136,17 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
         <td><?= number_format((float)$it['line_total'], 2) ?></td>
       </tr>
       <?php endforeach; ?>
+      <?php if ($r['original_amount'] !== null): ?>
+      <tr><td colspan="3" style="text-align:right">Originally Requested (NGN)</td><td><?= number_format((float)$r['original_amount'], 2) ?></td></tr>
+      <?php endif; ?>
       <tr><td colspan="3" style="text-align:right"><strong>Grand Total (NGN)</strong></td><td><strong><?= number_format((float)$r['amount'], 2) ?></strong></td></tr>
     </tbody>
   </table>
+  <?php if ($r['original_amount'] !== null): ?>
+  <div class="field-row" style="font-size:11px;color:#555">
+    <div class="field">Note: the requested amount was revised from ₦<?= number_format((float)$r['original_amount'], 2) ?> to ₦<?= number_format((float)$r['amount'], 2) ?> by <?= htmlspecialchars($r['authorized_by_name'] ?? '') ?> at the Authorize stage.</div>
+  </div>
+  <?php endif; ?>
 
   <div class="field-row">
     <div class="field"><label>Receiver</label><div class="value"><?= htmlspecialchars($r['receiver'] ?? '') ?></div></div>
