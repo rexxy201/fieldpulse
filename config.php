@@ -1831,6 +1831,43 @@ if (!$_sv17) {
     }
 }
 
+// ─── Schema v18: re-assert Finance role permission grants ─────────────────────
+// schema_v16 created the 'roles' rows for accountant/accounts_receivable/
+// accounts_payable successfully, but the role_permissions grants for those
+// roles came up empty on at least one live install — schema_v16 still marked
+// itself complete (each grant insert is individually try/caught, so a run of
+// failures there doesn't stop the migrated-flag from being set). This is a
+// standalone re-run of just the grants, gated on its own flag, so it applies
+// regardless of what schema_v16 believes already happened. Logs failures per
+// grant this time instead of swallowing them silently.
+$_k = dbKey();
+$_sv18 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v18_migrated'");
+if (!$_sv18) {
+    try {
+        $_financePerms = [
+            'accountant' => ['payment_requests.create','payment_requests.view','payment_requests.approve',
+                              'installations.view','installations.financial','customers.view',
+                              'reports.view','analytics.view','finance.view'],
+            'accounts_receivable' => ['installations.view','installations.financial','customers.view',
+                                       'reports.view','analytics.view','finance.view'],
+            'accounts_payable' => ['payment_requests.create','payment_requests.view','payment_requests.approve',
+                                    'reports.view','analytics.view','finance.view'],
+        ];
+        foreach ($_financePerms as $_r => $_perms) {
+            foreach ($_perms as $_p) {
+                try {
+                    dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(),$_r,$_p]);
+                } catch (\Throwable $e) {
+                    error_log("Schema v18: failed granting {$_p} to {$_r}: " . $e->getMessage());
+                }
+            }
+        }
+        dbUpsertConfig('schema_v18_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v18 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.
