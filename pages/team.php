@@ -563,6 +563,7 @@ require __DIR__ . '/../includes/header.php';
           <select name="type" class="form-select form-select-sm">
             <option value="fiber">Fiber</option><option value="noc">NOC</option>
             <option value="cx">CX</option><option value="installation">Installation</option>
+            <option value="finance">Finance</option>
           </select>
         </div>
       </div>
