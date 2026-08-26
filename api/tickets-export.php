@@ -9,6 +9,9 @@ $search     = trim($_GET['search'] ?? '');
 $status     = $_GET['status'] ?? '';
 $prio       = $_GET['priority'] ?? '';
 $engineerId = $_GET['engineer'] ?? '';
+$createdBy  = $_GET['createdBy'] ?? '';
+$dateFrom   = $_GET['dateFrom'] ?? '';
+$dateTo     = $_GET['dateTo'] ?? '';
 $department = $_GET['department'] ?? '';
 $vendorId   = $_GET['vendor'] ?? '';
 $faultType  = $_GET['faultType'] ?? '';
@@ -18,10 +21,18 @@ $user   = currentUser();
 $role   = $user['role'];
 
 $where = []; $params = [];
-if (in_array($role, ['engineer','noc_engineer'])) { $where[] = "t.assigned_to = ?"; $params[] = $user['id']; }
+// Same visibility scope as the tickets list itself (view_all / view_department /
+// own-only) — this export previously only restricted engineer/noc_engineer by
+// a hardcoded assigned_to check, so any other role with narrower view rights
+// (e.g. "view own department tickets only") could export everyone's tickets.
+[$scopeSql, $scopeParams] = ticketScopeSql('t');
+if ($scopeSql !== '') { $where[] = $scopeSql; $params = array_merge($params, $scopeParams); }
 if ($status)     { $where[] = "t.status = ?"; $params[] = $status; }
 if ($prio)       { $where[] = "t.priority = ?"; $params[] = $prio; }
 if ($engineerId) { $where[] = "t.assigned_to = ?"; $params[] = $engineerId; }
+if ($createdBy)  { $where[] = "t.created_by = ?"; $params[] = $createdBy; }
+if ($dateFrom)   { $where[] = "t.created_at >= ?"; $params[] = $dateFrom . ' 00:00:00'; }
+if ($dateTo)     { $where[] = "t.created_at <= ?"; $params[] = $dateTo . ' 23:59:59'; }
 if ($vendorId)   { $where[] = "t.vendor_id = ?"; $params[] = $vendorId; }
 if ($faultType)  { $where[] = "t.fault_type_id = ?"; $params[] = $faultType; }
 if ($olt)        { $where[] = "t.olt = ?"; $params[] = $olt; }

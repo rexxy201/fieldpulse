@@ -7,6 +7,9 @@ $search     = trim($_GET['search'] ?? '');
 $status     = $_GET['status'] ?? '';
 $prio       = $_GET['priority'] ?? '';
 $engineerId = $_GET['engineer'] ?? '';
+$createdBy  = $_GET['createdBy'] ?? '';
+$dateFrom   = $_GET['dateFrom'] ?? '';
+$dateTo     = $_GET['dateTo'] ?? '';
 // Drill-down filters (linked to from /reports — not exposed as visible dropdowns)
 $department = $_GET['department'] ?? '';
 $vendorId   = $_GET['vendor'] ?? '';
@@ -20,9 +23,21 @@ $where = []; $params = [];
 // Scope by permission: view_all (everything), view_department (own dept), else own only
 [$scopeSql, $scopeParams] = ticketScopeSql('t');
 if ($scopeSql !== '') { $where[] = $scopeSql; $params = array_merge($params, $scopeParams); }
+
+// Creators dropdown — scoped the same way as the list itself, so the options
+// offered always match who could actually have created a ticket you can see.
+$creators = dbFetchAll(
+    "SELECT DISTINCT u.id, u.name FROM tickets t JOIN users u ON u.id = t.created_by"
+    . ($scopeSql !== '' ? " WHERE $scopeSql" : '') . " ORDER BY u.name",
+    $scopeParams
+);
+
 if ($status)     { $where[] = "t.status = ?"; $params[] = $status; }
 if ($prio)       { $where[] = "t.priority = ?"; $params[] = $prio; }
 if ($engineerId) { $where[] = "t.assigned_to = ?"; $params[] = $engineerId; }
+if ($createdBy)  { $where[] = "t.created_by = ?"; $params[] = $createdBy; }
+if ($dateFrom)   { $where[] = "t.created_at >= ?"; $params[] = $dateFrom . ' 00:00:00'; }
+if ($dateTo)     { $where[] = "t.created_at <= ?"; $params[] = $dateTo . ' 23:59:59'; }
 if ($vendorId)   { $where[] = "t.vendor_id = ?"; $params[] = $vendorId; }
 if ($faultType)  { $where[] = "t.fault_type_id = ?"; $params[] = $faultType; }
 if ($olt)        { $where[] = "t.olt = ?"; $params[] = $olt; }
@@ -73,7 +88,7 @@ require __DIR__ . '/../includes/header.php';
         value="<?= htmlspecialchars($search) ?>"
         oninput="debounceSearch(this.value)">
       <?php
-      $_carryOver = array_filter(['status'=>$status,'priority'=>$prio,'engineer'=>$engineerId,'department'=>$department,'vendor'=>$vendorId,'faultType'=>$faultType,'olt'=>$olt,'customerId'=>$customerId]);
+      $_carryOver = array_filter(['status'=>$status,'priority'=>$prio,'engineer'=>$engineerId,'createdBy'=>$createdBy,'dateFrom'=>$dateFrom,'dateTo'=>$dateTo,'department'=>$department,'vendor'=>$vendorId,'faultType'=>$faultType,'olt'=>$olt,'customerId'=>$customerId]);
       ?>
       <?php if ($search): ?>
       <a href="/tickets<?= $_carryOver ? '?'.http_build_query($_carryOver) : '' ?>" class="btn btn-outline-secondary"><i class="bi bi-x-lg"></i></a>
@@ -97,10 +112,32 @@ require __DIR__ . '/../includes/header.php';
       <option value="<?= $eng['id'] ?>" <?= $engineerId===$eng['id']?'selected':'' ?>><?= htmlspecialchars($eng['name']) ?></option>
       <?php endforeach; ?>
     </select>
+    <select class="form-select" style="width:auto;min-width:160px" onchange="applyFilter('createdBy',this.value)">
+      <option value="" <?= !$createdBy?'selected':'' ?>>All Creators</option>
+      <?php foreach ($creators as $cr): ?>
+      <option value="<?= $cr['id'] ?>" <?= $createdBy===$cr['id']?'selected':'' ?>><?= htmlspecialchars($cr['name']) ?></option>
+      <?php endforeach; ?>
+    </select>
     <a href="/api/tickets-export<?= ($search||$_carryOver)?'?'.http_build_query(array_merge($_carryOver, array_filter(['search'=>$search]))):'' ?>"
        class="btn btn-outline-secondary text-nowrap">
       <i class="bi bi-download me-1"></i>Export CSV
     </a>
+  </div>
+  <div class="px-3 pb-3 d-flex gap-2 flex-wrap align-items-center border-top pt-3">
+    <span class="text-muted small fw-semibold text-uppercase me-1" style="font-size:.72rem;letter-spacing:.05em">Date Created</span>
+    <div class="btn-group btn-group-sm" role="group">
+      <button type="button" class="btn btn-outline-secondary" onclick="applyDatePreset('day')">Day</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="applyDatePreset('week')">Week</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="applyDatePreset('month')">Month</button>
+      <button type="button" class="btn btn-outline-secondary" onclick="applyDatePreset('year')">Year</button>
+    </div>
+    <span class="text-muted small">or a custom range:</span>
+    <input type="date" class="form-control form-control-sm" style="width:auto" id="dateFromInput" value="<?= htmlspecialchars($dateFrom) ?>" onchange="applyDateRange()">
+    <span class="text-muted small">to</span>
+    <input type="date" class="form-control form-control-sm" style="width:auto" id="dateToInput" value="<?= htmlspecialchars($dateTo) ?>" onchange="applyDateRange()">
+    <?php if ($dateFrom || $dateTo): ?>
+    <a href="/tickets<?= array_filter($_carryOver, fn($k)=>!in_array($k,['dateFrom','dateTo'],true), ARRAY_FILTER_USE_KEY) ? '?'.http_build_query(array_filter($_carryOver, fn($k)=>!in_array($k,['dateFrom','dateTo'],true), ARRAY_FILTER_USE_KEY)) : '' ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear dates</a>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -222,6 +259,41 @@ function debounceSearch(val) {
 function applyFilter(key, val) {
   const params = new URLSearchParams(window.location.search);
   val ? params.set(key, val) : params.delete(key);
+  window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
+}
+
+// ── Date Created filters ────────────────────────────────────────────────────
+function toISODate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function applyDatePreset(preset) {
+  const now = new Date();
+  let from = new Date(now), to = new Date(now);
+  if (preset === 'day') {
+    // from = to = today
+  } else if (preset === 'week') {
+    const day = now.getDay(); // 0=Sun..6=Sat
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    from = new Date(now); from.setDate(now.getDate() + mondayOffset);
+    to = new Date(from); to.setDate(from.getDate() + 6);
+  } else if (preset === 'month') {
+    from = new Date(now.getFullYear(), now.getMonth(), 1);
+    to = new Date(now.getFullYear(), now.getMonth()+1, 0);
+  } else if (preset === 'year') {
+    from = new Date(now.getFullYear(), 0, 1);
+    to = new Date(now.getFullYear(), 11, 31);
+  }
+  const params = new URLSearchParams(window.location.search);
+  params.set('dateFrom', toISODate(from));
+  params.set('dateTo', toISODate(to));
+  window.location.href = '/tickets' + '?' + params.toString();
+}
+function applyDateRange() {
+  const from = document.getElementById('dateFromInput').value;
+  const to = document.getElementById('dateToInput').value;
+  const params = new URLSearchParams(window.location.search);
+  from ? params.set('dateFrom', from) : params.delete('dateFrom');
+  to ? params.set('dateTo', to) : params.delete('dateTo');
   window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
 }
 
