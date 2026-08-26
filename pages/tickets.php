@@ -10,14 +10,18 @@ $engineerId = $_GET['engineer'] ?? '';
 $createdBy  = $_GET['createdBy'] ?? '';
 $dateFrom   = $_GET['dateFrom'] ?? '';
 $dateTo     = $_GET['dateTo'] ?? '';
-// Drill-down filters (linked to from /reports — not exposed as visible dropdowns)
+// Drill-down filters (mostly linked to from /reports; faultType also has a
+// visible dropdown below — not exposed as visible dropdowns otherwise)
 $department = $_GET['department'] ?? '';
 $vendorId   = $_GET['vendor'] ?? '';
 $faultType  = $_GET['faultType'] ?? '';
 $olt        = $_GET['olt'] ?? '';
 $customerId = $_GET['customerId'] ?? '';
 
-$engineers = dbFetchAll("SELECT id, name FROM users WHERE role IN ('engineer','noc_engineer') ORDER BY name");
+$engineers  = dbFetchAll("SELECT id, name FROM users WHERE role IN ('engineer','noc_engineer') ORDER BY name");
+// All fault types (not just enabled=1) — old tickets may reference one that's
+// since been disabled, and filtering should still find them.
+$faultTypes = dbFetchAll("SELECT id, name, category FROM fault_types ORDER BY category, name");
 
 $where = []; $params = [];
 // Scope by permission: view_all (everything), view_department (own dept), else own only
@@ -117,6 +121,14 @@ require __DIR__ . '/../includes/header.php';
       <?php foreach ($creators as $cr): ?>
       <option value="<?= $cr['id'] ?>" <?= $createdBy===$cr['id']?'selected':'' ?>><?= htmlspecialchars($cr['name']) ?></option>
       <?php endforeach; ?>
+    </select>
+    <select class="form-select" style="width:auto;min-width:180px" onchange="applyFilter('faultType',this.value)">
+      <option value="" <?= !$faultType?'selected':'' ?>>All Fault Types</option>
+      <?php $_ftCat = null; foreach ($faultTypes as $ft): if ($ft['category'] !== $_ftCat): if ($_ftCat !== null) echo '</optgroup>'; $_ftCat = $ft['category']; ?>
+      <optgroup label="<?= htmlspecialchars($_ftCat ?: 'Other') ?>">
+      <?php endif; ?>
+      <option value="<?= $ft['id'] ?>" <?= $faultType===$ft['id']?'selected':'' ?>><?= htmlspecialchars($ft['name']) ?></option>
+      <?php endforeach; if ($faultTypes) echo '</optgroup>'; ?>
     </select>
     <a href="/api/tickets-export<?= ($search||$_carryOver)?'?'.http_build_query(array_merge($_carryOver, array_filter(['search'=>$search]))):'' ?>"
        class="btn btn-outline-secondary text-nowrap">
