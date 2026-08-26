@@ -2165,6 +2165,129 @@ if (!$_sv25) {
     }
 }
 
+// ─── Schema v26: Integration API (keys, request log) ──────────────────────────
+// Foundation for external systems to read/write FieldPulse data (customers,
+// payment requests, and later others) via /api/v1/*, and for FieldPulse to
+// push events out to them via webhooks. Auth is per-integration API keys
+// (Authorization: Bearer <key>) rather than the session cookies used
+// everywhere else — see includes/api-auth.php.
+$_k = dbKey();
+$_sv26 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v26_migrated'");
+if (!$_sv26) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `api_keys` (
+                `id`                VARCHAR(36) NOT NULL,
+                `name`              VARCHAR(191) NOT NULL,
+                `key_prefix`        VARCHAR(16) NOT NULL,
+                `key_hash`          VARCHAR(64) NOT NULL,
+                `scopes`            TEXT NOT NULL,
+                `webhook_url`       VARCHAR(500) DEFAULT NULL,
+                `webhook_secret`    VARCHAR(64) DEFAULT NULL,
+                `created_by`        VARCHAR(36) DEFAULT NULL,
+                `created_by_name`   VARCHAR(191) DEFAULT NULL,
+                `created_at`        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                `last_used_at`      DATETIME DEFAULT NULL,
+                `revoked_at`        DATETIME DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uniq_key_hash` (`key_hash`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            db()->exec("CREATE TABLE IF NOT EXISTS `api_request_log` (
+                `id`            VARCHAR(36) NOT NULL,
+                `api_key_id`    VARCHAR(36) NOT NULL,
+                `method`        VARCHAR(10) NOT NULL,
+                `path`          VARCHAR(255) NOT NULL,
+                `status_code`   INT NOT NULL,
+                `ip`            VARCHAR(64) DEFAULT NULL,
+                `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_arl_key` (`api_key_id`),
+                KEY `idx_arl_created` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS api_keys (
+                id                VARCHAR(36) PRIMARY KEY,
+                name              VARCHAR(191) NOT NULL,
+                key_prefix        VARCHAR(16) NOT NULL,
+                key_hash          VARCHAR(64) NOT NULL UNIQUE,
+                scopes            TEXT NOT NULL,
+                webhook_url       VARCHAR(500),
+                webhook_secret    VARCHAR(64),
+                created_by        VARCHAR(36),
+                created_by_name   VARCHAR(191),
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at      TIMESTAMP,
+                revoked_at        TIMESTAMP
+            )");
+            db()->exec("CREATE TABLE IF NOT EXISTS api_request_log (
+                id            VARCHAR(36) PRIMARY KEY,
+                api_key_id    VARCHAR(36) NOT NULL,
+                method        VARCHAR(10) NOT NULL,
+                path          VARCHAR(255) NOT NULL,
+                status_code   INT NOT NULL,
+                ip            VARCHAR(64),
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+        }
+        dbUpsertConfig('schema_v26_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v26 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Integration API: scopes, key helpers, outbound webhooks ──────────────────
+// Every scope an API key can be granted. Keep this in sync with the
+// enforcement in each api/v1/*.php endpoint — a scope existing here doesn't
+// grant anything by itself, each endpoint must explicitly requireApiScope() it.
+define('API_SCOPES', [
+    'customers.read'  => 'Read customer records',
+    'customers.write' => 'Create / update customer records',
+    'payments.read'   => 'Read payment requests',
+    'payments.write'  => 'Record payments against approved payment requests',
+]);
+
+// Events FieldPulse can push to a key's webhook_url, if it has one configured.
+define('WEBHOOK_EVENTS', ['customer.created', 'customer.updated', 'payment.disbursed']);
+
+function generateApiKey(): array {
+    $secret = bin2hex(random_bytes(24)); // 48 hex chars
+    $full   = 'fp_live_' . $secret;
+    return ['full' => $full, 'prefix' => substr($full, 0, 14), 'hash' => hash('sha256', $full)];
+}
+
+/**
+ * Best-effort outbound webhook delivery: fires synchronously, logs failures,
+ * never throws. No retry queue in this v1 — a down endpoint just misses the
+ * event. Payload is signed with the key's webhook_secret (HMAC-SHA256) in the
+ * X-FieldPulse-Signature header so receivers can verify authenticity.
+ */
+function fireWebhooks(string $event, array $payload): void {
+    if (!in_array($event, WEBHOOK_EVENTS, true)) return;
+    try {
+        $keys = dbFetchAll("SELECT id, webhook_url, webhook_secret FROM api_keys WHERE revoked_at IS NULL AND webhook_url IS NOT NULL AND webhook_url != ''");
+    } catch (\Throwable $e) { return; }
+    if (!$keys) return;
+
+    $body = json_encode(['event' => $event, 'data' => $payload, 'sent_at' => date('c')], JSON_UNESCAPED_SLASHES);
+    foreach ($keys as $k) {
+        try {
+            $sig = hash_hmac('sha256', $body, $k['webhook_secret'] ?? '');
+            $ch = curl_init($k['webhook_url']);
+            curl_setopt_array($ch, [
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => $body,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'X-FieldPulse-Event: ' . $event, 'X-FieldPulse-Signature: ' . $sig],
+                CURLOPT_TIMEOUT        => 5,
+                CURLOPT_RETURNTRANSFER => true,
+            ]);
+            curl_exec($ch);
+            curl_close($ch);
+        } catch (\Throwable $e) {
+            error_log("Webhook delivery failed for key {$k['id']} ({$event}): " . $e->getMessage());
+        }
+    }
+}
+
 // ─── App version tracking ──────────────────────────────────────────────────────
 // Unlike the schema_vN blocks above (each runs once, ever), this runs whenever
 // the deployed APP_VERSION differs from what's recorded — i.e. once per release.

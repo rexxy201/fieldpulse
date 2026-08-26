@@ -98,9 +98,9 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($payAmt > $balance + 0.01) {
             echo json_encode(['ok'=>false,'msg'=>'Payment of ₦'.number_format($payAmt,2).' exceeds the outstanding balance of ₦'.number_format($balance,2).'.']); exit;
         }
-        // TODO: Zoho Books integration — once the API is wired up, post this
-        // payment against the corresponding bill in Zoho Books here. Not
-        // built yet per the user's request; this is a placeholder note only.
+        // Zoho Books (or any other accounting platform) can subscribe to the
+        // payment.disbursed webhook — see includes/api-auth.php / config.php
+        // fireWebhooks() — instead of a bespoke direct integration.
         dbRun("INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,note,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?,NOW())",
             [newUuid(), $reqId, $payAmt, $ref ?: null, $note ?: null, $user['id'], $user['name']]);
         $newPaid = round((float)$pr['amount_paid'] + $payAmt, 2);
@@ -108,6 +108,8 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($isFull) {
             dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
                 [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
+            $_disbursed = dbFetch("SELECT * FROM payment_requests WHERE id=?", [$reqId]);
+            fireWebhooks('payment.disbursed', ['id'=>$reqId,'amount'=>(float)$_disbursed['amount'],'amount_paid'=>(float)$_disbursed['amount_paid'],'status'=>$_disbursed['status'],'payment_reference'=>$ref?:null]);
         } else {
             dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
                 [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);

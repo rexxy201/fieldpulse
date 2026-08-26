@@ -12,12 +12,21 @@ $page = $segments[0] ?: 'dashboard';
 // API routes
 if ($page === 'api') {
     $endpoint = $segments[1] ?? '';
-    $file = __DIR__ . "/api/{$endpoint}.php";
+    // Integration API (external, API-key auth) — /api/v1/<endpoint>
+    if ($endpoint === 'v1') {
+        $v1Endpoint = $segments[2] ?? '';
+        $file = (preg_match('/^[a-z0-9\-]+$/', $v1Endpoint)) ? __DIR__ . "/api/v1/{$v1Endpoint}.php" : '';
+    } else {
+        // Session-auth internal API — endpoint name is trusted to be a plain
+        // identifier (no slashes/dots), same as it always has been, but
+        // validated explicitly now rather than relying on file_exists alone.
+        $file = (preg_match('/^[a-zA-Z0-9\-]+$/', $endpoint)) ? __DIR__ . "/api/{$endpoint}.php" : '';
+    }
     // Always exit after an API file runs — if it doesn't exit on its own (not every
     // endpoint uses the jsonResponse() helper, which exits internally), falling
     // through here would hit the page router below and get redirected to
     // /dashboard, silently discarding whatever the endpoint already echoed.
-    if (file_exists($file)) { require $file; exit; }
+    if ($file && file_exists($file)) { require $file; exit; }
     else { jsonResponse(['error' => 'Not found'], 404); }
 }
 

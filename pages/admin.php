@@ -185,6 +185,35 @@ if (method() === 'POST') {
         }
         $msg = 'Permissions updated successfully.';
     }
+    // ── Integration API keys ──
+    if ($action === 'create_api_key') {
+        $name = trim($b['name'] ?? '');
+        $scopes = array_values(array_intersect($b['scopes'] ?? [], array_keys(API_SCOPES)));
+        $webhookUrl = trim($b['webhook_url'] ?? '');
+        if ($name === '') {
+            $msg = 'A name is required for the API key.'; $msgType = 'danger';
+        } elseif (!$scopes) {
+            $msg = 'Select at least one scope for the API key.'; $msgType = 'danger';
+        } elseif ($webhookUrl !== '' && !filter_var($webhookUrl, FILTER_VALIDATE_URL)) {
+            $msg = 'Webhook URL is not a valid URL.'; $msgType = 'danger';
+        } else {
+            $gen = generateApiKey();
+            $webhookSecret = $webhookUrl !== '' ? bin2hex(random_bytes(16)) : null;
+            $_apiKeyUser = currentUser();
+            dbRun("INSERT INTO api_keys (id,name,key_prefix,key_hash,scopes,webhook_url,webhook_secret,created_by,created_by_name) VALUES (?,?,?,?,?,?,?,?,?)",
+                [newUuid(), $name, $gen['prefix'], $gen['hash'], implode(',', $scopes), $webhookUrl ?: null, $webhookSecret, $_apiKeyUser['id'] ?? null, $_apiKeyUser['name'] ?? null]);
+            auditLog('create', 'api_key', $gen['prefix']);
+            // Shown exactly once — nobody, including us, can retrieve the raw
+            // key again after this request (only its hash is stored).
+            $_SESSION['new_api_key_reveal'] = ['key' => $gen['full'], 'webhook_secret' => $webhookSecret];
+            $msg = 'API key created.';
+        }
+    }
+    if ($action === 'revoke_api_key' && !empty($b['id'])) {
+        dbRun("UPDATE api_keys SET revoked_at = NOW() WHERE id = ?", [$b['id']]);
+        auditLog('revoke', 'api_key', $b['id']);
+        $msg = 'API key revoked.';
+    }
     // ── Role management ──
     if ($action === 'add_role') {
         $rname = strtolower(trim($b['name'] ?? ''));
@@ -227,8 +256,10 @@ if (method() === 'POST') {
     if ($msg !== '') { $_SESSION['admin_flash'] = $msg; $_SESSION['admin_flash_type'] = $msgType; }
     $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','add_hub_city','del_hub_city','add_location','del_location'];
     $_permActions = ['save_permissions','add_role','edit_role','del_role'];
+    $_apiKeyActions = ['create_api_key','revoke_api_key'];
     if (in_array($action, $_hubActions, true))  $_anchor = '#tab-hubs';
     elseif (in_array($action, $_permActions, true)) $_anchor = '#tab-permissions';
+    elseif (in_array($action, $_apiKeyActions, true)) $_anchor = '#tab-integrations';
     else $_anchor = '';
     header('Location: /admin' . $_anchor); exit;
 }
@@ -239,11 +270,16 @@ if ($msg === '' && !empty($_SESSION['admin_flash'])) {
     $msgType = $_SESSION['admin_flash_type'] ?? 'success';
     unset($_SESSION['admin_flash'], $_SESSION['admin_flash_type']);
 }
+// The raw API key/webhook secret is shown exactly once, right after creation —
+// pulled from session and unset immediately so a page refresh can't re-reveal it.
+$newApiKeyReveal = $_SESSION['new_api_key_reveal'] ?? null;
+unset($_SESSION['new_api_key_reveal']);
 
 $faultTypes = dbFetchAll("SELECT * FROM fault_types ORDER BY category,name");
 $slaConfigs = dbFetchAll("SELECT * FROM sla_configs ORDER BY priority");
 $hubs       = dbFetchAll("SELECT * FROM hubs ORDER BY name");
 $auditLogs  = dbFetchAll("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100");
+$apiKeys    = dbFetchAll("SELECT * FROM api_keys ORDER BY revoked_at IS NOT NULL, created_at DESC");
 $teams      = dbFetchAll("SELECT * FROM teams ORDER BY type, name");
 $teamById   = [];
 foreach ($teams as $t) $teamById[$t['id']] = $t;
@@ -347,6 +383,8 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
     <i class="bi bi-person-lines-fill me-1"></i>Customer Data</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-audit">
     <i class="bi bi-journal-text me-1"></i>Audit Log</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-integrations">
+    <i class="bi bi-plug me-1"></i>Integrations</a></li>
 </ul>
 
 <div class="tab-content">
@@ -1169,6 +1207,72 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
     </div>
   </div>
 
+  <!-- ── Integrations (API Keys) ─────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tab-integrations">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <span class="text-muted small d-block"><?= count($apiKeys) ?> key<?= count($apiKeys)!==1?'s':'' ?> total</span>
+        <span class="text-muted small">External systems read/write FieldPulse data (customers, payment requests) via <code>/api/v1/*</code>, authenticated with these keys.</span>
+      </div>
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">
+        <i class="bi bi-plus-lg me-1"></i>New API Key
+      </button>
+    </div>
+
+    <?php if ($newApiKeyReveal): ?>
+    <div class="alert alert-warning">
+      <strong><i class="bi bi-exclamation-triangle me-1"></i>Copy this key now — it will not be shown again.</strong>
+      <div class="input-group mt-2">
+        <input type="text" class="form-control font-monospace" readonly value="<?= htmlspecialchars($newApiKeyReveal['key']) ?>" id="revealedApiKey">
+        <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('revealedApiKey').value)"><i class="bi bi-clipboard"></i> Copy</button>
+      </div>
+      <?php if (!empty($newApiKeyReveal['webhook_secret'])): ?>
+      <div class="small text-muted mt-2">Webhook secret (used to verify the <code>X-FieldPulse-Signature</code> header on deliveries to your endpoint):</div>
+      <div class="input-group mt-1">
+        <input type="text" class="form-control font-monospace" readonly value="<?= htmlspecialchars($newApiKeyReveal['webhook_secret']) ?>" id="revealedWebhookSecret">
+        <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('revealedWebhookSecret').value)"><i class="bi bi-clipboard"></i> Copy</button>
+      </div>
+      <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
+    <div class="card-section">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr><th>Name</th><th>Key</th><th>Scopes</th><th>Webhook</th><th>Created</th><th>Last Used</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            <?php if (!$apiKeys): ?>
+            <tr><td colspan="8" class="text-center text-muted py-4">No API keys yet.</td></tr>
+            <?php endif; ?>
+            <?php foreach ($apiKeys as $k): $isRevoked = !empty($k['revoked_at']); ?>
+            <tr class="<?= $isRevoked ? 'text-muted' : '' ?>">
+              <td class="small fw-semibold"><?= htmlspecialchars($k['name']) ?></td>
+              <td class="small font-monospace"><?= htmlspecialchars($k['key_prefix']) ?>…</td>
+              <td class="small"><?php foreach (explode(',', $k['scopes']) as $s): ?><span class="badge bg-light text-dark border me-1"><?= htmlspecialchars($s) ?></span><?php endforeach; ?></td>
+              <td class="small"><?= $k['webhook_url'] ? '<span class="text-truncate d-inline-block" style="max-width:180px" title="'.htmlspecialchars($k['webhook_url']).'">'.htmlspecialchars($k['webhook_url']).'</span>' : '<span class="text-muted">—</span>' ?></td>
+              <td class="small text-muted text-nowrap"><?= date('d M Y', strtotime($k['created_at'])) ?><br><span style="font-size:.7rem">by <?= htmlspecialchars($k['created_by_name'] ?? '—') ?></span></td>
+              <td class="small text-muted text-nowrap"><?= $k['last_used_at'] ? date('d M Y H:i', strtotime($k['last_used_at'])) : 'Never' ?></td>
+              <td><?php if ($isRevoked): ?><span class="badge bg-secondary">Revoked</span><?php else: ?><span class="badge bg-success">Active</span><?php endif; ?></td>
+              <td class="text-end pe-2">
+                <?php if (!$isRevoked): ?>
+                <form method="POST" style="display:inline" onsubmit="return confirm('Revoke this API key? Any integration using it will stop working immediately.')">
+                  <input type="hidden" name="_action" value="revoke_api_key">
+                  <input type="hidden" name="id" value="<?= $k['id'] ?>">
+                  <?= csrfField() ?>
+                  <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-x-lg"></i></button>
+                </form>
+                <?php endif; ?>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Add Fault Type Modal -->
@@ -1404,6 +1508,43 @@ if (location.hash === '#tab-permissions') {
     <div class="modal-footer">
       <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
     </div>
+  </div></div>
+</div>
+
+<!-- Create API Key Modal -->
+<div class="modal fade" id="createApiKeyModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="POST"><input type="hidden" name="_action" value="create_api_key">
+      <?= csrfField() ?>
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-plug me-1 text-primary"></i>New API Key</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+          <input type="text" name="name" class="form-control" required placeholder="e.g. Zoho Books integration">
+          <div class="form-text">A label to identify this key later — not shown to the external system.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Scopes <span class="text-danger">*</span></label>
+          <?php foreach (API_SCOPES as $scopeKey => $scopeLabel): ?>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="scopes[]" value="<?= $scopeKey ?>" id="scope-<?= $scopeKey ?>">
+            <label class="form-check-label small" for="scope-<?= $scopeKey ?>"><code><?= $scopeKey ?></code> — <?= htmlspecialchars($scopeLabel) ?></label>
+          </div>
+          <?php endforeach; ?>
+        </div>
+        <div class="mb-0">
+          <label class="form-label fw-semibold">Webhook URL <span class="text-muted fw-normal">(optional)</span></label>
+          <input type="url" name="webhook_url" class="form-control" placeholder="https://example.com/webhooks/fieldpulse">
+          <div class="form-text">If set, FieldPulse will POST an event here when a customer is created/updated or a payment request is fully disbursed. A signing secret is generated and shown once, alongside the key.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm">Create Key</button>
+      </div>
+    </form>
   </div></div>
 </div>
 

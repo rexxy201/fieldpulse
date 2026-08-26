@@ -18,16 +18,19 @@ if (method() === 'POST') {
     } elseif ($action === 'create' && hasPermission('customers.create')) {
         $name = trim(($b['first_name']??'') . ' ' . ($b['last_name']??''));
         if (!$name) $name = $b['name'] ?? '';
+        $newCustId = newUuid();
         dbRun("INSERT INTO customers
             (id,name,first_name,last_name,account_number,email,phone,address,mailing_city,mailing_state,plan,status,expiration)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            [newUuid(),$name,$b['first_name']??'',$b['last_name']??'',$b['account_number']??'',$b['email']??'',$b['phone']??'',$b['address']??'',$b['mailing_city']??'',$b['mailing_state']??'',$b['plan']??'',$b['status']??'active',$b['expiration']??null]);
+            [$newCustId,$name,$b['first_name']??'',$b['last_name']??'',$b['account_number']??'',$b['email']??'',$b['phone']??'',$b['address']??'',$b['mailing_city']??'',$b['mailing_state']??'',$b['plan']??'',$b['status']??'active',$b['expiration']??null]);
+        fireWebhooks('customer.created', ['id'=>$newCustId,'name'=>$name,'account_number'=>$b['account_number']??'','email'=>$b['email']??'','phone'=>$b['phone']??'']);
         $msg = 'Customer added.';
     } elseif ($action === 'update' && hasPermission('customers.update')) {
         $name = trim(($b['first_name']??'') . ' ' . ($b['last_name']??''));
         if (!$name) $name = $b['name'] ?? '';
         dbRun("UPDATE customers SET name=?,first_name=?,last_name=?,account_number=?,email=?,phone=?,address=?,mailing_city=?,mailing_state=?,plan=?,status=?,expiration=? WHERE id=?",
             [$name,$b['first_name']??'',$b['last_name']??'',$b['account_number']??'',$b['email']??'',$b['phone']??'',$b['address']??'',$b['mailing_city']??'',$b['mailing_state']??'',$b['plan']??'',$b['status']??'active',$b['expiration']??null,$b['id']]);
+        fireWebhooks('customer.updated', ['id'=>$b['id'],'name'=>$name,'account_number'=>$b['account_number']??'','email'=>$b['email']??'','phone'=>$b['phone']??'']);
         $msg = 'Customer updated.';
     }
     header('Location: /customers'); exit;
