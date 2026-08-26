@@ -6,6 +6,7 @@ $_primaryDark  = darkenColor($_primaryColor, 20);
 $_primaryLight = $_primaryColor . '1f'; // ~12% opacity hex not ideal, use rgba below
 $_companyName  = $_appCfg['companyName'] ?? 'FieldPulse';
 $_companyLogo  = $_appCfg['companyLogo'] ?? '';
+$_favicon      = $_appCfg['favicon'] ?? ($_appCfg['companyLogo'] ?? '');
 // Convert hex to RGB for rgba usage
 $_hex = ltrim($_primaryColor, '#');
 if (strlen($_hex) === 3) $_hex = $_hex[0].$_hex[0].$_hex[1].$_hex[1].$_hex[2].$_hex[2];
@@ -20,6 +21,7 @@ $_pb = hexdec(substr($_hex,4,2));
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="<?= htmlspecialchars(csrfToken(), ENT_QUOTES) ?>">
 <title><?= htmlspecialchars($pageTitle ?? $_companyName) ?> – <?= htmlspecialchars($_companyName) ?></title>
+<?php if ($_favicon): ?><link rel="icon" href="<?= htmlspecialchars($_favicon) ?>"><?php endif; ?>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">

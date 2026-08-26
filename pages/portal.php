@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config.php';
 // Public page — no auth required
 $_appCfg      = getAppConfig();
 $_companyName = $_appCfg['companyName'] ?? 'FieldPulse';
+$_favicon     = $_appCfg['favicon'] ?? ($_appCfg['companyLogo'] ?? '');
 $_primaryColor = $_appCfg['primaryColor'] ?? '#0ea5e9';
 $_hex = ltrim($_primaryColor, '#');
 if (strlen($_hex) === 3) $_hex = $_hex[0].$_hex[0].$_hex[1].$_hex[1].$_hex[2].$_hex[2];
@@ -134,6 +135,7 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Customer Portal – <?= htmlspecialchars($_companyName) ?></title>
+<?php if ($_favicon): ?><link rel="icon" href="<?= htmlspecialchars($_favicon) ?>"><?php endif; ?>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">

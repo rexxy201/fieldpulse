@@ -124,8 +124,25 @@ if (method() === 'POST') {
                 $msg = 'Logo must be PNG, JPG, GIF, or WebP and under 2 MB.'; $msgType = 'error';
             }
         }
+        // Favicon file upload — same override-the-URL-field pattern as the logo.
+        if (!empty($_FILES['faviconFile']['tmp_name']) && $_FILES['faviconFile']['error'] === UPLOAD_ERR_OK) {
+            $f   = $_FILES['faviconFile'];
+            $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+            // SVG intentionally excluded — same stored-XSS concern as the logo upload
+            if (in_array($ext, ['ico','png'], true) && $f['size'] <= 512 * 1024) {
+                $dir = __DIR__ . '/../assets/uploads/';
+                if (!is_dir($dir)) mkdir($dir, 0755, true);
+                $dest = $dir . 'favicon.' . $ext;
+                foreach (glob($dir . 'favicon.*') as $old) { @unlink($old); }
+                if (move_uploaded_file($f['tmp_name'], $dest)) {
+                    $b['favicon'] = '/assets/uploads/favicon.' . $ext;
+                }
+            } else {
+                $msg = 'Favicon must be ICO or PNG and under 512 KB.'; $msgType = 'error';
+            }
+        }
         if ($msgType !== 'error') {
-            foreach (['companyName','companyLogo','primaryColor','loginNotice','timezone'] as $k) {
+            foreach (['companyName','companyLogo','favicon','primaryColor','loginNotice','timezone'] as $k) {
                 if (array_key_exists($k, $b)) dbUpsertConfig($k, $b[$k]);
             }
             $msg = 'Branding saved. Reload the page to apply colour changes.';
@@ -301,6 +318,7 @@ foreach ($slaConfigs as $s) $slaByPrio[$s['priority']] = $s;
 $primaryColor = $cfg['primaryColor'] ?? '#0ea5e9';
 $companyName  = $cfg['companyName'] ?? 'FieldPulse';
 $companyLogo  = $cfg['companyLogo'] ?? '';
+$favicon      = $cfg['favicon'] ?? '';
 $timezone     = $cfg['timezone'] ?? 'Africa/Lagos';
 
 // Common timezones offered in the dropdown (Africa first, then global)
@@ -628,6 +646,31 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
                   value="<?= htmlspecialchars($companyLogo) ?>"
                   placeholder="https://example.com/logo.png">
                 <div class="form-text">Leave both empty to restore the default icon.</div>
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Favicon <span class="text-muted fw-normal">(browser tab icon)</span></label>
+                <?php if ($favicon): ?>
+                <div class="mb-2 p-2 border rounded d-inline-flex align-items-center gap-3 bg-light">
+                  <img src="<?= htmlspecialchars($favicon) ?>?v=<?= time() ?>" alt="Favicon"
+                       style="height:24px;width:24px;object-fit:contain">
+                  <div>
+                    <div class="small fw-semibold text-dark">Current favicon</div>
+                    <a href="#" onclick="document.getElementById('faviconUrlField').value='';document.getElementById('faviconUrlField').closest('form').submit();return false"
+                       class="small text-danger">Remove</a>
+                  </div>
+                </div>
+                <?php endif; ?>
+                <div class="mb-2">
+                  <label class="form-label small fw-semibold mb-1">Upload file <span class="text-muted fw-normal">(ICO or PNG · max 512 KB)</span></label>
+                  <input type="file" name="faviconFile" class="form-control form-control-sm" accept="image/x-icon,image/png,.ico">
+                </div>
+                <div class="d-flex align-items-center gap-2 text-muted small my-2">
+                  <hr class="flex-grow-1 m-0"><span>or paste a URL</span><hr class="flex-grow-1 m-0">
+                </div>
+                <input type="url" id="faviconUrlField" name="favicon" class="form-control form-control-sm"
+                  value="<?= htmlspecialchars($favicon) ?>"
+                  placeholder="https://example.com/favicon.ico">
+                <div class="form-text">Leave both empty to fall back to the logo, or the browser's default icon if there isn't one.</div>
               </div>
               <div class="mb-4">
                 <label class="form-label fw-semibold">Primary Colour</label>
