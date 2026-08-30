@@ -72,13 +72,16 @@ if (method() === 'POST') {
             placeholder="admin" required autofocus autocomplete="username">
         </div>
       </div>
-      <div class="mb-4">
+      <div class="mb-2">
         <label class="form-label" for="password">Password</label>
         <div class="input-group">
           <span class="input-group-text" style="border-right:0;background:#f8fafc"><i class="bi bi-lock text-muted"></i></span>
           <input type="password" id="password" name="password" class="form-control" style="border-left:0"
             placeholder="••••••••" required autocomplete="current-password">
         </div>
+      </div>
+      <div class="text-end mb-4">
+        <a href="/forgot-password" class="text-muted" style="font-size:.8rem">Forgot password?</a>
       </div>
       <button type="submit" class="btn btn-primary w-100 fw-semibold py-2">
         <i class="bi bi-box-arrow-in-right me-1"></i>Sign In

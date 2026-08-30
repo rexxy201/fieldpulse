@@ -2341,6 +2341,77 @@ if (!$_sv27) {
     }
 }
 
+// ─── Schema v28: Self-service password reset ───────────────────────────────────
+// Only the SHA-256 hash of the reset token is stored — a database leak alone
+// can't be used to reset anyone's password, same reasoning as never storing
+// plaintext passwords.
+$_k = dbKey();
+$_sv28 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v28_migrated'");
+if (!$_sv28) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `reset_token_hash` VARCHAR(64) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `reset_token_expires_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash VARCHAR(64)"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v28_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v28 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Password reset helpers ─────────────────────────────────────────────────────
+define('PASSWORD_RESET_MINUTES', 60);
+
+/**
+ * Issue a reset token for the given email if — and only if — an active
+ * account with that email exists. Always returns silently either way; the
+ * caller must show the same "if that email exists…" message regardless, to
+ * avoid leaking which emails have accounts (user enumeration).
+ */
+function issuePasswordReset(string $email): void {
+    $email = trim($email);
+    if ($email === '') return;
+    try {
+        $u = dbFetch("SELECT id,name,email FROM users WHERE email = ? AND status = 'active'", [$email]);
+        if (!$u) return;
+        $token = bin2hex(random_bytes(32));
+        $hash  = hash('sha256', $token);
+        $expires = date('Y-m-d H:i:s', time() + PASSWORD_RESET_MINUTES * 60);
+        dbRun("UPDATE users SET reset_token_hash=?, reset_token_expires_at=? WHERE id=?", [$hash, $expires, $u['id']]);
+        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/reset-password?token=' . $token;
+        sendEmail(
+            $u['email'], $u['name'],
+            'Reset your FieldPulse password',
+            "<p>Hi {$u['name']},</p>
+             <p>We received a request to reset your FieldPulse password. This link is valid for " . PASSWORD_RESET_MINUTES . " minutes.</p>
+             <p><a href='{$link}'>Reset your password →</a></p>
+             <p style='color:#64748b;font-size:.85rem'>If you didn't request this, you can safely ignore this email — your password won't change.</p>
+             <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('issuePasswordReset error: ' . $e->getMessage());
+    }
+}
+
+/** Looks up a still-valid (unexpired, unused) reset token. Returns the user row or null. */
+function findUserByResetToken(string $token): ?array {
+    if ($token === '') return null;
+    $hash = hash('sha256', $token);
+    $u = dbFetch("SELECT * FROM users WHERE reset_token_hash = ?", [$hash]);
+    if (!$u) return null;
+    if (empty($u['reset_token_expires_at']) || strtotime($u['reset_token_expires_at']) < time()) return null;
+    return $u;
+}
+
+/** Sets a new password and invalidates the token — single use. */
+function completePasswordReset(string $userId, string $newPassword): void {
+    dbRun("UPDATE users SET password=?, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
+        [hashPassword($newPassword), $userId]);
+}
+
 // ─── Integration API: scopes, key helpers, outbound webhooks ──────────────────
 // Every scope an API key can be granted. Keep this in sync with the
 // enforcement in each api/v1/*.php endpoint — a scope existing here doesn't
