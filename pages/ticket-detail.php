@@ -18,6 +18,7 @@ $customer = !empty($ticket['customer_id'])
     : null;
 
 $comments  = dbFetchAll("SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at", [$ticketId]);
+$photos    = dbFetchAll("SELECT * FROM ticket_photos WHERE ticket_id = ? ORDER BY created_at DESC", [$ticketId]);
 $engineers = dbFetchAll("SELECT id,name,role FROM users WHERE role IN ('engineer','noc_engineer','supervisor-fiber','supervisor-noc','cx_supervisor') ORDER BY name");
 $user      = currentUser();
 $role      = $user['role'];
@@ -88,6 +89,13 @@ if (method() === 'POST') {
             header("Location: /ticket/{$ticketId}?rca_required=1"); exit;
         }
 
+        // Proof-of-service photos — optional, validated before anything is
+        // persisted so a bad upload can't leave the ticket half-updated.
+        $photoCheck = validateTicketPhotos($_FILES['photos'] ?? []);
+        if (!$photoCheck['ok']) {
+            header("Location: /ticket/{$ticketId}?photo_error=" . urlencode($photoCheck['error'])); exit;
+        }
+
         $sets=[]; $vals=[];
         foreach(['status','priority','description','olt'] as $c) {
             if (isset($b[$c])) { $sets[]="$c=?"; $vals[]=$b[$c]; }
@@ -98,6 +106,9 @@ if (method() === 'POST') {
         // RCA fields
         foreach(['roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'] as $c) {
             if (isset($b[$c])) { $sets[]="$c=?"; $vals[]=$b[$c]; }
+        }
+        if (!empty($_FILES['photos'])) {
+            saveTicketPhotos($_FILES['photos'], $ticketId, $user['id'], $user['name']);
         }
         if ($sets) {
             $sets[]="updated_at=NOW()"; $vals[]=$ticketId;
@@ -185,6 +196,24 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($ticket['roca_root_cause']): ?><p class="small"><strong>Root Cause:</strong> <?= nl2br(htmlspecialchars($ticket['roca_root_cause'])) ?></p><?php endif; ?>
         <?php if ($ticket['roca_observation']): ?><p class="small"><strong>Observation:</strong> <?= nl2br(htmlspecialchars($ticket['roca_observation'])) ?></p><?php endif; ?>
         <?php if ($ticket['roca_corrective_action']): ?><p class="small"><strong>Corrective Action:</strong> <?= nl2br(htmlspecialchars($ticket['roca_corrective_action'])) ?></p><?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Photos (proof of service) -->
+    <?php if ($photos): ?>
+    <div class="card-section mb-3">
+      <div class="card-header"><i class="bi bi-camera me-1"></i>Photos (<?= count($photos) ?>)</div>
+      <div class="p-3 d-flex flex-wrap gap-2">
+        <?php foreach ($photos as $p): ?>
+        <a href="/api/ticket-photo?id=<?= $p['id'] ?>" target="_blank" rel="noopener" class="d-block" title="<?= htmlspecialchars($p['original_name'] ?? '') ?>">
+          <img src="/api/ticket-photo?id=<?= $p['id'] ?>" alt="Ticket photo" style="width:96px;height:96px;object-fit:cover;border-radius:.4rem;border:1px solid #e2e8f0">
+        </a>
+        <?php endforeach; ?>
+      </div>
+      <div class="px-3 pb-3 small text-muted">
+        <?php $latest = $photos[0]; ?>
+        Last added by <?= htmlspecialchars($latest['uploaded_by_name'] ?? '—') ?> on <?= date('d M Y H:i', strtotime($latest['created_at'])) ?>
       </div>
     </div>
     <?php endif; ?>
@@ -341,7 +370,7 @@ require __DIR__ . '/../includes/header.php';
     <?php if ($canEdit || $canResolve || $canClose || $canAssign): ?>
     <div class="card-section">
       <div class="card-header">Update Ticket</div>
-      <form method="POST" class="p-3 d-flex flex-column gap-2" id="updateForm">
+      <form method="POST" enctype="multipart/form-data" class="p-3 d-flex flex-column gap-2" id="updateForm">
         <input type="hidden" name="_action" value="update">
         <?= csrfField() ?>
         <!-- Hidden RCA fields populated by modal -->
@@ -385,6 +414,18 @@ require __DIR__ . '/../includes/header.php';
             <option value="<?=$e['id']?>" <?=$ticket['assigned_to']===$e['id']?'selected':''?>><?=htmlspecialchars($e['name'])?> (<?=$e['role']?>)</option>
             <?php endforeach; ?>
           </select>
+        </div>
+        <?php endif; ?>
+
+        <div>
+          <label class="form-label small fw-semibold mb-1">Photos <span class="text-muted fw-normal">(proof of service — optional, up to <?= TICKET_PHOTO_MAX_FILES ?>)</span></label>
+          <input type="file" name="photos[]" class="form-control form-control-sm" multiple accept="image/jpeg,image/png,image/webp" capture="environment">
+          <div class="form-text">JPG, PNG, or WebP, up to 8MB each. Especially worth attaching when resolving on-site.</div>
+        </div>
+
+        <?php if (!empty($_GET['photo_error'])): ?>
+        <div class="alert alert-danger py-2 small mb-0">
+          <i class="bi bi-exclamation-triangle me-1"></i><?= htmlspecialchars($_GET['photo_error']) ?>
         </div>
         <?php endif; ?>
 

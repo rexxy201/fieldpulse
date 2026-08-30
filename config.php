@@ -753,6 +753,66 @@ function savePaymentRequestDocuments(array $files, string $paymentRequestId, str
     return $saved;
 }
 
+// ─── Ticket photos (proof of service) ──────────────────────────────────────────
+// Same "never a web-guessable static path" pattern as payment request documents —
+// served only through api/ticket-photo.php, which checks canAccessTicket() on
+// the parent ticket before streaming a file.
+define('TICKET_PHOTO_DIR', __DIR__ . '/uploads/ticket_photos/');
+define('TICKET_PHOTO_MAX_FILES', 6);
+define('TICKET_PHOTO_MAX_BYTES', 8 * 1024 * 1024); // 8MB per photo
+
+function validateTicketPhotos(array $files): array {
+    $allowedExt  = ['jpg','jpeg','png','webp'];
+    $allowedMime = ['image/jpeg','image/png','image/webp'];
+
+    $names = $files['name'] ?? [];
+    $count = 0;
+    foreach ($names as $n) { if ($n !== '') $count++; }
+    if ($count === 0) return ['ok' => true, 'count' => 0];
+    if ($count > TICKET_PHOTO_MAX_FILES) return ['ok' => false, 'error' => 'You can attach at most ' . TICKET_PHOTO_MAX_FILES . ' photos.'];
+
+    for ($i = 0; $i < $count; $i++) {
+        if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return ['ok' => false, 'error' => 'Upload failed for "' . ($files['name'][$i] ?? 'a photo') . '".'];
+        }
+        if (($files['size'][$i] ?? 0) > TICKET_PHOTO_MAX_BYTES) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" is larger than 8MB.'];
+        }
+        $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowedExt, true)) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" — only JPG, PNG, or WebP photos are accepted.'];
+        }
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime  = $finfo->file($files['tmp_name'][$i]);
+        if (!in_array($mime, $allowedMime, true)) {
+            return ['ok' => false, 'error' => '"' . $files['name'][$i] . '" does not look like a valid photo.'];
+        }
+    }
+    return ['ok' => true, 'count' => $count];
+}
+
+function saveTicketPhotos(array $files, string $ticketId, string $uploaderId, string $uploaderName): int {
+    $names = $files['name'] ?? [];
+    $count = 0;
+    foreach ($names as $n) { if ($n !== '') $count++; }
+    if ($count === 0) return 0;
+
+    if (!is_dir(TICKET_PHOTO_DIR)) @mkdir(TICKET_PHOTO_DIR, 0755, true);
+    $saved = 0;
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    for ($i = 0; $i < $count; $i++) {
+        $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
+        $storedName = 'ticketphoto_' . newUuid() . '.' . $ext;
+        $verifiedMime = $finfo->file($files['tmp_name'][$i]);
+        if (move_uploaded_file($files['tmp_name'][$i], TICKET_PHOTO_DIR . $storedName)) {
+            dbRun("INSERT INTO ticket_photos (id,ticket_id,original_name,stored_name,mime_type,size_bytes,uploaded_by,uploaded_by_name) VALUES (?,?,?,?,?,?,?,?)",
+                [newUuid(), $ticketId, $files['name'][$i], $storedName, $verifiedMime, $files['size'][$i] ?? null, $uploaderId, $uploaderName]);
+            $saved++;
+        }
+    }
+    return $saved;
+}
+
 // ─── Role constants ───────────────────────────────────────────────────────────
 define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
 
@@ -2232,6 +2292,52 @@ if (!$_sv26) {
         dbUpsertConfig('schema_v26_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v26 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v27: Ticket photos (proof of service) ──────────────────────────────
+// Optional photo evidence attached when a ticket is updated/resolved/closed —
+// dispute resolution and install-quality QC, same reasoning as the payment
+// request documents already in the app. Storage directory locked down the
+// same way (deny-all .htaccess + a dummy index.php), served only through
+// api/ticket-photo.php.
+$_k = dbKey();
+$_sv27 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v27_migrated'");
+if (!$_sv27) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `ticket_photos` (
+                `id`                VARCHAR(36) NOT NULL,
+                `ticket_id`         VARCHAR(36) NOT NULL,
+                `original_name`     VARCHAR(255) DEFAULT NULL,
+                `stored_name`       VARCHAR(255) NOT NULL,
+                `mime_type`         VARCHAR(100) DEFAULT NULL,
+                `size_bytes`        INT DEFAULT NULL,
+                `uploaded_by`       VARCHAR(36) DEFAULT NULL,
+                `uploaded_by_name`  VARCHAR(191) DEFAULT NULL,
+                `created_at`        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_tp_ticket` (`ticket_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS ticket_photos (
+                id                VARCHAR(36) PRIMARY KEY,
+                ticket_id         VARCHAR(36) NOT NULL,
+                original_name     VARCHAR(255),
+                stored_name       VARCHAR(255) NOT NULL,
+                mime_type         VARCHAR(100),
+                size_bytes        INT,
+                uploaded_by       VARCHAR(36),
+                uploaded_by_name  VARCHAR(191),
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+        }
+        if (!is_dir(TICKET_PHOTO_DIR)) @mkdir(TICKET_PHOTO_DIR, 0755, true);
+        @file_put_contents(TICKET_PHOTO_DIR . '.htaccess', "Require all denied\nDeny from all\n");
+        @file_put_contents(TICKET_PHOTO_DIR . 'index.php', "<?php http_response_code(403); exit;\n");
+        dbUpsertConfig('schema_v27_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v27 migration error: ' . $e->getMessage());
     }
 }
 
