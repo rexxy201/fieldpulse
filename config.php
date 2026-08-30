@@ -2412,6 +2412,25 @@ function completePasswordReset(string $userId, string $newPassword): void {
         [hashPassword($newPassword), $userId]);
 }
 
+// ─── Schema v29: per-item inventory reorder threshold ──────────────────────────
+// "Low stock" used to be a single hardcoded quantity<=5 for every item — a
+// router and a cable tie don't deserve the same alert threshold. Existing
+// items default to 5 so today's alerts don't change until someone tunes them.
+$_k = dbKey();
+$_sv29 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v29_migrated'");
+if (!$_sv29) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `inv_items` ADD COLUMN `reorder_threshold` INT NOT NULL DEFAULT 5"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE inv_items ADD COLUMN IF NOT EXISTS reorder_threshold INT NOT NULL DEFAULT 5"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v29_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v29 migration error: ' . $e->getMessage());
+    }
+}
+
 // ─── Integration API: scopes, key helpers, outbound webhooks ──────────────────
 // Every scope an API key can be granted. Keep this in sync with the
 // enforcement in each api/v1/*.php endpoint — a scope existing here doesn't

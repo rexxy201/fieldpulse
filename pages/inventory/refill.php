@@ -37,7 +37,7 @@ $recent = dbFetchAll(
      LEFT JOIN users u ON u.id=sm.performed_by
      WHERE sm.type='inbound' AND sm.source='manual_refill' ORDER BY sm.created_at DESC LIMIT 8"
 );
-$low = dbFetchAll("SELECT id,name,quantity FROM inv_items WHERE quantity<=5 ORDER BY quantity ASC, name LIMIT 8");
+$low = dbFetchAll("SELECT id,name,quantity FROM inv_items WHERE quantity<=reorder_threshold ORDER BY quantity ASC, name LIMIT 8");
 
 $pageTitle = 'Refill Stock';
 require __DIR__ . '/../../includes/header.php';

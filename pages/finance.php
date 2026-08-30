@@ -47,6 +47,33 @@ $installByVendor = dbFetchAll(
      GROUP BY v.id, v.name ORDER BY total_paid DESC LIMIT 8"
 );
 
+// ─── Vendor scorecard — SLA performance alongside spend ─────────────────────
+// The same data Installations Analytics already computes, surfaced here too
+// so a manager doesn't need to know that page exists to see it. Finance is
+// where "which vendor to keep paying" decisions actually get made.
+$_terminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
+$_diffPaymentToCompleted = dbSecondsDiff('p.payment_confirmed_at', 'p.completed_at');
+$vendorScorecard = dbFetchAll(
+    "SELECT v.id, v.name,
+            COUNT(p.id) AS total_assigned,
+            SUM(CASE WHEN p.status='connected' THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN p.status NOT IN ({$_terminalIn}) AND p.payment_confirmed_at IS NOT NULL AND p.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue_now,
+            ROUND(AVG(CASE WHEN p.status='connected' AND p.payment_confirmed_at IS NOT NULL THEN ({$_diffPaymentToCompleted})/3600.0 END), 1) AS avg_hours,
+            SUM(CASE WHEN p.status='connected' AND p.sla_due_at IS NOT NULL AND p.completed_at <= p.sla_due_at THEN 1 ELSE 0 END) AS on_time,
+            SUM(CASE WHEN p.status='connected' AND p.sla_due_at IS NOT NULL THEN 1 ELSE 0 END) AS with_sla
+     FROM vendors v
+     LEFT JOIN installation_profiles p ON p.vendor_id = v.id
+     WHERE v.type = 'installation'
+     GROUP BY v.id, v.name
+     HAVING total_assigned > 0
+     ORDER BY total_assigned DESC
+     LIMIT 8"
+);
+$vendorReassignCounts = dbFetchAll(
+    "SELECT old_vendor_id, COUNT(*) AS c FROM installation_vendor_history WHERE old_vendor_id IS NOT NULL GROUP BY old_vendor_id"
+);
+$vendorReassignById = array_column($vendorReassignCounts, 'c', 'old_vendor_id');
+
 $pageTitle = 'Finance';
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -151,6 +178,45 @@ require __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
+<!-- ── Vendor Scorecard ──────────────────────────────────────────────────── -->
+<?php if ($vendorScorecard): ?>
+<div class="card-section mb-3">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-clipboard-data me-1 text-primary"></i>Vendor Scorecard — Installation SLA</span>
+    <a href="/installations/analytics" class="small">Full breakdown →</a>
+  </div>
+  <div class="p-3">
+    <p class="text-muted small mb-3">Who's actually delivering, not just who's getting paid — SLA clock starts at payment confirmation, target: <?= INSTALLATION_SLA_WORKING_DAYS ?> working days.</p>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light"><tr>
+          <th>Vendor</th><th class="text-center">Assigned</th><th class="text-center">Completed</th>
+          <th class="text-center">On-Time %</th><th class="text-center">Avg Hours</th>
+          <th class="text-center">Overdue Now</th><th class="text-center">Reassigned</th>
+        </tr></thead>
+        <tbody>
+          <?php foreach ($vendorScorecard as $v):
+            $onTimePct = $v['with_sla'] > 0 ? round($v['on_time'] / $v['with_sla'] * 100) : null;
+            $pctColor  = $onTimePct === null ? 'text-muted' : ($onTimePct >= 80 ? 'text-success' : ($onTimePct >= 50 ? 'text-warning' : 'text-danger'));
+            $reassigned = (int)($vendorReassignById[$v['id']] ?? 0);
+          ?>
+          <tr>
+            <td class="small fw-semibold"><?= htmlspecialchars($v['name']) ?></td>
+            <td class="text-center small"><?= (int)$v['total_assigned'] ?></td>
+            <td class="text-center small"><?= (int)$v['completed'] ?></td>
+            <td class="text-center small fw-semibold <?= $pctColor ?>"><?= $onTimePct !== null ? $onTimePct.'%' : '—' ?></td>
+            <td class="text-center small"><?= $v['avg_hours'] !== null ? $v['avg_hours'] : '—' ?></td>
+            <td class="text-center small <?= (int)$v['overdue_now'] > 0 ? 'text-danger fw-semibold' : 'text-muted' ?>"><?= (int)$v['overdue_now'] ?></td>
+            <td class="text-center small <?= $reassigned > 0 ? 'text-danger fw-semibold' : 'text-muted' ?>"><?= $reassigned ?></td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+
 <?php if (aiEnabled()): ?>
 <div class="card-section">
   <div class="p-3">
@@ -173,6 +239,7 @@ const FINANCE_SNAPSHOT = <?= json_encode([
     'payment_requests_by_vendor' => $prByVendor,
     'installation_money'         => $installMoney,
     'installations_by_vendor'    => $installByVendor,
+    'vendor_sla_scorecard'       => $vendorScorecard,
 ]) ?>;
 
 function askAboutFinance() {

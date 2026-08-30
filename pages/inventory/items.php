@@ -71,7 +71,8 @@ require __DIR__ . '/../../includes/header.php';
         <?php endif; ?>
         <?php foreach ($items as $it):
           $q = (int)$it['quantity'];
-          $qcls = $q <= 0 ? 'text-bg-danger' : ($q <= 5 ? 'text-bg-warning' : 'text-bg-success');
+          $reorderAt = (int)($it['reorder_threshold'] ?? 5);
+          $qcls = $q <= 0 ? 'text-bg-danger' : ($q <= $reorderAt ? 'text-bg-warning' : 'text-bg-success');
         ?>
         <tr>
           <td class="ps-3">
@@ -89,7 +90,7 @@ require __DIR__ . '/../../includes/header.php';
           </td>
           <td class="small font-monospace text-muted"><?= htmlspecialchars($it['unique_code'] ?? '—') ?></td>
           <td><?= $it['cat_name'] ? '<span class="badge text-bg-light border">'.htmlspecialchars($it['cat_name']).'</span>' : '—' ?></td>
-          <td class="text-center"><span class="badge <?= $qcls ?>"><?= $q ?></span></td>
+          <td class="text-center"><span class="badge <?= $qcls ?>" title="Reorder at <?= $reorderAt ?>"><?= $q ?></span></td>
           <td class="text-end pe-3">
             <div class="d-inline-flex gap-1">
               <?php if ($canRequest): ?><a href="/inventory/request-new?item=<?= $it['id'] ?>" class="btn btn-sm btn-outline-secondary" title="Request"><i class="bi bi-cart-plus"></i></a><?php endif; ?>

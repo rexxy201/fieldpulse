@@ -8,7 +8,7 @@ $totItems   = (int)(dbFetch("SELECT COUNT(*) c FROM inv_items")['c'] ?? 0);
 $totCats    = (int)(dbFetch("SELECT COUNT(*) c FROM inv_categories")['c'] ?? 0);
 // $totCabs    = (int)(dbFetch("SELECT COUNT(*) c FROM inv_cabinets")['c'] ?? 0);  // hidden per request
 $pendingReq = (int)(dbFetch("SELECT COUNT(*) c FROM inv_stock_requests WHERE status='pending'")['c'] ?? 0);
-$lowStock   = (int)(dbFetch("SELECT COUNT(*) c FROM inv_items WHERE quantity<=5")['c'] ?? 0);
+$lowStock   = (int)(dbFetch("SELECT COUNT(*) c FROM inv_items WHERE quantity<=reorder_threshold")['c'] ?? 0);
 $outStock   = (int)(dbFetch("SELECT COUNT(*) c FROM inv_items WHERE quantity=0")['c'] ?? 0);
 
 $recentMv = dbFetchAll(
