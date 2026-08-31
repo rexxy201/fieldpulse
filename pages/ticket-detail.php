@@ -320,6 +320,14 @@ require __DIR__ . '/../includes/header.php';
           <dt class="col-5 text-muted">Created</dt><dd class="col-7"><?= date('d M Y H:i', strtotime($ticket['created_at'])) ?></dd>
           <?php if ($ticket['escalated_at']): ?><dt class="col-5 text-muted">Escalated</dt><dd class="col-7 text-danger"><?= date('d M Y H:i', strtotime($ticket['escalated_at'])) ?></dd><?php endif; ?>
           <?php if ($ticket['resolved_at']): ?><dt class="col-5 text-muted">Resolved</dt><dd class="col-7"><?= date('d M Y H:i', strtotime($ticket['resolved_at'])) ?></dd><?php endif; ?>
+          <?php if ($ticket['csat_score']): ?>
+          <dt class="col-5 text-muted">Customer Rating</dt>
+          <dd class="col-7">
+            <?php $csatColor = $ticket['csat_score'] >= 4 ? 'success' : ($ticket['csat_score'] >= 3 ? 'warning' : 'danger'); ?>
+            <span class="badge bg-<?= $csatColor ?>"><?= (int)$ticket['csat_score'] ?>/5</span>
+            <?php if ($ticket['csat_comment']): ?><div class="small text-muted fst-italic mt-1">“<?= htmlspecialchars($ticket['csat_comment']) ?>”</div><?php endif; ?>
+          </dd>
+          <?php endif; ?>
           <?php if ($slaBreach): ?>
           <dt class="col-5 text-muted">SLA Due</dt>
           <dd class="col-7 <?= $isBreached?'text-danger fw-semibold':'' ?>"><?= $slaBreach->format('d M Y H:i') ?></dd>

@@ -1136,6 +1136,20 @@ function emailCustomerTicketResolved(array $ticket, array $customer): void {
         $desc = htmlspecialchars($ticket['description'] ?? '');
         $cfg  = getAppConfig();
         $co   = htmlspecialchars($cfg['companyName'] ?? 'FieldPulse');
+
+        // CSAT token — generated once per ticket, reused if this email is ever
+        // re-triggered, so a re-send doesn't invalidate a link already sent.
+        $csatToken = $ticket['csat_token'] ?? null;
+        if (!$csatToken) {
+            $csatToken = bin2hex(random_bytes(16));
+            try { dbRun("UPDATE tickets SET csat_token = ? WHERE id = ?", [$csatToken, $ticket['id']]); } catch (\Throwable $e) {}
+        }
+        $base = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . "/csat?ticket={$ticket['id']}&token={$csatToken}&score=";
+        $stars = '';
+        for ($i = 1; $i <= 5; $i++) {
+            $stars .= "<a href='{$base}{$i}' style='display:inline-block;width:38px;height:38px;line-height:38px;text-align:center;margin-right:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;color:#0ea5e9;font-weight:700;text-decoration:none'>{$i}</a>";
+        }
+
         sendEmail(
             $customer['email'], $customer['name'],
             "Your Ticket {$tn} Has Been Resolved",
@@ -1147,6 +1161,8 @@ function emailCustomerTicketResolved(array $ticket, array $customer): void {
                <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Status</td><td style='padding:6px 12px;border:1px solid #e2e8f0;color:#15803d;font-weight:600'>Resolved</td></tr>
              </table>
              <p>If the issue persists or recurs, simply reply or contact us and we'll reopen your case right away.</p>
+             <p style='margin-top:1.5rem'>How did we do? <span style='color:#64748b;font-size:.85rem'>(1 = poor, 5 = excellent)</span></p>
+             <p>{$stars}</p>
              <p style='color:#64748b;font-size:.85rem'>{$co} Support Team</p>"
         );
     } catch (\Throwable $e) {
@@ -2465,6 +2481,144 @@ if (!$_sv30) {
     }
 }
 
+// ─── Schema v31: Report subscriptions ───────────────────────────────────────────
+// Generalizes the ops-digest/finance-digest pattern (both already work) to any
+// report on the Reports page — pick a report, a cadence, a recipient list,
+// instead of having to already know a report exists and open the app to see it.
+$_k = dbKey();
+$_sv31 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v31_migrated'");
+if (!$_sv31) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `report_subscriptions` (
+                `id`                VARCHAR(36) NOT NULL,
+                `report_type`       VARCHAR(30) NOT NULL,
+                `cadence`           VARCHAR(10) NOT NULL,
+                `recipients`        TEXT NOT NULL,
+                `created_by`        VARCHAR(36) DEFAULT NULL,
+                `created_by_name`   VARCHAR(191) DEFAULT NULL,
+                `last_sent_at`      DATETIME DEFAULT NULL,
+                `created_at`        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                `enabled`           TINYINT(1) NOT NULL DEFAULT 1,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS report_subscriptions (
+                id                VARCHAR(36) PRIMARY KEY,
+                report_type       VARCHAR(30) NOT NULL,
+                cadence           VARCHAR(10) NOT NULL,
+                recipients        TEXT NOT NULL,
+                created_by        VARCHAR(36),
+                created_by_name   VARCHAR(191),
+                last_sent_at      TIMESTAMP,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                enabled           SMALLINT NOT NULL DEFAULT 1
+            )");
+        }
+        dbUpsertConfig('schema_v31_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v31 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v32: API rate limiting + webhook retry queue ───────────────────────
+// Both flagged as known v1 limits when the Integration API shipped — fine for
+// a single internal integration, risky once a second/third external partner
+// is calling in.
+$_k = dbKey();
+$_sv32 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v32_migrated'");
+if (!$_sv32) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `api_keys` ADD COLUMN `rate_limit_per_min` INT NOT NULL DEFAULT 60"); } catch (\Throwable $e) {}
+            db()->exec("CREATE TABLE IF NOT EXISTS `webhook_deliveries` (
+                `id`              VARCHAR(36) NOT NULL,
+                `api_key_id`      VARCHAR(36) NOT NULL,
+                `event`           VARCHAR(50) NOT NULL,
+                `payload`         TEXT NOT NULL,
+                `attempts`        INT NOT NULL DEFAULT 1,
+                `status`          VARCHAR(20) NOT NULL DEFAULT 'pending',
+                `next_retry_at`   DATETIME DEFAULT NULL,
+                `last_error`      VARCHAR(500) DEFAULT NULL,
+                `created_at`      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                `delivered_at`    DATETIME DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_wd_status_retry` (`status`,`next_retry_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            try { db()->exec("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_min INT NOT NULL DEFAULT 60"); } catch (\Throwable $e) {}
+            db()->exec("CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                id              VARCHAR(36) PRIMARY KEY,
+                api_key_id      VARCHAR(36) NOT NULL,
+                event           VARCHAR(50) NOT NULL,
+                payload         TEXT NOT NULL,
+                attempts        INT NOT NULL DEFAULT 1,
+                status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+                next_retry_at   TIMESTAMP,
+                last_error      VARCHAR(500),
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                delivered_at    TIMESTAMP
+            )");
+        }
+        dbUpsertConfig('schema_v32_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v32 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v33: CSAT (customer satisfaction) micro-survey ─────────────────────
+// Closes the loop the audit flagged as missing — SLA compliance measures
+// speed, nothing measured whether the customer was actually happy. Email-only
+// for now (a 1-5 rating link in the resolution email); SMS is deliberately
+// deferred until that workflow is decided.
+$_k = dbKey();
+$_sv33 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v33_migrated'");
+if (!$_sv33) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `csat_token` VARCHAR(64) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `csat_score` TINYINT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `csat_comment` TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `csat_submitted_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_token VARCHAR(64)"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_score SMALLINT"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_comment TEXT"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS csat_submitted_at TIMESTAMP"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v33_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v33 migration error: ' . $e->getMessage());
+    }
+}
+
+define('WEBHOOK_MAX_ATTEMPTS', 6);
+/** Exponential-ish backoff in minutes, indexed by attempt number (1-based). */
+define('WEBHOOK_RETRY_BACKOFF_MIN', [1, 5, 15, 60, 180, 720]);
+
+define('REPORT_SUBSCRIPTION_TYPES', [
+    'department' => 'By Department', 'engineer' => 'By Engineer', 'olt' => 'By OLT / Equipment',
+    'vendor' => 'By Vendor', 'issue' => 'By Issue Type', 'recurring' => 'Recurring Customers',
+    'resolution' => 'Resolution Time',
+]);
+
+/** Is this subscription due to send, given its cadence and when it last sent? */
+function reportSubscriptionIsDue(array $sub): bool {
+    if (empty($sub['last_sent_at'])) return true;
+    $last = strtotime($sub['last_sent_at']);
+    return match ($sub['cadence']) {
+        'daily'   => date('Y-m-d', $last) < date('Y-m-d'),
+        'weekly'  => $last <= strtotime('-7 days'),
+        'monthly' => date('Y-m', $last) !== date('Y-m'),
+        default   => false,
+    };
+}
+
+/** Rolling lookback window (days) matching a cadence — used for the report's own date filter. */
+function reportSubscriptionWindowDays(string $cadence): int {
+    return match ($cadence) { 'daily' => 1, 'weekly' => 7, 'monthly' => 30, default => 7 };
+}
+
 /**
  * This calendar month's committed spend (authorized/approved/partially
  * disbursed/disbursed — i.e. money that's moving or moved, not just
@@ -2513,9 +2667,11 @@ function generateApiKey(): array {
 }
 
 /**
- * Best-effort outbound webhook delivery: fires synchronously, logs failures,
- * never throws. No retry queue in this v1 — a down endpoint just misses the
- * event. Payload is signed with the key's webhook_secret (HMAC-SHA256) in the
+ * Best-effort outbound webhook delivery: fires synchronously, never throws.
+ * A non-2xx response or a transport error queues the payload into
+ * webhook_deliveries for retryFailedWebhooks() to pick up on a backoff
+ * schedule (see WEBHOOK_RETRY_BACKOFF_MIN), instead of just being dropped.
+ * Payload is signed with the key's webhook_secret (HMAC-SHA256) in the
  * X-FieldPulse-Signature header so receivers can verify authenticity.
  */
 function fireWebhooks(string $event, array $payload): void {
@@ -2527,22 +2683,71 @@ function fireWebhooks(string $event, array $payload): void {
 
     $body = json_encode(['event' => $event, 'data' => $payload, 'sent_at' => date('c')], JSON_UNESCAPED_SLASHES);
     foreach ($keys as $k) {
-        try {
-            $sig = hash_hmac('sha256', $body, $k['webhook_secret'] ?? '');
-            $ch = curl_init($k['webhook_url']);
-            curl_setopt_array($ch, [
-                CURLOPT_POST           => true,
-                CURLOPT_POSTFIELDS     => $body,
-                CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'X-FieldPulse-Event: ' . $event, 'X-FieldPulse-Signature: ' . $sig],
-                CURLOPT_TIMEOUT        => 5,
-                CURLOPT_RETURNTRANSFER => true,
-            ]);
-            curl_exec($ch);
-            curl_close($ch);
-        } catch (\Throwable $e) {
-            error_log("Webhook delivery failed for key {$k['id']} ({$event}): " . $e->getMessage());
+        [$ok, $error] = deliverWebhook($k['webhook_url'], $k['webhook_secret'] ?? '', $event, $body);
+        if (!$ok) {
+            error_log("Webhook delivery failed for key {$k['id']} ({$event}): {$error}");
+            try {
+                dbRun("INSERT INTO webhook_deliveries (id,api_key_id,event,payload,attempts,status,next_retry_at,last_error) VALUES (?,?,?,?,1,'pending',?,?)",
+                    [newUuid(), $k['id'], $event, $body, date('Y-m-d H:i:s', time() + WEBHOOK_RETRY_BACKOFF_MIN[0] * 60), substr($error, 0, 500)]);
+            } catch (\Throwable $e) {}
         }
     }
+}
+
+/** Single delivery attempt. Returns [success bool, error string]. */
+function deliverWebhook(string $url, string $secret, string $event, string $body): array {
+    try {
+        $sig = hash_hmac('sha256', $body, $secret);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $body,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'X-FieldPulse-Event: ' . $event, 'X-FieldPulse-Signature: ' . $sig],
+            CURLOPT_TIMEOUT        => 5,
+            CURLOPT_RETURNTRANSFER => true,
+        ]);
+        curl_exec($ch);
+        $curlErr  = curl_error($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($curlErr) return [false, $curlErr];
+        if ($httpCode < 200 || $httpCode >= 300) return [false, "HTTP {$httpCode}"];
+        return [true, ''];
+    } catch (\Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+}
+
+/**
+ * Processes due retries — call from a cron hitting api/webhook-retry.php.
+ * Gives up (status='failed') after WEBHOOK_MAX_ATTEMPTS, otherwise
+ * reschedules with the next backoff step.
+ */
+function retryFailedWebhooks(): array {
+    $due = dbFetchAll("SELECT wd.*, ak.webhook_url, ak.webhook_secret FROM webhook_deliveries wd
+                        JOIN api_keys ak ON ak.id = wd.api_key_id
+                        WHERE wd.status='pending' AND wd.next_retry_at <= NOW() AND ak.revoked_at IS NULL");
+    $results = ['attempted' => 0, 'delivered' => 0, 'gave_up' => 0, 'rescheduled' => 0];
+    foreach ($due as $d) {
+        $results['attempted']++;
+        [$ok, $error] = deliverWebhook($d['webhook_url'], $d['webhook_secret'] ?? '', $d['event'], $d['payload']);
+        if ($ok) {
+            dbRun("UPDATE webhook_deliveries SET status='delivered', delivered_at=NOW() WHERE id=?", [$d['id']]);
+            $results['delivered']++;
+            continue;
+        }
+        $attempts = (int)$d['attempts'] + 1;
+        if ($attempts >= WEBHOOK_MAX_ATTEMPTS) {
+            dbRun("UPDATE webhook_deliveries SET status='failed', attempts=?, last_error=? WHERE id=?", [$attempts, substr($error, 0, 500), $d['id']]);
+            $results['gave_up']++;
+        } else {
+            $backoffMin = WEBHOOK_RETRY_BACKOFF_MIN[$attempts - 1] ?? end(WEBHOOK_RETRY_BACKOFF_MIN);
+            dbRun("UPDATE webhook_deliveries SET attempts=?, next_retry_at=?, last_error=? WHERE id=?",
+                [$attempts, date('Y-m-d H:i:s', time() + $backoffMin * 60), substr($error, 0, 500), $d['id']]);
+            $results['rescheduled']++;
+        }
+    }
+    return $results;
 }
 
 // ─── App version tracking ──────────────────────────────────────────────────────

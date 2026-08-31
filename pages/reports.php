@@ -3,6 +3,28 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 requirePermission('reports.view');
 
+if (method() === 'POST') {
+    verifyCsrf();
+    $b = $_POST;
+    $action = $b['_action'] ?? '';
+    if ($action === 'add_subscription') {
+        $rType = $b['report_type'] ?? '';
+        $cadence = in_array($b['cadence'] ?? '', ['daily','weekly','monthly'], true) ? $b['cadence'] : 'weekly';
+        $recipients = trim($b['recipients'] ?? '');
+        if (array_key_exists($rType, REPORT_SUBSCRIPTION_TYPES) && $recipients !== '') {
+            $u = currentUser();
+            dbRun("INSERT INTO report_subscriptions (id,report_type,cadence,recipients,created_by,created_by_name) VALUES (?,?,?,?,?,?)",
+                [newUuid(), $rType, $cadence, $recipients, $u['id'] ?? null, $u['name'] ?? null]);
+            auditLog('create', 'report_subscription', '');
+        }
+    }
+    if ($action === 'delete_subscription' && !empty($b['id'])) {
+        dbRun("DELETE FROM report_subscriptions WHERE id=?", [$b['id']]);
+        auditLog('delete', 'report_subscription', $b['id']);
+    }
+    header('Location: /reports?type=' . urlencode($b['report_type'] ?? 'department') . '#subscriptions'); exit;
+}
+
 $type = $_GET['type'] ?? 'department';
 $from = trim($_GET['from'] ?? '');
 $to   = trim($_GET['to'] ?? '');
@@ -130,6 +152,8 @@ $reportTabs = [
 ];
 if (!isset($reportTabs[$type])) { $type = 'department'; }
 
+$subscriptions = dbFetchAll("SELECT * FROM report_subscriptions ORDER BY created_at DESC");
+
 $pageTitle = 'Reports';
 require __DIR__ . '/../includes/header.php';
 
@@ -144,6 +168,9 @@ function rqs(array $extra = []) {
     <h2 class="fw-bold mb-0">Reports</h2>
     <div class="text-muted small">Drill down into ticket volume, resolution time, and recurring issues.</div>
   </div>
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#subscribeModal">
+    <i class="bi bi-envelope-paper me-1"></i>Subscribe to this report
+  </button>
 </div>
 
 <!-- Tabs -->
@@ -379,5 +406,81 @@ document.getElementById('askDataInput')?.addEventListener('keydown', function (e
 });
 </script>
 <?php endif; ?>
+
+<!-- ── Report Subscriptions ─────────────────────────────────────────────────── -->
+<div class="card-section mt-3" id="subscriptions">
+  <div class="card-header"><i class="bi bi-envelope-paper me-1 text-primary"></i>Report Subscriptions</div>
+  <div class="p-3">
+    <?php if (!$subscriptions): ?>
+    <p class="text-muted small mb-0">No subscriptions yet — use "Subscribe to this report" above to get any report emailed on a schedule.</p>
+    <?php else: ?>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light"><tr><th>Report</th><th>Cadence</th><th>Recipients</th><th>Last Sent</th><th>By</th><th></th></tr></thead>
+        <tbody>
+          <?php foreach ($subscriptions as $s): ?>
+          <tr>
+            <td class="small fw-semibold"><?= htmlspecialchars(REPORT_SUBSCRIPTION_TYPES[$s['report_type']] ?? $s['report_type']) ?></td>
+            <td class="small text-capitalize"><?= htmlspecialchars($s['cadence']) ?></td>
+            <td class="small text-muted"><?= htmlspecialchars($s['recipients']) ?></td>
+            <td class="small text-muted"><?= $s['last_sent_at'] ? date('d M Y H:i', strtotime($s['last_sent_at'])) : 'Never' ?></td>
+            <td class="small text-muted"><?= htmlspecialchars($s['created_by_name'] ?? '—') ?></td>
+            <td class="text-end">
+              <form method="POST" onsubmit="return confirm('Remove this subscription?')">
+                <input type="hidden" name="_action" value="delete_subscription">
+                <input type="hidden" name="id" value="<?= $s['id'] ?>">
+                <?= csrfField() ?>
+                <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- Subscribe Modal -->
+<div class="modal fade" id="subscribeModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="POST">
+      <input type="hidden" name="_action" value="add_subscription">
+      <?= csrfField() ?>
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-envelope-paper me-1 text-primary"></i>Subscribe to a Report</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Report</label>
+          <select name="report_type" class="form-select form-select-sm">
+            <?php foreach (REPORT_SUBSCRIPTION_TYPES as $rtKey => $rtLabel): ?>
+            <option value="<?= $rtKey ?>" <?= $type===$rtKey?'selected':'' ?>><?= htmlspecialchars($rtLabel) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Cadence</label>
+          <select name="cadence" class="form-select form-select-sm">
+            <option value="daily">Daily</option>
+            <option value="weekly" selected>Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+          <div class="form-text">Each send covers the period since the last one (1 / 7 / 30 days).</div>
+        </div>
+        <div class="mb-0">
+          <label class="form-label fw-semibold">Recipients</label>
+          <textarea name="recipients" class="form-control form-control-sm" rows="2" placeholder="comma-separated emails" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm">Subscribe</button>
+      </div>
+    </form>
+  </div></div>
+</div>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>

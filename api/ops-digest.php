@@ -53,6 +53,12 @@ $topEngineers = dbFetchAll(
      GROUP BY u.id, u.name ORDER BY resolved DESC LIMIT 3"
 );
 
+// ── Customer satisfaction (CSAT) ─────────────────────────────────────────
+$csatStats = dbFetch(
+    "SELECT COUNT(*) AS rated, ROUND(AVG(csat_score),1) AS avg_score
+     FROM tickets WHERE csat_submitted_at >= {$_ivPeriod}"
+);
+
 // ── Installation stats ───────────────────────────────────────────────────
 $_diffPay = dbSecondsDiff('payment_confirmed_at', 'completed_at');
 $_terminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
@@ -82,6 +88,8 @@ $summary = [
     'open_tickets_now'         => (int)$openNow,
     'breached_tickets_now'     => (int)$breachedNow,
     'top_engineers'            => array_map(fn($e) => "{$e['name']} ({$e['resolved']} resolved)", $topEngineers),
+    'csat_avg_score'           => $csatStats['avg_score'] ?? null,
+    'csat_responses'           => (int)($csatStats['rated'] ?? 0),
     'installations_completed'  => (int)($installStats['completed_in_period'] ?? 0),
     'avg_install_hours'        => $installStats['avg_hours'] ?? null,
     'installations_pending'    => (int)$installPending,
@@ -113,6 +121,7 @@ if ($narrative) {
         <li>MTTR: " . ($summary['mttr_hours'] ?? '—') . " hrs — SLA compliance: " . ($summary['sla_compliance_pct'] !== null ? $summary['sla_compliance_pct'].'%' : '—') . "</li>
         <li>Currently open: {$summary['open_tickets_now']}, currently breached: {$summary['breached_tickets_now']}</li>
         <li>Installations completed: {$summary['installations_completed']}, pending: {$summary['installations_pending']}, overdue: {$summary['installations_overdue']}</li>
+        <li>Customer satisfaction: " . ($summary['csat_avg_score'] !== null ? $summary['csat_avg_score'].'/5 avg ('.$summary['csat_responses'].' responses)' : 'no responses yet') . "</li>
       </ul>";
 }
 

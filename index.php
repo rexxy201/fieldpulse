@@ -36,6 +36,7 @@ if ($page === 'logout') { require __DIR__ . '/pages/logout.php'; exit; }
 if ($page === 'portal') { require __DIR__ . '/pages/portal.php'; exit; }
 if ($page === 'forgot-password') { require __DIR__ . '/pages/forgot-password.php'; exit; }
 if ($page === 'reset-password')  { require __DIR__ . '/pages/reset-password.php'; exit; }
+if ($page === 'csat')            { require __DIR__ . '/pages/csat.php'; exit; }
 
 // Public inventory QR-scan landing pages (no auth)
 if ($page === 'asset')   { require __DIR__ . '/pages/inventory/public-asset.php';   exit; }

@@ -216,9 +216,10 @@ if (method() === 'POST') {
         } else {
             $gen = generateApiKey();
             $webhookSecret = $webhookUrl !== '' ? bin2hex(random_bytes(16)) : null;
+            $rateLimit = max(0, (int)($b['rate_limit_per_min'] ?? 60));
             $_apiKeyUser = currentUser();
-            dbRun("INSERT INTO api_keys (id,name,key_prefix,key_hash,scopes,webhook_url,webhook_secret,created_by,created_by_name) VALUES (?,?,?,?,?,?,?,?,?)",
-                [newUuid(), $name, $gen['prefix'], $gen['hash'], implode(',', $scopes), $webhookUrl ?: null, $webhookSecret, $_apiKeyUser['id'] ?? null, $_apiKeyUser['name'] ?? null]);
+            dbRun("INSERT INTO api_keys (id,name,key_prefix,key_hash,scopes,webhook_url,webhook_secret,rate_limit_per_min,created_by,created_by_name) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [newUuid(), $name, $gen['prefix'], $gen['hash'], implode(',', $scopes), $webhookUrl ?: null, $webhookSecret, $rateLimit, $_apiKeyUser['id'] ?? null, $_apiKeyUser['name'] ?? null]);
             auditLog('create', 'api_key', $gen['prefix']);
             // Shown exactly once — nobody, including us, can retrieve the raw
             // key again after this request (only its hash is stored).
@@ -297,6 +298,12 @@ $slaConfigs = dbFetchAll("SELECT * FROM sla_configs ORDER BY priority");
 $hubs       = dbFetchAll("SELECT * FROM hubs ORDER BY name");
 $auditLogs  = dbFetchAll("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100");
 $apiKeys    = dbFetchAll("SELECT * FROM api_keys ORDER BY revoked_at IS NOT NULL, created_at DESC");
+$webhookQueue = dbFetch("SELECT SUM(status='pending') pending, SUM(status='failed') failed FROM webhook_deliveries");
+$webhookFailures = dbFetchAll(
+    "SELECT wd.event, wd.attempts, wd.status, wd.last_error, wd.created_at, ak.name AS key_name
+     FROM webhook_deliveries wd JOIN api_keys ak ON ak.id = wd.api_key_id
+     WHERE wd.status IN ('pending','failed') ORDER BY wd.created_at DESC LIMIT 10"
+);
 $teams      = dbFetchAll("SELECT * FROM teams ORDER BY type, name");
 $teamById   = [];
 foreach ($teams as $t) $teamById[$t['id']] = $t;
@@ -1248,6 +1255,32 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </table>
       </div>
     </div>
+
+    <?php if ((int)($webhookQueue['pending']??0) > 0 || (int)($webhookQueue['failed']??0) > 0): ?>
+    <div class="card-section mt-3">
+      <div class="card-header">
+        <i class="bi bi-arrow-repeat me-1 text-warning"></i>Webhook Delivery Queue
+        <span class="text-muted small ms-1">(<?= (int)($webhookQueue['pending']??0) ?> retrying, <?= (int)($webhookQueue['failed']??0) ?> gave up)</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th class="ps-3">Key</th><th>Event</th><th>Attempts</th><th>Status</th><th>Last Error</th><th class="pe-3">First Failed</th></tr></thead>
+          <tbody>
+            <?php foreach ($webhookFailures as $wf): ?>
+            <tr>
+              <td class="ps-3 small"><?= htmlspecialchars($wf['key_name']) ?></td>
+              <td class="small font-monospace"><?= htmlspecialchars($wf['event']) ?></td>
+              <td class="small"><?= (int)$wf['attempts'] ?> / <?= WEBHOOK_MAX_ATTEMPTS ?></td>
+              <td><span class="badge <?= $wf['status']==='failed'?'bg-danger':'bg-warning' ?>"><?= htmlspecialchars($wf['status']) ?></span></td>
+              <td class="small text-muted text-truncate" style="max-width:220px" title="<?= htmlspecialchars($wf['last_error']??'') ?>"><?= htmlspecialchars($wf['last_error']??'—') ?></td>
+              <td class="pe-3 small text-muted text-nowrap"><?= date('d M Y H:i', strtotime($wf['created_at'])) ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <?php endif; ?>
   </div>
 
   <!-- ── Integrations (API Keys) ─────────────────────────────────────────── -->
@@ -1283,11 +1316,11 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
       <div class="table-responsive">
         <table class="table table-sm mb-0 align-middle">
           <thead class="table-light">
-            <tr><th>Name</th><th>Key</th><th>Scopes</th><th>Webhook</th><th>Created</th><th>Last Used</th><th>Status</th><th></th></tr>
+            <tr><th>Name</th><th>Key</th><th>Scopes</th><th>Webhook</th><th>Rate Limit</th><th>Created</th><th>Last Used</th><th>Status</th><th></th></tr>
           </thead>
           <tbody>
             <?php if (!$apiKeys): ?>
-            <tr><td colspan="8" class="text-center text-muted py-4">No API keys yet.</td></tr>
+            <tr><td colspan="9" class="text-center text-muted py-4">No API keys yet.</td></tr>
             <?php endif; ?>
             <?php foreach ($apiKeys as $k): $isRevoked = !empty($k['revoked_at']); ?>
             <tr class="<?= $isRevoked ? 'text-muted' : '' ?>">
@@ -1295,6 +1328,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               <td class="small font-monospace"><?= htmlspecialchars($k['key_prefix']) ?>…</td>
               <td class="small"><?php foreach (explode(',', $k['scopes']) as $s): ?><span class="badge bg-light text-dark border me-1"><?= htmlspecialchars($s) ?></span><?php endforeach; ?></td>
               <td class="small"><?= $k['webhook_url'] ? '<span class="text-truncate d-inline-block" style="max-width:180px" title="'.htmlspecialchars($k['webhook_url']).'">'.htmlspecialchars($k['webhook_url']).'</span>' : '<span class="text-muted">—</span>' ?></td>
+              <td class="small text-muted"><?= (int)($k['rate_limit_per_min'] ?? 60) ?>/min</td>
               <td class="small text-muted text-nowrap"><?= date('d M Y', strtotime($k['created_at'])) ?><br><span style="font-size:.7rem">by <?= htmlspecialchars($k['created_by_name'] ?? '—') ?></span></td>
               <td class="small text-muted text-nowrap"><?= $k['last_used_at'] ? date('d M Y H:i', strtotime($k['last_used_at'])) : 'Never' ?></td>
               <td><?php if ($isRevoked): ?><span class="badge bg-secondary">Revoked</span><?php else: ?><span class="badge bg-success">Active</span><?php endif; ?></td>
@@ -1577,10 +1611,15 @@ if (location.hash === '#tab-permissions') {
           </div>
           <?php endforeach; ?>
         </div>
-        <div class="mb-0">
+        <div class="mb-3">
           <label class="form-label fw-semibold">Webhook URL <span class="text-muted fw-normal">(optional)</span></label>
           <input type="url" name="webhook_url" class="form-control" placeholder="https://example.com/webhooks/fieldpulse">
-          <div class="form-text">If set, FieldPulse will POST an event here when a customer is created/updated or a payment request is fully disbursed. A signing secret is generated and shown once, alongside the key.</div>
+          <div class="form-text">If set, FieldPulse will POST an event here when a customer is created/updated or a payment request is fully disbursed. A signing secret is generated and shown once, alongside the key. Failed deliveries retry automatically for up to 12 hours.</div>
+        </div>
+        <div class="mb-0">
+          <label class="form-label fw-semibold">Rate Limit <span class="text-muted fw-normal">(requests/minute)</span></label>
+          <input type="number" name="rate_limit_per_min" class="form-control" value="60" min="0">
+          <div class="form-text">0 = unlimited. Requests over the limit get a 429 response.</div>
         </div>
       </div>
       <div class="modal-footer">

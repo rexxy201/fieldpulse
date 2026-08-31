@@ -50,6 +50,21 @@ function logApiRequest(?string $apiKeyId, int $statusCode): void {
     } catch (\Throwable $e) {}
 }
 
+/**
+ * Sliding 60-second window against api_request_log, which every call already
+ * writes to — no separate counter/cache needed. Per-key limit is
+ * api_keys.rate_limit_per_min (default 60), set when the key is created.
+ */
+function apiKeyIsRateLimited(array $key): bool {
+    $limit = (int)($key['rate_limit_per_min'] ?? 60);
+    if ($limit <= 0) return false; // 0/unset = unlimited
+    $count = (int)(dbFetch(
+        "SELECT COUNT(*) c FROM api_request_log WHERE api_key_id = ? AND created_at >= " . dbNowMinusInterval(60, 'SECOND'),
+        [$key['id']]
+    )['c'] ?? 0);
+    return $count >= $limit;
+}
+
 function requireApiScope(string $scope): array {
     header('Content-Type: application/json; charset=utf-8');
     $key = currentApiKey();
@@ -57,6 +72,13 @@ function requireApiScope(string $scope): array {
         logApiRequest(null, 401);
         http_response_code(401);
         echo json_encode(['error' => 'Missing or invalid API key. Send it as: Authorization: Bearer <key>']);
+        exit;
+    }
+    if (apiKeyIsRateLimited($key)) {
+        logApiRequest($key['id'], 429);
+        http_response_code(429);
+        header('Retry-After: 60');
+        echo json_encode(['error' => 'Rate limit exceeded. Limit: ' . ($key['rate_limit_per_min'] ?? 60) . ' requests/minute.']);
         exit;
     }
     if (!apiKeyHasScope($key, $scope)) {
