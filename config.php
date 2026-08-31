@@ -33,9 +33,14 @@ if (file_exists($_secretsFile)) require_once $_secretsFile;
 // resolve to the exact same values they always have on the live server.
 // Deliberately `!== false` rather than `?:` — an intentionally empty value
 // (e.g. a local test user with no password) must not be treated as unset.
-define('DB_HOST', getenv('FIELDPULSE_DB_HOST') !== false ? getenv('FIELDPULSE_DB_HOST') : 'localhost');
-define('DB_NAME', getenv('FIELDPULSE_DB_NAME') !== false ? getenv('FIELDPULSE_DB_NAME') : 'mangonetcom_fieldpulse');
-define('DB_USER', getenv('FIELDPULSE_DB_USER') !== false ? getenv('FIELDPULSE_DB_USER') : 'mangonetcom_fieldpulse');
+// secrets.php may optionally override host/name/user too (not just the
+// password) — this is what lets the same config.php serve staging: staging's
+// own secrets.php (a separate file that lives only on that server, gitignored,
+// never touched by deploy) points DB_NAME/DB_USER at a dedicated staging
+// database instead of production's, with no branch-specific config.php diff.
+define('DB_HOST', getenv('FIELDPULSE_DB_HOST') !== false ? getenv('FIELDPULSE_DB_HOST') : (defined('DB_HOST_FROM_SECRETS') ? DB_HOST_FROM_SECRETS : 'localhost'));
+define('DB_NAME', getenv('FIELDPULSE_DB_NAME') !== false ? getenv('FIELDPULSE_DB_NAME') : (defined('DB_NAME_FROM_SECRETS') ? DB_NAME_FROM_SECRETS : 'mangonetcom_fieldpulse'));
+define('DB_USER', getenv('FIELDPULSE_DB_USER') !== false ? getenv('FIELDPULSE_DB_USER') : (defined('DB_USER_FROM_SECRETS') ? DB_USER_FROM_SECRETS : 'mangonetcom_fieldpulse'));
 define('DB_PASS', getenv('FIELDPULSE_DB_PASS') !== false ? getenv('FIELDPULSE_DB_PASS') : (defined('DB_PASS_FROM_SECRETS') ? DB_PASS_FROM_SECRETS : 'YOUR_DATABASE_PASSWORD'));
 
 $_dbUrl = getenv('DATABASE_URL');
@@ -543,16 +548,46 @@ function dbRun(string $sql, array $params = []): \PDOStatement {
 // ─── Ticket number generator ──────────────────────────────────────────────────
 function generateTicketNumber(string $prefix = 'INC'): string {
     $year = date('Y');
-    $last = dbFetch(
-        "SELECT ticket_number FROM tickets WHERE ticket_number LIKE ? ORDER BY ticket_number DESC LIMIT 1",
+    // ORDER BY ticket_number DESC (a plain string sort) breaks the instant the
+    // sequence crosses a digit boundary — e.g. "999" sorts ABOVE "1000"
+    // lexically ('9' > '1'), so once a -1000 ticket exists this always picked
+    // -999 as "last" again and regenerated -1000 forever. Fetching every
+    // number for this prefix/year and taking the numeric max in PHP sorts
+    // correctly regardless of digit count, and works the same on MySQL or
+    // Postgres (no vendor-specific numeric-cast SQL needed).
+    $rows = dbFetchAll(
+        "SELECT ticket_number FROM tickets WHERE ticket_number LIKE ?",
         ["$prefix-$year-%"]
     );
     $seq = 1;
-    if ($last) {
-        $parts = explode('-', $last['ticket_number']);
-        $seq = (int)end($parts) + 1;
+    foreach ($rows as $row) {
+        $parts = explode('-', $row['ticket_number'] ?? '');
+        $n = (int)end($parts);
+        if ($n >= $seq) $seq = $n + 1;
     }
     return sprintf('%s-%s-%03d', $prefix, $year, $seq);
+}
+
+/**
+ * Generates a ticket number and runs $insertFn($ticketNumber), retrying with
+ * a freshly-regenerated number if a UNIQUE constraint collision occurs (two
+ * concurrent ticket creations racing for the same next number — rare, but
+ * the read-then-increment in generateTicketNumber() isn't atomic, so this is
+ * the hard backstop behind it rather than the primary defense).
+ */
+function withUniqueTicketNumber(string $prefix, callable $insertFn, int $maxAttempts = 3): string {
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        $ticketNum = generateTicketNumber($prefix);
+        try {
+            $insertFn($ticketNum);
+            return $ticketNum;
+        } catch (\PDOException $e) {
+            $isDuplicateKey = ($e->errorInfo[1] ?? null) === 1062; // MySQL duplicate-entry code
+            if ($isDuplicateKey && $attempt < $maxAttempts) continue;
+            throw $e;
+        }
+    }
+    throw new \RuntimeException('Could not generate a unique ticket number after ' . $maxAttempts . ' attempts.');
 }
 
 // ─── Notification helper ──────────────────────────────────────────────────────
@@ -2697,6 +2732,55 @@ if (!$_sv36) {
         dbUpsertConfig('schema_v36_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v36 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v37: fix duplicate ticket numbers, then enforce uniqueness ────────
+// generateTicketNumber() used to pick "last" via ORDER BY ticket_number DESC
+// — a plain string sort, which breaks the moment the sequence crosses a
+// digit boundary ("999" sorts above "1000" lexically). Once a -1000 ticket
+// existed, every ticket after it got handed -1000 again, forever — the exact
+// bug reported live. Fixed in generateTicketNumber() itself; this migration
+// cleans up the duplicates that bug already created and adds a UNIQUE
+// constraint so a future collision fails loudly (caught and retried by
+// withUniqueTicketNumber()) instead of silently duplicating again.
+$_sv37 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v37_migrated'");
+if (!$_sv37) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            $_dupGroups = dbFetchAll(
+                "SELECT ticket_number FROM tickets WHERE ticket_number IS NOT NULL
+                 GROUP BY ticket_number HAVING COUNT(*) > 1"
+            );
+            foreach ($_dupGroups as $_dg) {
+                $_num = $_dg['ticket_number'];
+                // Keep the oldest row exactly as-is; renumber every later
+                // duplicate so no ticket's URL/reference changes except the
+                // ones that were never uniquely identifiable to begin with.
+                $_dupRows = dbFetchAll(
+                    "SELECT id FROM tickets WHERE ticket_number = ? ORDER BY created_at ASC, id ASC",
+                    [$_num]
+                );
+                array_shift($_dupRows);
+                $_prefix = explode('-', $_num)[0] ?: 'INC';
+                foreach ($_dupRows as $_dr) {
+                    try {
+                        $_newNum = generateTicketNumber($_prefix);
+                        dbRun("UPDATE tickets SET ticket_number = ? WHERE id = ?", [$_newNum, $_dr['id']]);
+                    } catch (\Throwable $e) {
+                        error_log("Schema v37: failed renumbering ticket {$_dr['id']}: " . $e->getMessage());
+                    }
+                }
+            }
+            try {
+                db()->exec("ALTER TABLE `tickets` ADD UNIQUE KEY `uniq_ticket_number` (`ticket_number`)");
+            } catch (\Throwable $e) {
+                error_log('Schema v37: failed adding unique index on ticket_number: ' . $e->getMessage());
+            }
+        }
+        dbUpsertConfig('schema_v37_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v37 migration error: ' . $e->getMessage());
     }
 }
 

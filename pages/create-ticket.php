@@ -95,17 +95,20 @@ if (method() === 'POST') {
             $assignedTo = $assignee['id'] ?? null;
 
             $prefix    = $type === 'installation' ? 'ORD' : 'INC';
-            $ticketNum = generateTicketNumber($prefix);
             $newId     = newUuid();
 
             $_slaExpr = dbNowPlusInterval($hours, 'HOUR');
-            dbRun(
-                "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,sla_breach_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
-                [$newId, $ticketNum, $b['description'], $b['priority'] ?? 'p3', $type, 'open', $scope,
-                 $customerId, $cname, $hubId,
-                 $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id'], $b['vendor_id'] ?: null]
-            );
+            $ticketNum = withUniqueTicketNumber($prefix, function (string $ticketNum) use (
+                $newId, $b, $type, $scope, $customerId, $cname, $hubId, $assignedTo, $user, $_slaExpr
+            ) {
+                dbRun(
+                    "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,sla_breach_at)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
+                    [$newId, $ticketNum, $b['description'], $b['priority'] ?? 'p3', $type, 'open', $scope,
+                     $customerId, $cname, $hubId,
+                     $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id'], $b['vendor_id'] ?: null]
+                );
+            });
 
             auditLog('create', 'ticket', $newId);
             $ticket = dbFetch("SELECT * FROM tickets WHERE id = ?", [$newId]);
