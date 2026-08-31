@@ -15,6 +15,14 @@ if (method() === 'POST') {
     $result = attemptLogin($username, $password);
     if ($result['ok']) {
         $user = $result['user'];
+        if (!empty($user['twofa_enabled']) && !empty($user['email'])) {
+            // Password is correct, but the session stays unauthenticated
+            // (no user_id set) until the emailed code is also verified.
+            session_regenerate_id(true);
+            $_SESSION['twofa_pending_user_id'] = $user['id'];
+            issueTwoFactorCode($user['id'], $user['email'], $user['name']);
+            header('Location: /verify-2fa'); exit;
+        }
         session_regenerate_id(true);
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         $_SESSION['user_id'] = $user['id'];

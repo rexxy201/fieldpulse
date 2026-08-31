@@ -207,11 +207,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   </a>
 
   <div class="user-panel">
-    <div class="user-avatar"><?= strtoupper(substr($user['name'] ?? 'U', 0, 1)) ?></div>
-    <div class="flex-grow-1 overflow-hidden">
+    <a href="/account" class="user-avatar text-decoration-none" title="My Account"><?= strtoupper(substr($user['name'] ?? 'U', 0, 1)) ?></a>
+    <a href="/account" class="flex-grow-1 overflow-hidden text-decoration-none" title="My Account">
       <div class="user-name text-truncate"><?= htmlspecialchars($user['name'] ?? '') ?></div>
       <div class="user-role"><?= htmlspecialchars($role) ?></div>
-    </div>
+    </a>
     <a href="/logout" title="Logout" class="logout-btn">
       <i class="bi bi-box-arrow-right"></i>
     </a>

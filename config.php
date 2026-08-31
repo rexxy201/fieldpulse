@@ -2596,6 +2596,62 @@ define('WEBHOOK_MAX_ATTEMPTS', 6);
 /** Exponential-ish backoff in minutes, indexed by attempt number (1-based). */
 define('WEBHOOK_RETRY_BACKOFF_MIN', [1, 5, 15, 60, 180, 720]);
 
+// ─── Schema v34: Two-factor authentication (email one-time code) ───────────────
+// Opt-in per user (not forced on the whole org at once — enabling requires a
+// live confirmation round-trip through the user's own inbox first, so nobody
+// can lock themselves out by flipping the toggle with a typo'd/dead email).
+// SMS is deliberately not an option here — pegged per explicit instruction
+// until that workflow is decided; email reuses the SMTP already wired for
+// password reset and CSAT.
+$_k = dbKey();
+$_sv34 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v34_migrated'");
+if (!$_sv34) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `twofa_enabled` TINYINT(1) NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `twofa_code_hash` VARCHAR(64) DEFAULT NULL"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE `users` ADD COLUMN `twofa_code_expires_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        } else {
+            try { db()->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_enabled SMALLINT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_code_hash VARCHAR(64)"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS twofa_code_expires_at TIMESTAMP"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v34_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v34 migration error: ' . $e->getMessage());
+    }
+}
+
+define('TWOFA_CODE_MINUTES', 10);
+
+/** Generates, stores (hashed), and emails a fresh 6-digit code for this user. */
+function issueTwoFactorCode(string $userId, string $email, string $name): void {
+    $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $hash = hash('sha256', $code);
+    $expires = date('Y-m-d H:i:s', time() + TWOFA_CODE_MINUTES * 60);
+    dbRun("UPDATE users SET twofa_code_hash=?, twofa_code_expires_at=? WHERE id=?", [$hash, $expires, $userId]);
+    try {
+        sendEmail($email, $name, 'Your FieldPulse verification code',
+            "<p>Hi {$name},</p>
+             <p>Your verification code is:</p>
+             <p style='font-size:2rem;font-weight:700;letter-spacing:.2em;color:#0ea5e9'>{$code}</p>
+             <p style='color:#64748b;font-size:.85rem'>This code expires in " . TWOFA_CODE_MINUTES . " minutes. If you didn't request this, you can ignore it — your account is still safe.</p>"
+        );
+    } catch (\Throwable $e) {
+        error_log('issueTwoFactorCode email error: ' . $e->getMessage());
+    }
+}
+
+/** Verifies a submitted code; clears it (single-use) on success. */
+function verifyTwoFactorCode(string $userId, string $code): bool {
+    $u = dbFetch("SELECT twofa_code_hash, twofa_code_expires_at FROM users WHERE id=?", [$userId]);
+    if (!$u || empty($u['twofa_code_hash'])) return false;
+    if (empty($u['twofa_code_expires_at']) || strtotime($u['twofa_code_expires_at']) < time()) return false;
+    if (!hash_equals($u['twofa_code_hash'], hash('sha256', trim($code)))) return false;
+    dbRun("UPDATE users SET twofa_code_hash=NULL, twofa_code_expires_at=NULL WHERE id=?", [$userId]);
+    return true;
+}
+
 define('REPORT_SUBSCRIPTION_TYPES', [
     'department' => 'By Department', 'engineer' => 'By Engineer', 'olt' => 'By OLT / Equipment',
     'vendor' => 'By Vendor', 'issue' => 'By Issue Type', 'recurring' => 'Recurring Customers',

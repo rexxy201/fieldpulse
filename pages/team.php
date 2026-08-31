@@ -34,6 +34,14 @@ if (method() === 'POST') {
         dbRun("DELETE FROM users WHERE id=?", [$b['id']]);
         $msg = 'Member removed.';
     }
+    if ($action === 'reset_2fa' && !empty($b['id'])) {
+        // Recovery path for someone locked out of two-factor sign-in (e.g. lost
+        // access to the email it sends codes to) — same "admin can reset it"
+        // pattern already used for new_password above.
+        dbRun("UPDATE users SET twofa_enabled=0, twofa_code_hash=NULL, twofa_code_expires_at=NULL WHERE id=?", [$b['id']]);
+        auditLog('reset_2fa', 'user', $b['id']);
+        $msg = 'Two-factor sign-in turned off for that member — they can re-enable it from My Account.';
+    }
     if ($action === 'add_vendor') {
         dbRun("INSERT INTO vendors (id,name,type,status,email,phone,supervisor_name) VALUES (?,?,?,?,?,?,?)",
             [newUuid(),$b['name']??'',$b['type']??'general','active',$b['email']??'',$b['phone']??'',$b['supervisor_name']??'']);
@@ -189,6 +197,13 @@ require __DIR__ . '/../includes/header.php';
                 'hub_id'=>$u['hub_id']??'','team_id'=>$u['team_id']??'',
                 'vendor_id'=>$u['vendor_id']??'','hub_ids'=>$hubNames
               ])) ?>)' title="Edit"><i class="bi bi-pencil"></i></button>
+            <?php if (!empty($u['twofa_enabled'])): ?>
+            <form method="POST" class="d-inline" onsubmit="return confirm('Turn off two-factor sign-in for this member? Use this if they are locked out (e.g. lost access to their email).')">
+              <input type="hidden" name="_action" value="reset_2fa">
+              <input type="hidden" name="id" value="<?= $u['id'] ?>">
+              <button class="btn btn-sm btn-outline-warning" title="Reset Two-Factor Sign-In"><i class="bi bi-shield-x"></i></button>
+            </form>
+            <?php endif; ?>
             <form method="POST" class="d-inline" onsubmit="return confirm('Remove this member?')">
               <input type="hidden" name="_action" value="del_user">
               <input type="hidden" name="id" value="<?= $u['id'] ?>">

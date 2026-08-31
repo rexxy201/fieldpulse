@@ -37,6 +37,7 @@ if ($page === 'portal') { require __DIR__ . '/pages/portal.php'; exit; }
 if ($page === 'forgot-password') { require __DIR__ . '/pages/forgot-password.php'; exit; }
 if ($page === 'reset-password')  { require __DIR__ . '/pages/reset-password.php'; exit; }
 if ($page === 'csat')            { require __DIR__ . '/pages/csat.php'; exit; }
+if ($page === 'verify-2fa')      { require __DIR__ . '/pages/verify-2fa.php'; exit; }
 
 // Public inventory QR-scan landing pages (no auth)
 if ($page === 'asset')   { require __DIR__ . '/pages/inventory/public-asset.php';   exit; }
@@ -80,6 +81,7 @@ $pages = [
     'payment-request-template' => 'payment-request-template',
     'payment-request-print' => 'payment-request-print',
     'finance'       => 'finance',
+    'account'       => 'account',
 ];
 
 if (isset($pages[$page])) {
