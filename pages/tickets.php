@@ -56,17 +56,18 @@ if ($customerId) { $where[] = "t.customer_id = ?"; $params[] = $customerId; }
 if ($department) { $where[] = "t.fault_type_id IN (SELECT id FROM fault_types WHERE route_to = ?)"; $params[] = $department; }
 if ($search) {
     $like = "%$search%";
-    $where[] = "(t.description LIKE ? OR t.ticket_number LIKE ? OR t.customer_name LIKE ? OR t.address LIKE ?)";
+    $where[] = "(t.description LIKE ? OR t.ticket_number LIKE ? OR t.customer_name LIKE ? OR cu.mailing_city LIKE ?)";
     array_push($params, $like, $like, $like, $like);
 }
 
 $whereSQL = $where ? ' WHERE ' . implode(' AND ', $where) : '';
-$total    = (int)(dbFetch("SELECT COUNT(*) AS c FROM tickets t" . $whereSQL, $params)['c'] ?? 0);
+$total    = (int)(dbFetch("SELECT COUNT(*) AS c FROM tickets t LEFT JOIN customers cu ON cu.id = t.customer_id" . $whereSQL, $params)['c'] ?? 0);
 $tickets  = dbFetchAll(
-    "SELECT t.*, u.name AS assigned_name, cb.name AS created_by_name
+    "SELECT t.*, u.name AS assigned_name, cb.name AS created_by_name, cu.mailing_city AS customer_mailing_city
      FROM tickets t
-     LEFT JOIN users u  ON u.id  = t.assigned_to
-     LEFT JOIN users cb ON cb.id = t.created_by
+     LEFT JOIN users u      ON u.id  = t.assigned_to
+     LEFT JOIN users cb     ON cb.id = t.created_by
+     LEFT JOIN customers cu ON cu.id = t.customer_id
      $whereSQL
      ORDER BY t.created_at DESC LIMIT 500",
     $params
@@ -95,7 +96,7 @@ require __DIR__ . '/../includes/header.php';
     <div class="input-group flex-grow-1">
       <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
       <input type="text" id="searchInput" class="form-control border-start-0 ps-0"
-        placeholder="Search tickets by ID, customer, or address…"
+        placeholder="Search tickets by ID, customer, or city…"
         value="<?= htmlspecialchars($search) ?>"
         oninput="debounceSearch(this.value)">
       <?php
@@ -172,7 +173,7 @@ require __DIR__ . '/../includes/header.php';
           </th>
           <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Ticket ID</th>
           <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Customer</th>
-          <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Address</th>
+          <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">City</th>
           <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Status</th>
           <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Priority</th>
           <th class="text-muted fw-semibold small text-uppercase" style="font-size:.72rem;letter-spacing:.05em">Assigned To</th>
@@ -214,6 +215,12 @@ require __DIR__ . '/../includes/header.php';
             default => '#64748b',
           };
           $created = $t['created_at'] ? date('n/j/Y', strtotime($t['created_at'])) : '—';
+          // City/hub-scoped tickets carry their area name in customer_name
+          // already (set at creation — see create-ticket.php); customer-scoped
+          // tickets don't, so pull it from the linked customer's mailing_city.
+          $cityDisplay = in_array($t['ticket_scope'] ?? 'customer', ['city', 'hub'], true)
+              ? ($t['customer_name'] ?? '')
+              : ($t['customer_mailing_city'] ?? '');
         ?>
         <tr>
           <td style="padding-left:1rem">
@@ -233,7 +240,7 @@ require __DIR__ . '/../includes/header.php';
             <?= htmlspecialchars($t['customer_name'] ?? '—') ?>
           </td>
           <td class="small text-muted" style="max-width:180px">
-            <div class="text-truncate"><?= htmlspecialchars($t['address'] ?? '—') ?></div>
+            <div class="text-truncate"><?= htmlspecialchars($cityDisplay !== '' ? $cityDisplay : '—') ?></div>
           </td>
           <td>
             <span style="<?= $statusStyle ?>;font-size:.72rem;font-weight:700;padding:.25rem .6rem;border-radius:.25rem;letter-spacing:.03em;white-space:nowrap">
