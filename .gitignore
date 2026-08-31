@@ -7,3 +7,7 @@ vite.config.ts.*
 
 # Real secrets — lives only on the live server, never committed.
 secrets.php
+
+# Local file uploads and test artifacts — never committed.
+uploads/
+.phpunit.cache/

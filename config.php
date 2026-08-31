@@ -28,10 +28,15 @@ require_once __DIR__ . '/includes/ai.php';
 $_secretsFile = __DIR__ . '/secrets.php';
 if (file_exists($_secretsFile)) require_once $_secretsFile;
 
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'mangonetcom_fieldpulse');
-define('DB_USER', 'mangonetcom_fieldpulse');
-define('DB_PASS', defined('DB_PASS_FROM_SECRETS') ? DB_PASS_FROM_SECRETS : 'YOUR_DATABASE_PASSWORD');
+// Env-var overrides below are for the automated test suite only (see
+// tests/bootstrap.php) — unset in production, so DB_HOST/NAME/USER/PASS
+// resolve to the exact same values they always have on the live server.
+// Deliberately `!== false` rather than `?:` — an intentionally empty value
+// (e.g. a local test user with no password) must not be treated as unset.
+define('DB_HOST', getenv('FIELDPULSE_DB_HOST') !== false ? getenv('FIELDPULSE_DB_HOST') : 'localhost');
+define('DB_NAME', getenv('FIELDPULSE_DB_NAME') !== false ? getenv('FIELDPULSE_DB_NAME') : 'mangonetcom_fieldpulse');
+define('DB_USER', getenv('FIELDPULSE_DB_USER') !== false ? getenv('FIELDPULSE_DB_USER') : 'mangonetcom_fieldpulse');
+define('DB_PASS', getenv('FIELDPULSE_DB_PASS') !== false ? getenv('FIELDPULSE_DB_PASS') : (defined('DB_PASS_FROM_SECRETS') ? DB_PASS_FROM_SECRETS : 'YOUR_DATABASE_PASSWORD'));
 
 $_dbUrl = getenv('DATABASE_URL');
 if ($_dbUrl) {
@@ -54,6 +59,11 @@ if ($_dbUrl) {
     );
     define('DB_TYPE', 'mysql');
 }
+// db()'s `global $pdo;` only ever resolves against $GLOBALS — identical to
+// this assignment when config.php is required from a page's true top level
+// (always true in production), but explicit here so it also works when the
+// PHPUnit test bootstrap includes this file from inside a method scope.
+$GLOBALS['pdo'] = $pdo;
 
 // ─── Timezone (configurable, default Nigeria / Lagos = WAT, UTC+1) ────────────
 $_tzName = 'Africa/Lagos';
@@ -2619,6 +2629,42 @@ if (!$_sv34) {
         dbUpsertConfig('schema_v34_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v34 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v35: fix collation mismatch on migration-created tables ────────────
+// Found by the new automated test suite, not by hand: every table created by
+// a schema_vN block used utf8mb4_general_ci, while database/schema.sql's
+// original tables (users, tickets, vendors, hubs, customers, ...) use
+// utf8mb4_unicode_ci. A JOIN comparing a VARCHAR column across the two groups
+// — e.g. payment_requests.vendor_id against vendors.id, exactly what the
+// Payment Requests list / Finance / vendor scorecard queries do — can throw
+// "Illegal mix of collations". CONVERT TO doesn't change the data (same
+// utf8mb4 charset, just sort/compare rules), so this is safe to run against
+// tables that already have rows. Each table converts independently so one
+// failure can't block the rest.
+$_k = dbKey();
+$_sv35 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v35_migrated'");
+if (!$_sv35) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            $_mismatchedTables = [
+                'api_keys', 'api_request_log', 'hub_city_mappings', 'locations', 'payment_budgets',
+                'payment_requests', 'payment_request_customers', 'payment_request_documents',
+                'payment_request_items', 'payment_request_payments', 'report_subscriptions',
+                'ticket_photos', 'webhook_deliveries',
+            ];
+            foreach ($_mismatchedTables as $_t) {
+                try {
+                    db()->exec("ALTER TABLE `{$_t}` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                } catch (\Throwable $e) {
+                    error_log("Schema v35: failed converting collation for {$_t}: " . $e->getMessage());
+                }
+            }
+        }
+        dbUpsertConfig('schema_v35_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v35 migration error: ' . $e->getMessage());
     }
 }
 
