@@ -442,6 +442,20 @@ require __DIR__ . '/../includes/header.php';
 
 <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
 
+<?php if ($canReview):
+  $_budgetsNearOrOver = array_filter(getBudgetStatuses(), fn($b) => $b['pct'] >= 80);
+  if ($_budgetsNearOrOver): ?>
+<div class="alert alert-warning py-2 mb-3">
+  <i class="bi bi-speedometer2 me-1"></i>
+  <strong>Budget watch — <?= date('F Y') ?>:</strong>
+  <?php $_parts = []; foreach ($_budgetsNearOrOver as $bw):
+    $_label = htmlspecialchars(trim(($bw['department'] ?: 'All Departments') . ($bw['capex_opex'] ? ' · '.$bw['capex_opex'] : '')));
+    $_parts[] = "<strong>{$_label}</strong> at " . (int)$bw['pct'] . "% of its ₦" . number_format($bw['monthly_amount']) . " monthly budget";
+  endforeach; echo implode(' &nbsp;·&nbsp; ', $_parts); ?>
+  — visibility only, doesn't block approval. <a href="/finance#budgets">Manage budgets →</a>
+</div>
+<?php endif; endif; ?>
+
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
   <div>
     <h2 class="fw-bold mb-0">Payment Requests</h2>

@@ -3,6 +3,27 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 requirePermission('finance.view');
 
+if (method() === 'POST') {
+    verifyCsrf();
+    $b = $_POST;
+    $action = $b['_action'] ?? '';
+    if ($action === 'add_budget') {
+        $dept = trim($b['department'] ?? '');
+        $type = in_array($b['capex_opex'] ?? '', ['Capex','Opex'], true) ? $b['capex_opex'] : null;
+        $amt  = (float)($b['monthly_amount'] ?? 0);
+        if ($amt > 0) {
+            dbRun("INSERT INTO payment_budgets (id,department,capex_opex,monthly_amount,created_by) VALUES (?,?,?,?,?)",
+                [newUuid(), $dept !== '' ? $dept : null, $type, $amt, currentUser()['id'] ?? null]);
+            auditLog('create', 'payment_budget', '');
+        }
+    }
+    if ($action === 'delete_budget' && !empty($b['id'])) {
+        dbRun("DELETE FROM payment_budgets WHERE id=?", [$b['id']]);
+        auditLog('delete', 'payment_budget', $b['id']);
+    }
+    header('Location: /finance#budgets'); exit;
+}
+
 // ─── Payment Requests aggregates ────────────────────────────────────────────
 // 4-stage flow: pending -> authorized -> approved -> [finance check] -> disbursed
 // (which may pass through partially_disbursed if paid in installments, like a
@@ -74,6 +95,10 @@ $vendorReassignCounts = dbFetchAll(
 );
 $vendorReassignById = array_column($vendorReassignCounts, 'c', 'old_vendor_id');
 
+// ─── Budget ceilings ─────────────────────────────────────────────────────────
+$budgetStatuses = getBudgetStatuses();
+$budgetsNearOrOver = array_filter($budgetStatuses, fn($b) => $b['pct'] >= 80);
+
 $pageTitle = 'Finance';
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -85,6 +110,18 @@ require __DIR__ . '/../includes/header.php';
   </div>
   <a href="/payment-requests" class="btn btn-outline-primary btn-sm"><i class="bi bi-cash-coin me-1"></i>Payment Requests</a>
 </div>
+
+<?php if ($budgetsNearOrOver): ?>
+<div class="alert alert-warning py-2 mb-3">
+  <i class="bi bi-speedometer2 me-1"></i>
+  <strong>Budget watch — <?= date('F Y') ?>:</strong>
+  <?php $_parts = []; foreach ($budgetsNearOrOver as $bw):
+    $_label = htmlspecialchars(trim(($bw['department'] ?: 'All Departments') . ($bw['capex_opex'] ? ' · '.$bw['capex_opex'] : '')));
+    $_parts[] = "<strong>{$_label}</strong> has used " . (int)$bw['pct'] . "% of its ₦" . number_format($bw['monthly_amount']) . " monthly budget (₦" . number_format($bw['spent']) . " committed)";
+  endforeach; echo implode(' &nbsp;·&nbsp; ', $_parts); ?>
+  — this doesn't block approvals, it's visibility only.
+</div>
+<?php endif; ?>
 
 <!-- Payment Requests summary -->
 <div class="card-section mb-3">
@@ -217,6 +254,70 @@ require __DIR__ . '/../includes/header.php';
 </div>
 <?php endif; ?>
 
+<!-- ── Budget Ceilings ───────────────────────────────────────────────────── -->
+<div class="card-section mb-3" id="budgets">
+  <div class="card-header"><i class="bi bi-speedometer2 me-1 text-primary"></i>Budget Ceilings</div>
+  <div class="p-3">
+    <p class="text-muted small mb-3">Optional monthly ceilings by department and/or Capex/Opex. This is a soft warning shown above — approvals are never blocked by it.</p>
+    <?php if ($budgetStatuses): ?>
+    <div class="table-responsive mb-3">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light"><tr><th>Department</th><th>Type</th><th class="text-end">Monthly Budget</th><th class="text-end">Committed (<?= date('M') ?>)</th><th style="width:140px">Used</th><th></th></tr></thead>
+        <tbody>
+          <?php foreach ($budgetStatuses as $bs):
+            $barColor = $bs['pct'] >= 100 ? 'bg-danger' : ($bs['pct'] >= 80 ? 'bg-warning' : 'bg-success');
+          ?>
+          <tr>
+            <td class="small"><?= htmlspecialchars($bs['department'] ?: 'All Departments') ?></td>
+            <td class="small"><?= htmlspecialchars($bs['capex_opex'] ?: 'All') ?></td>
+            <td class="text-end small">₦<?= number_format($bs['monthly_amount']) ?></td>
+            <td class="text-end small">₦<?= number_format($bs['spent']) ?></td>
+            <td>
+              <div class="progress" style="height:14px">
+                <div class="progress-bar <?= $barColor ?>" style="width:<?= min(100,$bs['pct']) ?>%"></div>
+              </div>
+              <div class="small text-muted text-center"><?= (int)$bs['pct'] ?>%</div>
+            </td>
+            <td class="text-end">
+              <form method="POST" onsubmit="return confirm('Remove this budget ceiling?')">
+                <input type="hidden" name="_action" value="delete_budget">
+                <input type="hidden" name="id" value="<?= $bs['id'] ?>">
+                <?= csrfField() ?>
+                <button type="submit" class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+    <?php else: ?>
+    <p class="text-muted small mb-3">No budget ceilings set yet.</p>
+    <?php endif; ?>
+    <form method="POST" class="d-flex gap-2 flex-wrap align-items-end">
+      <input type="hidden" name="_action" value="add_budget">
+      <?= csrfField() ?>
+      <div>
+        <label class="form-label small fw-semibold mb-1">Department <span class="text-muted fw-normal">(blank = all)</span></label>
+        <input type="text" name="department" class="form-control form-control-sm" style="width:180px" placeholder="e.g. Operations">
+      </div>
+      <div>
+        <label class="form-label small fw-semibold mb-1">Type</label>
+        <select name="capex_opex" class="form-select form-select-sm" style="width:120px">
+          <option value="">All</option>
+          <option value="Capex">Capex</option>
+          <option value="Opex">Opex</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label small fw-semibold mb-1">Monthly Budget (₦)</label>
+        <input type="number" name="monthly_amount" min="1" step="0.01" class="form-control form-control-sm" style="width:160px" required>
+      </div>
+      <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg me-1"></i>Add Ceiling</button>
+    </form>
+  </div>
+</div>
+
 <?php if (aiEnabled()): ?>
 <div class="card-section">
   <div class="p-3">
@@ -240,6 +341,7 @@ const FINANCE_SNAPSHOT = <?= json_encode([
     'installation_money'         => $installMoney,
     'installations_by_vendor'    => $installByVendor,
     'vendor_sla_scorecard'       => $vendorScorecard,
+    'budget_ceilings'            => $budgetStatuses,
 ]) ?>;
 
 function askAboutFinance() {

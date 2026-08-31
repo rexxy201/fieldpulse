@@ -2431,6 +2431,67 @@ if (!$_sv29) {
     }
 }
 
+// ─── Schema v30: Payment Request budget ceilings ───────────────────────────────
+// Soft warnings, not hard blocks — the approval chain already controls who can
+// spend; this adds visibility into whether a department/spend-type is running
+// over its monthly allowance before the next request gets approved on top of it.
+$_k = dbKey();
+$_sv30 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v30_migrated'");
+if (!$_sv30) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `payment_budgets` (
+                `id`              VARCHAR(36) NOT NULL,
+                `department`      VARCHAR(191) DEFAULT NULL,
+                `capex_opex`      VARCHAR(10) DEFAULT NULL,
+                `monthly_amount`  DECIMAL(14,2) NOT NULL,
+                `created_by`      VARCHAR(36) DEFAULT NULL,
+                `created_at`      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS payment_budgets (
+                id              VARCHAR(36) PRIMARY KEY,
+                department      VARCHAR(191),
+                capex_opex      VARCHAR(10),
+                monthly_amount  NUMERIC(14,2) NOT NULL,
+                created_by      VARCHAR(36),
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )");
+        }
+        dbUpsertConfig('schema_v30_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v30 migration error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * This calendar month's committed spend (authorized/approved/partially
+ * disbursed/disbursed — i.e. money that's moving or moved, not just
+ * requested-and-not-yet-reviewed) against each budget rule, keyed by
+ * budget id. A rule with a null department/capex_opex applies broadly
+ * (matches everything for that dimension).
+ */
+function getBudgetStatuses(): array {
+    $budgets = dbFetchAll("SELECT * FROM payment_budgets ORDER BY department, capex_opex");
+    if (!$budgets) return [];
+    $monthStart = date('Y-m-01 00:00:00');
+    $out = [];
+    foreach ($budgets as $b) {
+        $where = ["status IN ('authorized','approved','partially_disbursed','disbursed')", "date_of_request >= ?"];
+        $params = [$monthStart];
+        if ($b['department'] !== null) { $where[] = "department = ?"; $params[] = $b['department']; }
+        if ($b['capex_opex'] !== null) { $where[] = "capex_opex = ?"; $params[] = $b['capex_opex']; }
+        $spent = (float)(dbFetch("SELECT SUM(amount) s FROM payment_requests WHERE " . implode(' AND ', $where), $params)['s'] ?? 0);
+        $pct = $b['monthly_amount'] > 0 ? round($spent / $b['monthly_amount'] * 100) : 0;
+        $out[] = [
+            'id' => $b['id'], 'department' => $b['department'], 'capex_opex' => $b['capex_opex'],
+            'monthly_amount' => (float)$b['monthly_amount'], 'spent' => $spent, 'pct' => $pct,
+        ];
+    }
+    return $out;
+}
+
 // ─── Integration API: scopes, key helpers, outbound webhooks ──────────────────
 // Every scope an API key can be granted. Keep this in sync with the
 // enforcement in each api/v1/*.php endpoint — a scope existing here doesn't

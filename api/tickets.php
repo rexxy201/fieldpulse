@@ -41,11 +41,23 @@ if ($id === 'bulk-update' && method() === 'POST') {
 }
 
 // ─── Auto-dispatch
+// Load-aware: picks the engineer at the ticket's hub currently carrying the
+// fewest open tickets, not just the first one found. Recalculated per
+// ticket in the loop, so a busy run naturally spreads across the team
+// instead of stacking everything on whoever sorts first.
 if ($id === 'auto-dispatch' && method() === 'POST') {
     $unassigned = dbFetchAll("SELECT * FROM tickets WHERE status='open' AND assigned_to IS NULL");
     $dispatched = 0;
     foreach ($unassigned as $t) {
-        $eng = dbFetch("SELECT id, name FROM users WHERE role IN ('engineer','noc_engineer') AND hub_id=? LIMIT 1", [$t['hub_id']]);
+        $eng = dbFetch(
+            "SELECT u.id, u.name,
+                    (SELECT COUNT(*) FROM tickets t2 WHERE t2.assigned_to = u.id AND t2.status NOT IN ('resolved','closed')) AS open_load
+             FROM users u
+             WHERE u.role IN ('engineer','noc_engineer') AND u.hub_id = ?
+             ORDER BY open_load ASC, u.name ASC
+             LIMIT 1",
+            [$t['hub_id']]
+        );
         if ($eng) {
             dbRun("UPDATE tickets SET assigned_to=?, status='in_progress', updated_at=NOW() WHERE id=?", [$eng['id'], $t['id']]);
             $dispatched++;
