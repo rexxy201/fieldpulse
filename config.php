@@ -2668,6 +2668,38 @@ if (!$_sv35) {
     }
 }
 
+// schema_v36: schema_v35 converted a hand-picked table list, but each table's
+// ALTER ran in its own try/catch — a single failure (lock contention, a
+// transient error) logs and moves on without blocking the rest, and either
+// way the v35 flag gets marked done, so it would never retry. This pass is
+// dynamic instead of a fixed list: it asks information_schema for every
+// table in THIS database still on utf8mb4_general_ci and converts whatever
+// it finds, so it self-heals regardless of what schema_v35 missed or
+// whether it ran at all yet.
+$_sv36 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v36_migrated'");
+if (!$_sv36) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            $_staleTables = dbFetchAll(
+                "SELECT DISTINCT TABLE_NAME FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = ? AND TABLE_COLLATION = 'utf8mb4_general_ci'",
+                [DB_NAME]
+            );
+            foreach ($_staleTables as $_row) {
+                $_t = $_row['TABLE_NAME'];
+                try {
+                    db()->exec("ALTER TABLE `{$_t}` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                } catch (\Throwable $e) {
+                    error_log("Schema v36: failed converting collation for {$_t}: " . $e->getMessage());
+                }
+            }
+        }
+        dbUpsertConfig('schema_v36_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v36 migration error: ' . $e->getMessage());
+    }
+}
+
 define('TWOFA_CODE_MINUTES', 10);
 
 /** Generates, stores (hashed), and emails a fresh 6-digit code for this user. */
