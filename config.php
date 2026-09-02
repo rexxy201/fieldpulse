@@ -302,7 +302,11 @@ function dbHour(string $col): string {
 }
 
 // ─── Installation SLA ──────────────────────────────────────────────────────────
-define('INSTALLATION_SLA_WORKING_DAYS', 7);
+// Configurable from Admin → SLA & Timers (stored in app_config as
+// installationSlaWorkingDays); falls back to the agreed 10-day target if
+// never set. Re-read from getAppConfig() on every request, so a change in
+// Admin takes effect immediately without a deploy.
+define('INSTALLATION_SLA_WORKING_DAYS', (int)(getAppConfig()['installationSlaWorkingDays'] ?? 10));
 // Stages that mean "no longer pending" — excluded from SLA/overdue tracking
 // everywhere. 'connected' is the terminal "done" stage (drives completed_at,
 // same role 'completed' used to play); 'refunded' means the job isn't
@@ -2781,6 +2785,66 @@ if (!$_sv37) {
         dbUpsertConfig('schema_v37_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v37 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v38: installation handoff — who laid the cable, who terminated ───
+// installation_profiles.vendor_id is a single mutable field: whoever is
+// "currently assigned" — needed so termination can be handed to a different
+// person (e.g. Lekki: Ejike lays cable, Kingsley terminates) and have it show
+// up in Kingsley's own vendor-scoped view. But once vendor_id moves on to
+// Kingsley, Ejike's part of the job would otherwise vanish from the record.
+// These two columns snapshot vendor_id at the moment each stage is first
+// reached, so both contributions stay visible permanently — see
+// captureInstallationHandoff() below, called from every place stage changes.
+$_sv38 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v38_migrated'");
+if (!$_sv38) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try {
+                db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `cable_laid_by_vendor_id` VARCHAR(36) DEFAULT NULL");
+            } catch (\Throwable $e) { error_log('Schema v38: cable_laid_by_vendor_id: ' . $e->getMessage()); }
+            try {
+                db()->exec("ALTER TABLE `installation_profiles` ADD COLUMN `terminated_by_vendor_id` VARCHAR(36) DEFAULT NULL");
+            } catch (\Throwable $e) { error_log('Schema v38: terminated_by_vendor_id: ' . $e->getMessage()); }
+            // Backfill from history for jobs already past these stages, on a
+            // best-effort basis: whoever is currently assigned gets credited
+            // for both if there's nothing more specific to go on — accurate
+            // for the common single-vendor case (e.g. Yaba's Samson), and no
+            // worse than blank for the rest.
+            try {
+                db()->exec("UPDATE installation_profiles SET cable_laid_by_vendor_id = vendor_id
+                             WHERE cable_laid_by_vendor_id IS NULL AND vendor_id IS NOT NULL
+                               AND status IN ('cable_laying','termination_pending','connected')");
+                db()->exec("UPDATE installation_profiles SET terminated_by_vendor_id = vendor_id
+                             WHERE terminated_by_vendor_id IS NULL AND vendor_id IS NOT NULL AND status = 'connected'");
+            } catch (\Throwable $e) { error_log('Schema v38 backfill: ' . $e->getMessage()); }
+        } else {
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN IF NOT EXISTS cable_laid_by_vendor_id VARCHAR(36)"); } catch (\Throwable $e) {}
+            try { db()->exec("ALTER TABLE installation_profiles ADD COLUMN IF NOT EXISTS terminated_by_vendor_id VARCHAR(36)"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v38_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v38 migration error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Call after writing a new status to installation_profiles, passing the
+ * vendor_id the row has AFTER any reassignment in the same request. Snapshots
+ * that vendor into cable_laid_by_vendor_id / terminated_by_vendor_id the
+ * first time each relevant stage is reached — a no-op once already set, so
+ * it never overwrites an earlier contributor's credit.
+ */
+function captureInstallationHandoff(string $profileId, string $newStatus, ?string $currentVendorId): void {
+    if (!$currentVendorId) return;
+    if ($newStatus === 'cable_laying') {
+        dbRun("UPDATE installation_profiles SET cable_laid_by_vendor_id = ? WHERE id = ? AND cable_laid_by_vendor_id IS NULL",
+            [$currentVendorId, $profileId]);
+    }
+    if ($newStatus === 'connected') {
+        dbRun("UPDATE installation_profiles SET terminated_by_vendor_id = ? WHERE id = ? AND terminated_by_vendor_id IS NULL",
+            [$currentVendorId, $profileId]);
     }
 }
 

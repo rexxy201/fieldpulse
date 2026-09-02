@@ -32,6 +32,7 @@ if ($id && method() === 'PATCH') {
             } else {
                 dbRun("UPDATE installation_profiles SET status=?, updated_at=NOW() WHERE id=?",[$b['status']??'',$id]);
             }
+            captureInstallationHandoff($id, $b['status'] ?? '', $p['vendor_id'] ?? null);
             jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]));
         }
         jsonResponse(['error'=>'Forbidden'],403);
@@ -74,6 +75,8 @@ if ($id && method() === 'PATCH') {
         }
     }
 
+    $_finalVendorId = array_key_exists('vendor_id', $b) ? ($b['vendor_id'] ?: null) : ($existing['vendor_id'] ?? null);
+    captureInstallationHandoff($id, $b['status'] ?? ($existing['status'] ?? ''), $_finalVendorId);
     jsonResponse(dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]));
 }
 

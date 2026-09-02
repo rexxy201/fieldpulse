@@ -198,6 +198,7 @@ if (method() === 'POST') {
                         }
                     }
                 }
+                captureInstallationHandoff($pid, $newStatus, $newVendorId !== '' ? $newVendorId : ($oldVendorId ?: null));
 
                 $msg = 'Profile updated.';
             }
@@ -249,7 +250,7 @@ if (method() === 'POST') {
             if ($newStatus === 'cable_laying' && $cableLaidDate === '') {
                 header('Location: /installations?err=' . urlencode('Cable Laid Date is required when Stage is Cable Laid.') . (!empty($pid) ? '#profile-'.$pid : '')); exit;
             }
-            $existing = dbFetch("SELECT status, completed_at, refunded_at FROM installation_profiles WHERE id=?", [$pid]);
+            $existing = dbFetch("SELECT status, completed_at, refunded_at, vendor_id FROM installation_profiles WHERE id=?", [$pid]);
             $sets = ["status=?", "updated_at=NOW()"]; $vals = [$newStatus];
             if (in_array($newStatus, $ON_HOLD_STATUSES, true)) { $sets[] = "on_hold_reason=?"; $vals[] = $reason; }
             if ($newStatus === 'refunded') { $sets[] = "refund_reason=?"; $vals[] = $reason; }
@@ -262,10 +263,38 @@ if (method() === 'POST') {
             if ($newStatus === 'refunded' && $existing && empty($existing['refunded_at'])) {
                 $sets[] = "refunded_at=NOW()";
             }
+            // Handing off to a different person for termination (e.g. Lekki:
+            // Ejike lays cable, Kingsley terminates) — folded into this same
+            // stage-change action so it can't be forgotten as a separate step.
+            // Admin-only, same as the standalone Reassign Vendor action; a
+            // vendor moving their own job to this stage can't reassign it away
+            // from themselves. Blank/unchanged = same vendor keeps the job
+            // (e.g. Yaba's Samson, who does both stages himself).
+            $terminationVendorId = trim($b['termination_vendor_id'] ?? '');
+            $vendorForHandoff = $existing['vendor_id'] ?? null;
+            if ($canEdit && $newStatus === 'termination_pending' && $terminationVendorId !== '' && $terminationVendorId !== ($existing['vendor_id'] ?? '')) {
+                $sets[] = "vendor_id=?"; $vals[] = $terminationVendorId;
+                $sets[] = "sla_warned_at=NULL"; $sets[] = "sla_breached_notified_at=NULL";
+                $vendorForHandoff = $terminationVendorId;
+            }
             $vals[] = $pid;
             dbRun("UPDATE installation_profiles SET " . implode(',', $sets) . " WHERE id=?", $vals);
+            captureInstallationHandoff($pid, $newStatus, $vendorForHandoff);
+            if ($vendorForHandoff !== ($existing['vendor_id'] ?? null)) {
+                dbRun("INSERT INTO installation_vendor_history (id,profile_id,old_vendor_id,new_vendor_id,reason,changed_by,changed_by_name) VALUES (?,?,?,?,?,?,?)",
+                    [newUuid(), $pid, $existing['vendor_id'] ?? null, $vendorForHandoff, 'Handed off for termination', $user['id'], $user['name']]);
+                $newVendorRow = dbFetch("SELECT name,email FROM vendors WHERE id=?", [$vendorForHandoff]);
+                if ($newVendorRow) {
+                    $updatedProfile = dbFetch("SELECT * FROM installation_profiles WHERE id=?", [$pid]);
+                    emailVendorInstallationAssigned($updatedProfile, $newVendorRow, true);
+                }
+            }
             $cid = newUuid();
             $stageMsg = 'Stage updated to: '.($STATUS_LABELS[$b['status']]??$b['status']).($reason?" — {$reason}":'').($cableLaidDate?" — Cable Laid ".date('d M Y', strtotime($cableLaidDate)):'');
+            if ($vendorForHandoff !== ($existing['vendor_id'] ?? null)) {
+                $newVendorName = dbFetch("SELECT name FROM vendors WHERE id=?", [$vendorForHandoff])['name'] ?? 'Unknown';
+                $stageMsg .= " — handed off to {$newVendorName} for termination";
+            }
             dbRun("INSERT INTO installation_comments (id,profile_id,user_id,user_name,user_role,content,type) VALUES (?,?,?,?,?,?,?)",
                 [$cid,$pid,$user['id'],$user['name'],$role,$stageMsg,'stage_change']);
             $msg = 'Stage updated.';
@@ -358,6 +387,7 @@ elseif ($paidFilter) { $where[]="p.installation_paid=?"; $params[]=$paidFilter; 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
 $allVendors = dbFetchAll("SELECT id,name FROM vendors ORDER BY name");
+$vendorNames = array_column($allVendors, 'name', 'id');
 // All tickets, not just type='installation' — staff need to link whichever ticket actually
 // applies (e.g. a cable-cut ticket found while investigating a customer's original LOS report).
 $tickets  = dbFetchAll("SELECT id,ticket_number,customer_name,description FROM tickets ORDER BY created_at DESC LIMIT 500");
@@ -544,6 +574,8 @@ require __DIR__ . '/../includes/header.php';
         <?php if ($detailProfile['payment_confirmed_at']): ?><dt class="col-4 text-muted">Payment Confirmed</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['payment_confirmed_at'])) ?></dd><?php endif; ?>
         <?php if ($detailProfile['sla_due_at']): ?><dt class="col-4 text-muted">SLA Due</dt><dd class="col-8"><?= date('d M Y', strtotime($detailProfile['sla_due_at'])) ?> <span class="text-muted">(<?= INSTALLATION_SLA_WORKING_DAYS ?> working days)</span></dd><?php endif; ?>
         <?php if ($detailProfile['completed_at']): ?><dt class="col-4 text-muted">Completed</dt><dd class="col-8"><?= date('d M Y H:i', strtotime($detailProfile['completed_at'])) ?></dd><?php endif; ?>
+        <?php if (!empty($detailProfile['cable_laid_by_vendor_id'])): ?><dt class="col-4 text-muted">Installed By</dt><dd class="col-8"><?= htmlspecialchars($vendorNames[$detailProfile['cable_laid_by_vendor_id']] ?? 'Unknown') ?></dd><?php endif; ?>
+        <?php if (!empty($detailProfile['terminated_by_vendor_id'])): ?><dt class="col-4 text-muted">Terminated By</dt><dd class="col-8"><?= htmlspecialchars($vendorNames[$detailProfile['terminated_by_vendor_id']] ?? 'Unknown') ?></dd><?php endif; ?>
       </dl>
       <?php
       $canInteract = $canEdit || ($role === 'vendor' && !empty($user['vendor_id']) && $user['vendor_id'] === $detailProfile['vendor_id']);
@@ -567,11 +599,25 @@ require __DIR__ . '/../includes/header.php';
           <label class="form-label small fw-semibold mb-1">Cable Laid Date <span class="text-danger">*</span></label>
           <input type="date" name="cable_laid_date" id="stageQuickCableDate" class="form-control form-control-sm" max="<?= date('Y-m-d') ?>" value="<?= htmlspecialchars($detailProfile['cable_laid_date'] ?? '') ?>">
         </div>
+        <?php if ($canEdit): ?>
+        <div id="stageQuickTerminationWrap" class="d-none">
+          <label class="form-label small fw-semibold mb-1">Hand Off For Termination</label>
+          <select name="termination_vendor_id" class="form-select form-select-sm">
+            <option value="">— Keep with <?= htmlspecialchars($detailProfile['vendor_name'] ?? 'current vendor') ?> —</option>
+            <?php foreach ($allVendors as $v): ?>
+            <option value="<?= $v['id'] ?>"><?= htmlspecialchars($v['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <div class="form-text">Only needed if termination is done by someone other than <?= htmlspecialchars($detailProfile['vendor_name'] ?? 'the current vendor') ?> (e.g. Lekki: Ejike lays cable, Kingsley terminates). Leave as-is if the same person handles both.</div>
+        </div>
+        <?php endif; ?>
       </form>
       <script>
         function toggleStageReason(v) {
           document.getElementById('stageQuickReason').classList.toggle('d-none', !['on_hold_customer','on_hold_deployment','refunded'].includes(v));
           document.getElementById('stageQuickCableWrap').classList.toggle('d-none', v !== 'cable_laying');
+          const terminationWrap = document.getElementById('stageQuickTerminationWrap');
+          if (terminationWrap) terminationWrap.classList.toggle('d-none', v !== 'termination_pending');
         }
         toggleStageReason(document.getElementById('stageQuickSelect').value);
       </script>

@@ -154,6 +154,10 @@ if (method() === 'POST') {
         }
         $msg = 'Email settings saved.';
     }
+    if ($action === 'save_installation_sla') {
+        dbUpsertConfig('installationSlaWorkingDays', (string)max(1, (int)($b['installationSlaWorkingDays'] ?? 10)));
+        $msg = 'Installation SLA saved.';
+    }
     if ($action === 'save_sla_warning') {
         dbUpsertConfig('slaWarnHours', (string)(int)($b['slaWarnHours'] ?? 2));
         $msg = 'SLA warning timing saved.';
@@ -489,6 +493,26 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
             <?php endforeach; ?>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Installation SLA -->
+    <div class="card-section mt-3">
+      <div class="card-header"><i class="bi bi-house-gear me-1 text-primary"></i>Installation SLA</div>
+      <div class="p-3">
+        <p class="small text-muted mb-3">Target turnaround from payment confirmation to a completed installation. Drives the SLA Due dates and overdue flags on the Installations board.</p>
+        <form method="POST" class="d-flex align-items-end gap-3 flex-wrap">
+          <input type="hidden" name="_action" value="save_installation_sla">
+          <div>
+            <label class="form-label fw-semibold mb-1 small">Installation completion target</label>
+            <div class="input-group" style="max-width:200px">
+              <input type="number" name="installationSlaWorkingDays" class="form-control form-control-sm"
+                value="<?= htmlspecialchars($cfg['installationSlaWorkingDays'] ?? '10') ?>" min="1" max="60">
+              <span class="input-group-text text-muted small">working days</span>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
       </div>
     </div>
 
