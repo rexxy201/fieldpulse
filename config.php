@@ -657,8 +657,10 @@ function paymentRequestEmailBody(array $pr, string $headline, string $extraNote 
     $amt  = number_format((float)($pr['amount'] ?? 0), 2);
     $desc = htmlspecialchars(substr($pr['description'] ?? '', 0, 200));
     $req  = htmlspecialchars($pr['requester_name'] ?? '—');
+    $no   = htmlspecialchars($pr['request_no'] ?? '—');
     return "<p>{$headline}</p>
         <table style='border-collapse:collapse;width:100%;max-width:480px;font-size:.9rem'>
+          <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Request No</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$no}</td></tr>
           <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Requested By</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$req}</td></tr>
           <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Description</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$desc}</td></tr>
           <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Amount</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>₦{$amt}</td></tr>
@@ -2909,6 +2911,132 @@ function captureInstallationHandoff(string $profileId, string $newStatus, ?strin
     if ($newStatus === 'connected') {
         dbRun("UPDATE installation_profiles SET terminated_by_vendor_id = ? WHERE id = ? AND terminated_by_vendor_id IS NULL",
             [$currentVendorId, $profileId]);
+    }
+}
+
+/**
+ * Next unique Payment Request number for the given year, e.g. "PR-2026-0001".
+ * Fetches every request_no for that year and takes the numeric max in PHP
+ * (not ORDER BY ... DESC, a plain string sort that breaks past 4 digits —
+ * see schema_v37's ticket_number fix) so it scales past 9999/year cleanly.
+ */
+function generatePaymentRequestNumber(?string $year = null): string {
+    $year = $year ?: date('Y');
+    $rows = dbFetchAll("SELECT request_no FROM payment_requests WHERE request_no LIKE ?", ["PR-$year-%"]);
+    $seq = 1;
+    foreach ($rows as $row) {
+        $parts = explode('-', $row['request_no'] ?? '');
+        $n = (int)end($parts);
+        if ($n >= $seq) $seq = $n + 1;
+    }
+    return sprintf('PR-%s-%04d', $year, $seq);
+}
+
+/**
+ * Generates a Payment Request number and runs $insertFn($requestNo), retrying
+ * with a freshly-regenerated number if a UNIQUE constraint collision occurs
+ * (two concurrent submissions racing for the same next number) — same
+ * backstop pattern as withUniqueTicketNumber().
+ */
+function withUniquePaymentRequestNumber(callable $insertFn, int $maxAttempts = 3): string {
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        $num = generatePaymentRequestNumber();
+        try {
+            $insertFn($num);
+            return $num;
+        } catch (\PDOException $e) {
+            $isDuplicateKey = ($e->errorInfo[1] ?? null) === 1062;
+            if ($isDuplicateKey && $attempt < $maxAttempts) continue;
+            throw $e;
+        }
+    }
+    throw new \RuntimeException('Could not generate a unique payment request number after ' . $maxAttempts . ' attempts.');
+}
+
+// ─── Schema v39: unique, uncapped Payment Request numbers ─────────────────────
+// Payment requests only ever had their UUID id — no human-readable reference.
+// Adds request_no (format PR-<year>-<seq>, e.g. PR-2026-0001), backfills
+// existing rows in creation order via generatePaymentRequestNumber() above,
+// and enforces uniqueness with a UNIQUE key — same pattern, and same lesson,
+// as schema_v37's ticket_number fix. The %d format has no digit cap, so this
+// scales past 10,000 requests in a year without collisions or truncation.
+$_sv39 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v39_migrated'");
+if (!$_sv39) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `request_no` VARCHAR(30) DEFAULT NULL"); }
+            catch (\Throwable $e) { error_log('Schema v39: add request_no: ' . $e->getMessage()); }
+        } else {
+            try { db()->exec("ALTER TABLE payment_requests ADD COLUMN IF NOT EXISTS request_no VARCHAR(30)"); } catch (\Throwable $e) {}
+        }
+        // Backfill in creation order, one at a time (not hot-path, so the
+        // extra per-row query round trip is fine) via the same numeric-max
+        // helper the app uses going forward — keeps this migration and
+        // generatePaymentRequestNumber() from ever disagreeing on format.
+        $_unNumbered = dbFetchAll("SELECT id, created_at FROM payment_requests WHERE request_no IS NULL ORDER BY created_at ASC, id ASC");
+        foreach ($_unNumbered as $_pr) {
+            $_num = generatePaymentRequestNumber(date('Y', strtotime($_pr['created_at'] ?? 'now')));
+            try {
+                dbRun("UPDATE payment_requests SET request_no = ? WHERE id = ?", [$_num, $_pr['id']]);
+            } catch (\Throwable $e) {
+                error_log("Schema v39: failed backfilling request_no for {$_pr['id']}: " . $e->getMessage());
+            }
+        }
+        if (DB_TYPE === 'mysql') {
+            try {
+                db()->exec("ALTER TABLE `payment_requests` ADD UNIQUE KEY `uniq_request_no` (`request_no`)");
+            } catch (\Throwable $e) {
+                error_log('Schema v39: failed adding unique index on request_no: ' . $e->getMessage());
+            }
+        }
+        dbUpsertConfig('schema_v39_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v39 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v40: indexes on hot-path filter/join columns ──────────────────────
+// Found by a comprehensive review: these columns are hit on every request of
+// their respective pages/queries (ticketScopeSql()'s created_by/vendor_id
+// filter for every non-privileged user's ticket list, the customer portal's
+// account_number lookup, each vendor's own installation list, Payment
+// Requests' status/vendor/requester filters) but had no index beyond the
+// primary key. Invisible on a small table, but a full table scan once these
+// grow into the tens of thousands of rows. Purely additive — safe to run
+// against a live, populated database; each ADD INDEX is independent so one
+// failure (e.g. already exists) can't block the rest.
+$_sv40 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v40_migrated'");
+if (!$_sv40) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            $_indexes = [
+                ['tickets', 'idx_tickets_created_by', '(`created_by`)'],
+                ['tickets', 'idx_tickets_vendor', '(`vendor_id`)'],
+                ['tickets', 'idx_tickets_fault_type', '(`fault_type_id`)'],
+                ['tickets', 'idx_tickets_created_at', '(`created_at`)'],
+                // account_number is TEXT (no fixed length), so MySQL needs an
+                // explicit prefix length to index it.
+                ['customers', 'idx_customers_account_number', '(`account_number`(50))'],
+                ['customers', 'idx_customers_status', '(`status`)'],
+                ['customers', 'idx_customers_hub', '(`hub_id`)'],
+                ['installation_profiles', 'idx_installations_vendor', '(`vendor_id`)'],
+                ['installation_profiles', 'idx_installations_status', '(`status`)'],
+                ['installation_profiles', 'idx_installations_created_at', '(`created_at`)'],
+                ['payment_requests', 'idx_payment_requests_status', '(`status`)'],
+                ['payment_requests', 'idx_payment_requests_vendor', '(`vendor_id`)'],
+                ['payment_requests', 'idx_payment_requests_requester', '(`requester_id`)'],
+            ];
+            foreach ($_indexes as [$_t, $_idxName, $_cols]) {
+                try {
+                    db()->exec("ALTER TABLE `{$_t}` ADD INDEX `{$_idxName}` {$_cols}");
+                } catch (\Throwable $e) {
+                    error_log("Schema v40: failed adding index {$_idxName} on {$_t}: " . $e->getMessage());
+                }
+            }
+        }
+        dbUpsertConfig('schema_v40_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v40 migration error: ' . $e->getMessage());
     }
 }
 

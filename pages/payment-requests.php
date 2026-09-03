@@ -56,11 +56,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
             notifyPermissionHolders('payment_requests.approve',
                 'Payment Request Awaiting Approval',
-                "{$_pr['requester_name']}'s request has been authorized and needs your approval.",
+                "{$_pr['requester_name']}'s request ({$_pr['request_no']}) has been authorized and needs your approval.",
                 '/payment-requests?status=authorized',
-                'Payment Request Awaiting Your Approval',
+                "Payment Request Awaiting Your Approval — {$_pr['request_no']}",
                 paymentRequestEmailBody($_pr, "A payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting your approval."));
-            notifyPaymentRequestOriginator($_pr, 'Payment Request Authorized',
+            notifyPaymentRequestOriginator($_pr, "Payment Request Authorized — {$_pr['request_no']}",
                 "Your payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting approval.");
         }
         echo json_encode(['ok'=>true]); exit;
@@ -72,11 +72,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
             notifyPermissionHolders('payment_requests.finance_check',
                 'Payment Request Ready for Finance',
-                "{$_pr['requester_name']}'s request has been approved and is ready for finance processing.",
+                "{$_pr['requester_name']}'s request ({$_pr['request_no']}) has been approved and is ready for finance processing.",
                 '/payment-requests?status=approved',
-                'Payment Request Ready for Finance Processing',
+                "Payment Request Ready for Finance Processing — {$_pr['request_no']}",
                 paymentRequestEmailBody($_pr, "A payment request has been approved by " . htmlspecialchars($user['name']) . " and is now ready for finance processing."));
-            notifyPaymentRequestOriginator($_pr, 'Payment Request Approved',
+            notifyPaymentRequestOriginator($_pr, "Payment Request Approved — {$_pr['request_no']}",
                 "Your payment request has been approved by " . htmlspecialchars($user['name']) . " and is now with finance for processing.");
         }
         echo json_encode(['ok'=>true]); exit;
@@ -89,7 +89,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         dbRun("UPDATE payment_requests SET status='rejected', reviewed_by=?, reviewed_by_name=?, reviewed_at=NOW(), review_notes=? WHERE id=? AND status IN ('pending','authorized')",
             [$user['id'], $user['name'], $notes, $reqId]);
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
-            notifyPaymentRequestOriginator($_pr, 'Payment Request Rejected',
+            notifyPaymentRequestOriginator($_pr, "Payment Request Rejected — {$_pr['request_no']}",
                 "Your payment request was rejected by " . htmlspecialchars($user['name']) . ".",
                 'Reason: ' . htmlspecialchars($notes));
         }
@@ -103,7 +103,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         dbRun("UPDATE payment_requests SET status='returned', returned_by=?, returned_by_name=?, returned_at=NOW(), return_notes=? WHERE id=? AND status='approved'",
             [$user['id'], $user['name'], $notes, $reqId]);
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
-            notifyPaymentRequestOriginator($_pr, 'Payment Request Returned For Revision',
+            notifyPaymentRequestOriginator($_pr, "Payment Request Returned For Revision — {$_pr['request_no']}",
                 "Your payment request was returned by " . htmlspecialchars($user['name']) . " for revision. Resubmit it once corrected.",
                 'Reason: ' . htmlspecialchars($notes));
         }
@@ -128,29 +128,42 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($payAmt > $balance + 0.01) {
             echo json_encode(['ok'=>false,'msg'=>'Payment of ₦'.number_format($payAmt,2).' exceeds the outstanding balance of ₦'.number_format($balance,2).'.']); exit;
         }
+        $newPaid = round((float)$pr['amount_paid'] + $payAmt, 2);
+        $isFull  = $newPaid >= round((float)$pr['amount'] - 0.01, 2);
+        // Optimistic lock: guard the UPDATE on the amount_paid value we just
+        // read, so two concurrent payments (a double-click, or Finance and
+        // the API racing) can't both compute newPaid off the same stale base
+        // and silently clobber each other's contribution. If another payment
+        // landed in between, rowCount() is 0 — bail out and ask for a retry
+        // rather than recording a payment row against a total that's already
+        // wrong (same fix as api/v1/payment-requests.php).
+        if ($isFull) {
+            $st = dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=? AND amount_paid=?",
+                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId, $pr['amount_paid']]);
+        } else {
+            $st = dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=? AND amount_paid=?",
+                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId, $pr['amount_paid']]);
+        }
+        if ($st->rowCount() === 0) {
+            echo json_encode(['ok'=>false,'msg'=>'This request was updated by another payment at the same moment. Please refresh and try again.']); exit;
+        }
         // Zoho Books (or any other accounting platform) can subscribe to the
         // payment.disbursed webhook — see includes/api-auth.php / config.php
         // fireWebhooks() — instead of a bespoke direct integration.
         dbRun("INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,note,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?,NOW())",
             [newUuid(), $reqId, $payAmt, $ref ?: null, $note ?: null, $user['id'], $user['name']]);
-        $newPaid = round((float)$pr['amount_paid'] + $payAmt, 2);
-        $isFull  = $newPaid >= round((float)$pr['amount'] - 0.01, 2);
         if ($isFull) {
-            dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
-                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
             $_disbursed = dbFetch("SELECT * FROM payment_requests WHERE id=?", [$reqId]);
             fireWebhooks('payment.disbursed', ['id'=>$reqId,'amount'=>(float)$_disbursed['amount'],'amount_paid'=>(float)$_disbursed['amount_paid'],'status'=>$_disbursed['status'],'payment_reference'=>$ref?:null]);
             if ($_pr = fetchPaymentRequestForNotify($reqId)) {
-                notifyPaymentRequestOriginator($_pr, 'Payment Request Disbursed',
+                notifyPaymentRequestOriginator($_pr, "Payment Request Disbursed — {$_pr['request_no']}",
                     "Your payment request has been fully processed and disbursed by " . htmlspecialchars($user['name']) . ".",
                     'Total paid: ₦' . number_format($newPaid, 2) . ($ref ? ' — Ref: ' . htmlspecialchars($ref) : ''));
             }
         } else {
-            dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
-                [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
             if ($_pr = fetchPaymentRequestForNotify($reqId)) {
                 $balanceLeft = round((float)$_pr['amount'] - $newPaid, 2);
-                notifyPaymentRequestOriginator($_pr, 'Partial Payment Processed',
+                notifyPaymentRequestOriginator($_pr, "Partial Payment Processed — {$_pr['request_no']}",
                     "A partial payment has been processed on your payment request by " . htmlspecialchars($user['name']) . ".",
                     'Paid so far: ₦' . number_format($newPaid, 2) . ' — Balance remaining: ₦' . number_format($balanceLeft, 2));
             }
@@ -285,15 +298,21 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                 auditLog('resubmit','payment_request', $prId);
             } else {
                 $prId = newUuid();
-                dbRun("INSERT INTO payment_requests
-                        (id,requester_id,requester_name,vendor_id,linked_type,linked_id,amount,description,status,
-                         date_of_request,department,request_type,customer_name,customer_user_id,location,hub_id,category,category_other,
-                         capex_opex,receiver,priority)
-                       VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [$prId, $user['id'], $user['name'], $vendorId, $linkedType, $linkedId, $grandTotal, $desc,
-                     $dateOfReq, trim($b['department']??'')?:null, $requestType, $storedCustName, $storedCustUserId,
-                     trim($b['location']??'')?:null, $hubId?:null, $category, $category==='Other'?$categoryOther:null,
-                     $capexOpex, trim($b['receiver']??'')?:null, $priority]);
+                withUniquePaymentRequestNumber(function (string $requestNo) use (
+                    $prId, $user, $vendorId, $linkedType, $linkedId, $grandTotal, $desc,
+                    $dateOfReq, $b, $requestType, $storedCustName, $storedCustUserId,
+                    $hubId, $category, $categoryOther, $capexOpex, $priority
+                ) {
+                    dbRun("INSERT INTO payment_requests
+                            (id,request_no,requester_id,requester_name,vendor_id,linked_type,linked_id,amount,description,status,
+                             date_of_request,department,request_type,customer_name,customer_user_id,location,hub_id,category,category_other,
+                             capex_opex,receiver,priority)
+                           VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,?,?,?)",
+                        [$prId, $requestNo, $user['id'], $user['name'], $vendorId, $linkedType, $linkedId, $grandTotal, $desc,
+                         $dateOfReq, trim($b['department']??'')?:null, $requestType, $storedCustName, $storedCustUserId,
+                         trim($b['location']??'')?:null, $hubId?:null, $category, $category==='Other'?$categoryOther:null,
+                         $capexOpex, trim($b['receiver']??'')?:null, $priority]);
+                });
                 auditLog('create','payment_request', $prId);
             }
             if ($formAction === 'resubmit') {
@@ -310,9 +329,9 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
             if ($_pr = fetchPaymentRequestForNotify($prId)) {
                 notifyPermissionHolders('payment_requests.authorize',
                     'Payment Request Awaiting Authorization',
-                    "{$user['name']} raised a payment request that needs your authorization.",
+                    "{$user['name']} raised a payment request ({$_pr['request_no']}) that needs your authorization.",
                     '/payment-requests?status=pending',
-                    'Payment Request Awaiting Your Authorization',
+                    "Payment Request Awaiting Your Authorization — {$_pr['request_no']}",
                     paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " has raised a payment request that needs your authorization."));
             }
             header('Location: /payment-requests'); exit;
@@ -546,13 +565,13 @@ require __DIR__ . '/../includes/header.php';
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light"><tr>
-        <th class="ps-3">Requested By</th><th>Vendor</th><th>Type</th><th>Category</th><th>Priority</th><th>Linked To</th><th class="text-end">Amount</th>
+        <th class="ps-3">Request No</th><th>Requested By</th><th>Vendor</th><th>Type</th><th>Category</th><th>Priority</th><th>Linked To</th><th class="text-end">Amount</th>
         <th>Docs</th><th>Date</th><th class="text-center">Status</th><th></th>
         <?php if ($canReview || $canCreate): ?><th class="text-end pe-3">Actions</th><?php endif; ?>
       </tr></thead>
       <tbody>
         <?php if (!$requests): ?>
-        <tr><td colspan="12" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
+        <tr><td colspan="13" class="text-center text-muted py-5"><i class="bi bi-cash-coin fs-2 d-block mb-2 opacity-25"></i>No payment requests found.</td></tr>
         <?php endif; ?>
         <?php foreach ($requests as $r):
           $sc = $STATUS_COLORS[$r['status']] ?? 'text-bg-secondary';
@@ -563,7 +582,8 @@ require __DIR__ . '/../includes/header.php';
           $isOwnReturned = $r['status']==='returned' && $r['requester_id']===$user['id'];
         ?>
         <tr id="pr-<?= $r['id'] ?>">
-          <td class="ps-3 small fw-semibold"><?= htmlspecialchars($r['requester_name'] ?? '—') ?></td>
+          <td class="ps-3 small fw-semibold text-primary"><?= htmlspecialchars($r['request_no'] ?? '—') ?></td>
+          <td class="small fw-semibold"><?= htmlspecialchars($r['requester_name'] ?? '—') ?></td>
           <td class="small"><?= htmlspecialchars($r['vendor_name'] ?? '—') ?></td>
           <td class="small"><?= htmlspecialchars(PR_REQUEST_TYPES[$r['request_type']] ?? '—') ?></td>
           <td class="small"><?= htmlspecialchars($r['category'] ?: '—') ?></td>
@@ -882,6 +902,7 @@ function openDisburse(id){
 
   document.getElementById('pmDetail').innerHTML = `
     <div class="row g-2 mb-2">
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">REQUEST NO</div><div class="fw-semibold text-primary">${esc(rec.request_no)||'—'}</div></div>
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">REQUESTED BY</div><div class="fw-semibold">${esc(rec.requester_name)||'—'}</div></div>
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">DATE OF REQUEST</div><div>${esc(rec.date_of_request)||'—'}</div></div>
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">DEPARTMENT</div><div>${esc(rec.department)||'—'}</div></div>

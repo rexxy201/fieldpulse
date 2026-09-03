@@ -72,17 +72,26 @@ if (method() === 'POST' && $resource === 'payments') {
     }
 
     $paidByName = 'API: ' . $key['name'];
-    dbRun("INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,note,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?,NOW())",
-        [newUuid(), $id, $amount, $ref ?: null, $note ?: null, null, $paidByName]);
     $newPaid = round((float)$pr['amount_paid'] + $amount, 2);
     $isFull  = $newPaid >= round((float)$pr['amount'] - 0.01, 2);
+    // Optimistic lock: guard the UPDATE on the amount_paid value we just read,
+    // so two concurrent payments (e.g. a double-submit, or two callers racing)
+    // can't both compute their newPaid off the same stale base and silently
+    // clobber each other's contribution to amount_paid. If another payment
+    // landed in between, rowCount() is 0 and we ask the caller to retry with
+    // the now-current balance instead of writing a wrong total.
     if ($isFull) {
-        dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by_name=? WHERE id=?",
-            [$newPaid, $ref ?: null, $paidByName, $id]);
+        $st = dbRun("UPDATE payment_requests SET amount_paid=?, status='disbursed', paid_at=NOW(), payment_reference=?, disbursed_by_name=? WHERE id=? AND amount_paid=?",
+            [$newPaid, $ref ?: null, $paidByName, $id, $pr['amount_paid']]);
     } else {
-        dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by_name=? WHERE id=?",
-            [$newPaid, $ref ?: null, $paidByName, $id]);
+        $st = dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by_name=? WHERE id=? AND amount_paid=?",
+            [$newPaid, $ref ?: null, $paidByName, $id, $pr['amount_paid']]);
     }
+    if ($st->rowCount() === 0) {
+        jsonResponse(['error' => 'This request was updated by another payment at the same moment. Please retry.'], 409);
+    }
+    dbRun("INSERT INTO payment_request_payments (id,payment_request_id,amount,payment_reference,note,paid_by,paid_by_name,paid_at) VALUES (?,?,?,?,?,?,?,NOW())",
+        [newUuid(), $id, $amount, $ref ?: null, $note ?: null, null, $paidByName]);
     auditLog('api_record_payment', 'payment_request', $id);
 
     $updated = dbFetch("SELECT * FROM payment_requests WHERE id = ?", [$id]);
