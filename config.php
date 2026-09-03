@@ -1054,23 +1054,30 @@ function userDepartment(): string {
 
 /**
  * A user's assigned hub ids, flattened from both hub_id (single) and hub_ids
- * (Postgres-array-literal text, "{id1,id2}", set via Team management's
- * multi-hub checkboxes) into one array. Empty array means "no hub
- * restriction" — used by ticketScopeSql()/canAccessTicket() to distinguish
- * a maintenance-vendor team member scoped to specific hub(s) from their
- * team's supervisor, who has none assigned and sees everything.
+ * (a JSON array, e.g. ["id1","id2"], set via Team management's multi-hub
+ * checkboxes — users.hub_ids is a real JSON column in the live database
+ * with MySQL's own json_valid() check, not tracked in any migration here)
+ * into one array. Empty array means "no hub restriction" — used by
+ * ticketScopeSql()/canAccessTicket() to distinguish a maintenance-vendor
+ * team member scoped to specific hub(s) from their team's supervisor, who
+ * has none assigned and sees everything.
  */
 function userHubIdList(array $user): array {
     $ids = [];
     if (!empty($user['hub_id'])) $ids[] = $user['hub_id'];
     $raw = $user['hub_ids'] ?? null;
     if ($raw) {
-        $clean = trim($raw, '{}');
-        if ($clean !== '') {
-            foreach (explode(',', $clean) as $id) {
-                $id = trim($id, " \"'");
-                if ($id !== '') $ids[] = $id;
-            }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            // Legacy Postgres-array-literal format ("{id1,id2}"), from
+            // before this was corrected to write real JSON — tolerate it
+            // on read so any such row already in the database still works.
+            $clean = trim($raw, '{}');
+            $decoded = $clean !== '' ? explode(',', $clean) : [];
+        }
+        foreach ($decoded as $id) {
+            $id = trim((string)$id, " \"'");
+            if ($id !== '') $ids[] = $id;
         }
     }
     return array_values(array_unique($ids));

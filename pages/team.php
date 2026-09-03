@@ -18,7 +18,11 @@ if (method() === 'POST') {
         // and engineer auto-dispatch (which still read the single column)
         // keep working without needing their own separate field.
         $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
-        $hubIds = $hubIdsArr ? '{' . implode(',', $hubIdsArr) . '}' : null;
+        // hub_ids is a genuine JSON column in the live database (added
+        // outside any tracked migration, enforced by MySQL's auto json_valid()
+        // check) — a real JSON array, not the old Postgres-array-literal
+        // "{id1,id2}" string this used to write, which fails that constraint.
+        $hubIds = $hubIdsArr ? json_encode($hubIdsArr) : null;
         $primaryHub = $hubIdsArr[0] ?? null;
         dbRun("INSERT INTO users (id,username,name,email,phone,role,password,hub_id,hub_ids,team_id,vendor_id,status)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
@@ -28,7 +32,11 @@ if (method() === 'POST') {
     }
     if ($action === 'edit_user' && !empty($b['id'])) {
         $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
-        $hubIds = $hubIdsArr ? '{' . implode(',', $hubIdsArr) . '}' : null;
+        // hub_ids is a genuine JSON column in the live database (added
+        // outside any tracked migration, enforced by MySQL's auto json_valid()
+        // check) — a real JSON array, not the old Postgres-array-literal
+        // "{id1,id2}" string this used to write, which fails that constraint.
+        $hubIds = $hubIdsArr ? json_encode($hubIdsArr) : null;
         $primaryHub = $hubIdsArr[0] ?? null;
         $sets = "name=?,email=?,phone=?,role=?,status=?,hub_id=?,hub_ids=?,team_id=?,vendor_id=?";
         dbRun("UPDATE users SET $sets WHERE id=?",
@@ -91,13 +99,11 @@ $roleBadge = [
 // Helper: resolve hub_ids array → hub names
 function resolveHubIds(?string $rawIds, array $hubMap): array {
     if (!$rawIds) return [];
-    // PostgreSQL array literal: {uuid1,uuid2,...}
-    $clean = trim($rawIds, '{}');
-    if (!$clean) return [];
-    $ids = explode(',', $clean);
+    $ids = json_decode($rawIds, true);
+    if (!is_array($ids)) return [];
     $names = [];
     foreach ($ids as $id) {
-        $id = trim($id, ' "\'');
+        $id = trim((string)$id, ' "\'');
         if (isset($hubMap[$id])) $names[] = $hubMap[$id];
     }
     return $names;
