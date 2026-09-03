@@ -163,6 +163,20 @@ if (method() === 'POST') {
         dbUpsertConfig('installationSlaWorkingDays', (string)max(1, (int)($b['installationSlaWorkingDays'] ?? 10)));
         $msg = 'Installation SLA saved.';
     }
+    // Cron/automation endpoints (sla-check, ops/finance/report digests,
+    // webhook-retry, installations-sync) refuse every request until their
+    // token is set — this regenerates one. The value only ever appears here
+    // once, right after generating it; it's never re-displayed afterward.
+    if ($action === 'generate_cron_token' && in_array($b['token_key'] ?? '', ['slaCheckToken', 'installSyncToken'], true)) {
+        $newToken = bin2hex(random_bytes(24));
+        dbUpsertConfig($b['token_key'], $newToken);
+        // Every action here ends in a redirect (PRG pattern, below) before
+        // anything renders, so a plain local var wouldn't survive to be
+        // displayed — flash it through the session once, same as $msg.
+        $_SESSION['admin_flash_token'] = $newToken;
+        $_SESSION['admin_flash_token_key'] = $b['token_key'];
+        $msg = 'Token generated — copy it into your cron command now, it won\'t be shown again.';
+    }
     if ($action === 'save_sla_warning') {
         dbUpsertConfig('slaWarnHours', (string)(int)($b['slaWarnHours'] ?? 2));
         $msg = 'SLA warning timing saved.';
@@ -284,9 +298,11 @@ if (method() === 'POST') {
     $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','assign_hub_vendor','add_hub_city','del_hub_city','add_location','del_location'];
     $_permActions = ['save_permissions','add_role','edit_role','del_role'];
     $_apiKeyActions = ['create_api_key','revoke_api_key'];
+    $_slaActions = ['save_installation_sla','save_sla_warning','generate_cron_token'];
     if (in_array($action, $_hubActions, true))  $_anchor = '#tab-hubs';
     elseif (in_array($action, $_permActions, true)) $_anchor = '#tab-permissions';
     elseif (in_array($action, $_apiKeyActions, true)) $_anchor = '#tab-integrations';
+    elseif (in_array($action, $_slaActions, true)) $_anchor = '#tab-sla';
     else $_anchor = '';
     header('Location: /admin' . $_anchor); exit;
 }
@@ -301,6 +317,11 @@ if ($msg === '' && !empty($_SESSION['admin_flash'])) {
 // pulled from session and unset immediately so a page refresh can't re-reveal it.
 $newApiKeyReveal = $_SESSION['new_api_key_reveal'] ?? null;
 unset($_SESSION['new_api_key_reveal']);
+
+// Same one-time-reveal pattern for a freshly generated cron token.
+$_generatedToken    = $_SESSION['admin_flash_token'] ?? null;
+$_generatedTokenKey = $_SESSION['admin_flash_token_key'] ?? null;
+unset($_SESSION['admin_flash_token'], $_SESSION['admin_flash_token_key']);
 
 $faultTypes = dbFetchAll("SELECT * FROM fault_types ORDER BY category,name");
 $slaConfigs = dbFetchAll("SELECT * FROM sla_configs ORDER BY priority");
@@ -541,6 +562,60 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
           <button type="submit" class="btn btn-sm btn-primary">Save</button>
         </form>
         <div class="form-text mt-1">When a ticket's SLA deadline is within this window, emails are sent to the assigned engineer, their supervisor, and the ticket creator. Requires the SLA cron to be running.</div>
+      </div>
+    </div>
+
+    <!-- Automation & Cron Tokens -->
+    <div class="card-section mt-3">
+      <div class="card-header"><i class="bi bi-shield-lock me-1 text-primary"></i>Automation &amp; Cron Tokens</div>
+      <div class="p-3">
+        <p class="small text-muted mb-3">These endpoints are called by cron, not by anyone logged in — they now refuse every request until a token is set here. Generate one, then add <code>?token=...</code> to the matching cron command(s) in cPanel &rarr; Cron Jobs.</p>
+        <?php if (!empty($_generatedToken)): ?>
+        <div class="alert alert-warning py-2 small mb-3">
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          New <?= $_generatedTokenKey === 'slaCheckToken' ? 'SLA/Digest' : 'Install Sync' ?> token — copy it now, it will not be shown again:
+          <code class="d-block mt-1 p-2 bg-white border rounded user-select-all"><?= htmlspecialchars($_generatedToken) ?></code>
+        </div>
+        <?php endif; ?>
+        <?php
+        $_host = $_SERVER['HTTP_HOST'] ?? 'yourdomain.com';
+        $_slaSet = !empty($cfg['slaCheckToken']);
+        $_syncSet = !empty($cfg['installSyncToken']);
+        ?>
+        <table class="table table-sm mb-0 align-middle">
+          <thead class="table-light"><tr><th>Token</th><th>Status</th><th>Used By</th><th style="width:120px"></th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="fw-semibold small">slaCheckToken</td>
+              <td><span class="badge bg-<?= $_slaSet ? 'success' : 'danger' ?>"><?= $_slaSet ? 'Configured' : 'Not set — endpoints locked' ?></span></td>
+              <td class="small text-muted">sla-check, installation-sla-check, ops-digest, finance-digest, report-digest, webhook-retry</td>
+              <td>
+                <form method="POST" onsubmit="return confirm('<?= $_slaSet ? 'Regenerating invalidates the current token — update every cron command that uses it, or they will start failing.' : 'Generate a token for these endpoints?' ?>')">
+                  <?= csrfField() ?>
+                  <input type="hidden" name="_action" value="generate_cron_token">
+                  <input type="hidden" name="token_key" value="slaCheckToken">
+                  <button class="btn btn-sm btn-outline-primary py-0 px-2"><?= $_slaSet ? 'Regenerate' : 'Generate' ?></button>
+                </form>
+              </td>
+            </tr>
+            <tr>
+              <td class="fw-semibold small">installSyncToken</td>
+              <td><span class="badge bg-<?= $_syncSet ? 'success' : 'danger' ?>"><?= $_syncSet ? 'Configured' : 'Not set — endpoint locked' ?></span></td>
+              <td class="small text-muted">installations-sync</td>
+              <td>
+                <form method="POST" onsubmit="return confirm('<?= $_syncSet ? 'Regenerating invalidates the current token — update the cron command, or it will start failing.' : 'Generate a token for this endpoint?' ?>')">
+                  <?= csrfField() ?>
+                  <input type="hidden" name="_action" value="generate_cron_token">
+                  <input type="hidden" name="token_key" value="installSyncToken">
+                  <button class="btn btn-sm btn-outline-primary py-0 px-2"><?= $_syncSet ? 'Regenerate' : 'Generate' ?></button>
+                </form>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="form-text mt-2">
+          Example cron command once a token is set: <code>curl -s "https://<?= htmlspecialchars($_host) ?>/api/sla-check?token=YOUR_TOKEN" &gt; /dev/null 2&gt;&amp;1</code>
+        </div>
       </div>
     </div>
   </div>

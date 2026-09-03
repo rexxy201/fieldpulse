@@ -9,10 +9,12 @@
  */
 require_once __DIR__ . '/../config.php';
 
-// Simple token guard — prevents public abuse. Set 'slaCheckToken' in app_config or leave blank.
+// Token guard — required. No slaCheckToken configured means this endpoint
+// refuses every request rather than silently allowing unauthenticated
+// access; set it via Admin -> Automation & Cron Tokens before wiring the cron.
 $cfg        = getAppConfig();
 $guardToken = trim($cfg['slaCheckToken'] ?? '');
-if ($guardToken && ($_GET['token'] ?? '') !== $guardToken) {
+if ($guardToken === '' || ($_GET['token'] ?? '') !== $guardToken) {
     http_response_code(403);
     exit('Forbidden');
 }
