@@ -53,12 +53,32 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         }
         dbRun("UPDATE payment_requests SET status='authorized', authorized_by=?, authorized_by_name=?, authorized_at=NOW() WHERE id=? AND status='pending'",
             [$user['id'], $user['name'], $reqId]);
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            notifyPermissionHolders('payment_requests.approve',
+                'Payment Request Awaiting Approval',
+                "{$_pr['requester_name']}'s request has been authorized and needs your approval.",
+                '/payment-requests?status=authorized',
+                'Payment Request Awaiting Your Approval',
+                paymentRequestEmailBody($_pr, "A payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting your approval."));
+            notifyPaymentRequestOriginator($_pr, 'Payment Request Authorized',
+                "Your payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting approval.");
+        }
         echo json_encode(['ok'=>true]); exit;
     }
     if ($action === 'approve') {
         if (!$canApproveStage) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
         dbRun("UPDATE payment_requests SET status='approved', approved_by=?, approved_by_name=?, approved_at=NOW() WHERE id=? AND status='authorized'",
             [$user['id'], $user['name'], $reqId]);
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            notifyPermissionHolders('payment_requests.finance_check',
+                'Payment Request Ready for Finance',
+                "{$_pr['requester_name']}'s request has been approved and is ready for finance processing.",
+                '/payment-requests?status=approved',
+                'Payment Request Ready for Finance Processing',
+                paymentRequestEmailBody($_pr, "A payment request has been approved by " . htmlspecialchars($user['name']) . " and is now ready for finance processing."));
+            notifyPaymentRequestOriginator($_pr, 'Payment Request Approved',
+                "Your payment request has been approved by " . htmlspecialchars($user['name']) . " and is now with finance for processing.");
+        }
         echo json_encode(['ok'=>true]); exit;
     }
     if ($action === 'reject') {
@@ -68,6 +88,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         if ($notes === '') { echo json_encode(['ok'=>false,'msg'=>'A reason is required to reject.']); exit; }
         dbRun("UPDATE payment_requests SET status='rejected', reviewed_by=?, reviewed_by_name=?, reviewed_at=NOW(), review_notes=? WHERE id=? AND status IN ('pending','authorized')",
             [$user['id'], $user['name'], $notes, $reqId]);
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            notifyPaymentRequestOriginator($_pr, 'Payment Request Rejected',
+                "Your payment request was rejected by " . htmlspecialchars($user['name']) . ".",
+                'Reason: ' . htmlspecialchars($notes));
+        }
         echo json_encode(['ok'=>true]); exit;
     }
     if ($action === 'return') {
@@ -77,6 +102,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         // has been recorded, the bill must be paid off, not sent back.
         dbRun("UPDATE payment_requests SET status='returned', returned_by=?, returned_by_name=?, returned_at=NOW(), return_notes=? WHERE id=? AND status='approved'",
             [$user['id'], $user['name'], $notes, $reqId]);
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            notifyPaymentRequestOriginator($_pr, 'Payment Request Returned For Revision',
+                "Your payment request was returned by " . htmlspecialchars($user['name']) . " for revision. Resubmit it once corrected.",
+                'Reason: ' . htmlspecialchars($notes));
+        }
         echo json_encode(['ok'=>true]); exit;
     }
     if ($action === 'disburse') {
@@ -110,9 +140,20 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
                 [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
             $_disbursed = dbFetch("SELECT * FROM payment_requests WHERE id=?", [$reqId]);
             fireWebhooks('payment.disbursed', ['id'=>$reqId,'amount'=>(float)$_disbursed['amount'],'amount_paid'=>(float)$_disbursed['amount_paid'],'status'=>$_disbursed['status'],'payment_reference'=>$ref?:null]);
+            if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+                notifyPaymentRequestOriginator($_pr, 'Payment Request Disbursed',
+                    "Your payment request has been fully processed and disbursed by " . htmlspecialchars($user['name']) . ".",
+                    'Total paid: ₦' . number_format($newPaid, 2) . ($ref ? ' — Ref: ' . htmlspecialchars($ref) : ''));
+            }
         } else {
             dbRun("UPDATE payment_requests SET amount_paid=?, status='partially_disbursed', payment_reference=?, disbursed_by=?, disbursed_by_name=? WHERE id=?",
                 [$newPaid, $ref ?: null, $user['id'], $user['name'], $reqId]);
+            if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+                $balanceLeft = round((float)$_pr['amount'] - $newPaid, 2);
+                notifyPaymentRequestOriginator($_pr, 'Partial Payment Processed',
+                    "A partial payment has been processed on your payment request by " . htmlspecialchars($user['name']) . ".",
+                    'Paid so far: ₦' . number_format($newPaid, 2) . ' — Balance remaining: ₦' . number_format($balanceLeft, 2));
+            }
         }
         echo json_encode(['ok'=>true,'full'=>$isFull]); exit;
     }
@@ -266,6 +307,14 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                     [newUuid(), $prId, $it['description'], $it['qty'], $it['unit_price'], $it['line_total'], $idx]);
             }
             if (!empty($_FILES['documents'])) savePaymentRequestDocuments($_FILES['documents'], $prId, $user['id']);
+            if ($_pr = fetchPaymentRequestForNotify($prId)) {
+                notifyPermissionHolders('payment_requests.authorize',
+                    'Payment Request Awaiting Authorization',
+                    "{$user['name']} raised a payment request that needs your authorization.",
+                    '/payment-requests?status=pending',
+                    'Payment Request Awaiting Your Authorization',
+                    paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " has raised a payment request that needs your authorization."));
+            }
             header('Location: /payment-requests'); exit;
         }
     }

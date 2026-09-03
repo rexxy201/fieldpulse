@@ -623,6 +623,70 @@ function notifyRoles(array $roles, string $title, string $message, string $link 
     }
 }
 
+/**
+ * Notify (in-app + email) every active user holding a given permission —
+ * used to route Payment Request stage-change alerts to whichever roles
+ * currently hold payment_requests.authorize / .approve / .finance_check,
+ * without hardcoding role names (role_permissions is the source of truth
+ * for who holds a permission, and it's admin-configurable).
+ */
+function notifyPermissionHolders(string $permission, string $title, string $inAppMessage, string $link, string $emailSubject, string $emailBodyHtml): void {
+    try {
+        $roles = array_column(dbFetchAll("SELECT DISTINCT role FROM role_permissions WHERE permission = ?", [$permission]), 'role');
+        if (!$roles) return;
+        $ph = implode(',', array_fill(0, count($roles), '?'));
+        $users = dbFetchAll("SELECT id, name, email FROM users WHERE role IN ($ph) AND status = 'active'", $roles);
+        foreach ($users as $u) {
+            notifyUser($u['id'], $title, $inAppMessage, $link);
+            if (!empty($u['email'])) {
+                try {
+                    sendEmail($u['email'], $u['name'], $emailSubject, $emailBodyHtml);
+                } catch (\Throwable $e) {
+                    error_log("notifyPermissionHolders email error ({$u['email']}): " . $e->getMessage());
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        error_log('notifyPermissionHolders error: ' . $e->getMessage());
+    }
+}
+
+/** Shared HTML body for Payment Request stage-change emails/notifications. */
+function paymentRequestEmailBody(array $pr, string $headline, string $extraNote = ''): string {
+    $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/payment-requests?status=' . urlencode($pr['status'] ?? 'all');
+    $amt  = number_format((float)($pr['amount'] ?? 0), 2);
+    $desc = htmlspecialchars(substr($pr['description'] ?? '', 0, 200));
+    $req  = htmlspecialchars($pr['requester_name'] ?? '—');
+    return "<p>{$headline}</p>
+        <table style='border-collapse:collapse;width:100%;max-width:480px;font-size:.9rem'>
+          <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Requested By</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$req}</td></tr>
+          <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Description</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>{$desc}</td></tr>
+          <tr><td style='padding:6px 12px;background:#f8fafc;font-weight:600;border:1px solid #e2e8f0'>Amount</td><td style='padding:6px 12px;border:1px solid #e2e8f0'>₦{$amt}</td></tr>
+        </table>"
+        . ($extraNote ? "<p>{$extraNote}</p>" : '') .
+        "<p><a href='{$link}'>View Payment Request →</a></p>
+        <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>";
+}
+
+/** Fetch a payment_requests row plus the requester's email, for the stage-change notify helpers below. */
+function fetchPaymentRequestForNotify(string $id): ?array {
+    return dbFetch("SELECT pr.*, u.email AS requester_email FROM payment_requests pr LEFT JOIN users u ON u.id = pr.requester_id WHERE pr.id = ?", [$id]) ?: null;
+}
+
+/** Notify the requester (in-app + email) of a Payment Request stage change. */
+function notifyPaymentRequestOriginator(array $pr, string $title, string $headline, string $extraNote = ''): void {
+    try {
+        if (empty($pr['requester_id'])) return;
+        $link = '/payment-requests?status=' . urlencode($pr['status'] ?? 'all');
+        notifyUser($pr['requester_id'], $title, $headline, $link);
+        if (!empty($pr['requester_email'])) {
+            sendEmail($pr['requester_email'], $pr['requester_name'] ?? 'there', $title, paymentRequestEmailBody($pr, $headline, $extraNote));
+        }
+    } catch (\Throwable $e) {
+        error_log('notifyPaymentRequestOriginator error: ' . $e->getMessage());
+    }
+}
+
 // ─── Email helper ─────────────────────────────────────────────────────────────
 /**
  * Send an email via the configured SMTP settings.
