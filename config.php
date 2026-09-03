@@ -1052,6 +1052,30 @@ function userDepartment(): string {
     return $u ? roleDepartment($u['role']) : '';
 }
 
+/**
+ * A user's assigned hub ids, flattened from both hub_id (single) and hub_ids
+ * (Postgres-array-literal text, "{id1,id2}", set via Team management's
+ * multi-hub checkboxes) into one array. Empty array means "no hub
+ * restriction" — used by ticketScopeSql()/canAccessTicket() to distinguish
+ * a maintenance-vendor team member scoped to specific hub(s) from their
+ * team's supervisor, who has none assigned and sees everything.
+ */
+function userHubIdList(array $user): array {
+    $ids = [];
+    if (!empty($user['hub_id'])) $ids[] = $user['hub_id'];
+    $raw = $user['hub_ids'] ?? null;
+    if ($raw) {
+        $clean = trim($raw, '{}');
+        if ($clean !== '') {
+            foreach (explode(',', $clean) as $id) {
+                $id = trim($id, " \"'");
+                if ($id !== '') $ids[] = $id;
+            }
+        }
+    }
+    return array_values(array_unique($ids));
+}
+
 // ─── Ticket visibility scoping ────────────────────────────────────────────────
 /**
  * Returns [sqlFragment, params] to AND into a tickets query for the current user.
@@ -1065,13 +1089,25 @@ function ticketScopeSql(string $alias = 't'): array {
     $u = currentUser();
     if (!$u) return ['1=0', []];
     $p = $alias ? $alias . '.' : '';
+    $role = $u['role'] ?? '';
     // Vendors aren't part of the internal permission tiers below — they see only
     // tickets handed to their company for field work, whether as the
-    // installation vendor (vendor_id) or the hub-routed maintenance/fiber
-    // vendor (maintenance_vendor_id) — two independent concepts on the same
-    // ticket, either of which puts it in front of this vendor's whole team.
-    if (($u['role'] ?? '') === 'vendor') {
+    // installation vendor (vendor_id, role 'vendor') or the hub-routed
+    // maintenance/fiber vendor (maintenance_vendor_id, role 'vendor-mtce').
+    if ($role === 'vendor' || $role === 'vendor-mtce') {
         if (empty($u['vendor_id'])) return ['1=0', []];
+        // A maintenance-vendor team member assigned to specific hub(s) (via
+        // Team management) only sees that hub's tickets — an engineer in
+        // Lekki shouldn't see Yaba's queue. No hub assigned at all means
+        // this is the team's supervisor, who sees every ticket for the
+        // company, same as the plain 'vendor' role always has.
+        if ($role === 'vendor-mtce') {
+            $hubIds = userHubIdList($u);
+            if ($hubIds) {
+                $ph = implode(',', array_fill(0, count($hubIds), '?'));
+                return ["{$p}maintenance_vendor_id = ? AND {$p}hub_id IN ($ph)", array_merge([$u['vendor_id']], $hubIds)];
+            }
+        }
         return ["({$p}vendor_id = ? OR {$p}maintenance_vendor_id = ?)", [$u['vendor_id'], $u['vendor_id']]];
     }
     if (hasPermission('tickets.view_all')) return ['', []];
@@ -1090,8 +1126,16 @@ function ticketScopeSql(string $alias = 't'): array {
 function canAccessTicket(array $ticket): bool {
     $u = currentUser();
     if (!$u) return false;
-    if (($u['role'] ?? '') === 'vendor') {
+    $role = $u['role'] ?? '';
+    if ($role === 'vendor' || $role === 'vendor-mtce') {
         if (empty($u['vendor_id'])) return false;
+        if ($role === 'vendor-mtce') {
+            $hubIds = userHubIdList($u);
+            if ($hubIds) {
+                return ($ticket['maintenance_vendor_id'] ?? null) === $u['vendor_id']
+                    && in_array($ticket['hub_id'] ?? null, $hubIds, true);
+            }
+        }
         return ($ticket['vendor_id'] ?? null) === $u['vendor_id']
             || ($ticket['maintenance_vendor_id'] ?? null) === $u['vendor_id'];
     }
@@ -3111,14 +3155,22 @@ function getMaintenanceVendorForHub(?string $hubId): ?string {
  */
 function notifyVendorTeamTicketAssigned(array $ticket, string $vendorId): void {
     try {
-        $members = dbFetchAll("SELECT id, name, email FROM users WHERE vendor_id = ? AND status = 'active'", [$vendorId]);
+        $members = dbFetchAll("SELECT id, name, email, role, hub_id, hub_ids FROM users WHERE vendor_id = ? AND status = 'active'", [$vendorId]);
         if (!$members) return;
+        $ticketHubId = $ticket['hub_id'] ?? null;
         $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
         $desc = htmlspecialchars(substr($ticket['description'] ?? '', 0, 200));
         $prio = strtoupper($ticket['priority'] ?? '');
         $link = '/ticket/' . $ticket['id'];
         $fullLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $link;
         foreach ($members as $m) {
+            // Same rule as ticketScopeSql(): a hub-restricted maintenance-vendor
+            // team member only gets notified for their own hub's tickets — the
+            // team's supervisor (no hub restriction) gets every one.
+            if ($m['role'] === 'vendor-mtce') {
+                $hubIds = userHubIdList($m);
+                if ($hubIds && !in_array($ticketHubId, $hubIds, true)) continue;
+            }
             notifyUser($m['id'], "Ticket Assigned to Your Team — {$tn}",
                 ($ticket['customer_name'] ?? '') . ': ' . $prio . ' — ' . substr($ticket['description'] ?? '', 0, 80), $link);
             if (!empty($m['email'])) {

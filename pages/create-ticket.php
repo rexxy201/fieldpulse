@@ -96,7 +96,10 @@ if (method() === 'POST') {
             // Hubs with no maintenance vendor configured keep the exact same
             // individual-assign behavior as before.
             $manualVendorId = $b['vendor_id'] ?: null;
-            $maintVendorId  = getMaintenanceVendorForHub($hubId);
+            // Maintenance-vendor routing is for trouble/fault tickets — an
+            // installation-type ticket (a new install, not a resolution job)
+            // should never get routed there just because it shares a hub.
+            $maintVendorId  = $type !== 'installation' ? getMaintenanceVendorForHub($hubId) : null;
             $assignee = null; $assignedTo = null;
             if (!$maintVendorId) {
                 $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['fault_type_id']]);

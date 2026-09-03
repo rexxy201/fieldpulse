@@ -26,11 +26,11 @@ $canEdit    = hasPermission('tickets.update');
 $canAssign  = hasPermission('tickets.assign');
 $canResolve = hasPermission('tickets.resolve');
 $canClose   = hasPermission('tickets.close');
-// A vendor-role user's own ticket if they're the installation vendor OR the
-// hub-routed maintenance/fiber vendor — two independent fields, either one
-// puts this ticket in front of their whole team (see ticketScopeSql()).
-$isOwnVendorTicket = $role === 'vendor' && !empty($user['vendor_id'])
-    && (($ticket['vendor_id'] ?? null) === $user['vendor_id'] || ($ticket['maintenance_vendor_id'] ?? null) === $user['vendor_id']);
+// A vendor-role user's own ticket — installation vendor (role 'vendor') or
+// hub-routed maintenance vendor (role 'vendor-mtce', hub-scoped for a team
+// member, unrestricted for their supervisor). Reuses canAccessTicket()'s
+// own logic rather than re-deriving it, so the two can never drift apart.
+$isOwnVendorTicket = in_array($role, ['vendor', 'vendor-mtce'], true) && canAccessTicket($ticket);
 $allVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors ORDER BY name") : [];
 $assignedVendor = !empty($ticket['vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['vendor_id']]) : null;
 $assignedMaintVendor = !empty($ticket['maintenance_vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['maintenance_vendor_id']]) : null;
@@ -340,12 +340,15 @@ require __DIR__ . '/../includes/header.php';
           <?php if ($ticket['olt']): ?><dt class="col-5 text-muted">OLT</dt><dd class="col-7"><?= htmlspecialchars($ticket['olt']) ?></dd><?php endif; ?>
           <?php if ($ticket['assigned_team']): ?><dt class="col-5 text-muted">Team</dt><dd class="col-7"><?= htmlspecialchars($ticket['assigned_team']) ?></dd><?php endif; ?>
           <?php if ($assignedMaintVendor): ?><dt class="col-5 text-muted">Maintenance Vendor</dt><dd class="col-7"><span class="badge bg-light text-dark border"><i class="bi bi-people-fill me-1"></i><?= htmlspecialchars($assignedMaintVendor['name']) ?> (team)</span></dd><?php endif; ?>
-          <?php if ($assignedVendor): ?><dt class="col-5 text-muted">Installation Vendor</dt><dd class="col-7"><?= htmlspecialchars($assignedVendor['name']) ?></dd><?php endif; ?>
+          <?php if ($assignedVendor && $ticket['type'] === 'installation'): ?><dt class="col-5 text-muted">Installation Vendor</dt><dd class="col-7"><?= htmlspecialchars($assignedVendor['name']) ?></dd><?php endif; ?>
         </dl>
       </div>
     </div>
 
-    <?php if ($canEdit || $canAssign): ?>
+    <?php // Installation vendor assignment only makes sense on installation-type
+    // tickets — a trouble/fault ticket is resolved by the maintenance vendor
+    // (routed automatically by hub), not an installation vendor. ?>
+    <?php if (($canEdit || $canAssign) && $ticket['type'] === 'installation'): ?>
     <div class="card-section mb-3">
       <div class="card-header">Installation Vendor</div>
       <form method="POST" class="p-3">

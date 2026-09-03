@@ -202,7 +202,10 @@ if (method() === 'POST') {
     if (!empty($b['assignedTo'])) {
         $assignedTo = $b['assignedTo'];
     } else {
-        $maintVendorId = getMaintenanceVendorForHub($hubId);
+        // Maintenance-vendor routing is for trouble/fault tickets — an
+        // installation-type ticket shouldn't get routed there just because
+        // it shares a hub.
+        $maintVendorId = $type !== 'installation' ? getMaintenanceVendorForHub($hubId) : null;
         if (!$maintVendorId && !empty($b['faultTypeId'])) {
             $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['faultTypeId']]);
             $routeTo = strtolower($ftRoute['route_to'] ?? '');
