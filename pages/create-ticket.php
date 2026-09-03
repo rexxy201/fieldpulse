@@ -84,29 +84,40 @@ if (method() === 'POST') {
         }
 
         if (empty($error)) {
-            // Auto-assign: fiber/installation → hub team; others → supervisor
-            $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['fault_type_id']]);
-            $routeTo = strtolower($ftRoute['route_to'] ?? '');
-            if (in_array($routeTo, ['fiber', 'installation']) && $hubId) {
-                $assignee = getAutoAssignFiber($b['fault_type_id'], $hubId);
-            } else {
-                $assignee = getAutoAssignSupervisor($b['fault_type_id']);
+            // Auto-assign: a hub with a maintenance vendor configured routes
+            // the whole ticket to that vendor's team (visible to everyone on
+            // it via ticketScopeSql(), not just one picked engineer) — this
+            // overrides the individual fiber/supervisor auto-assign below,
+            // unless the form's own Vendor picker was used explicitly.
+            // Hubs with no maintenance vendor configured keep the exact same
+            // behavior as before.
+            $manualVendorId = $b['vendor_id'] ?: null;
+            $maintVendorId  = $manualVendorId ?: getMaintenanceVendorForHub($hubId);
+            $assignee = null; $assignedTo = null;
+            if (!$maintVendorId) {
+                $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['fault_type_id']]);
+                $routeTo = strtolower($ftRoute['route_to'] ?? '');
+                if (in_array($routeTo, ['fiber', 'installation']) && $hubId) {
+                    $assignee = getAutoAssignFiber($b['fault_type_id'], $hubId);
+                } else {
+                    $assignee = getAutoAssignSupervisor($b['fault_type_id']);
+                }
+                $assignedTo = $assignee['id'] ?? null;
             }
-            $assignedTo = $assignee['id'] ?? null;
 
             $prefix    = $type === 'installation' ? 'ORD' : 'INC';
             $newId     = newUuid();
 
             $_slaExpr = dbNowPlusInterval($hours, 'HOUR');
             $ticketNum = withUniqueTicketNumber($prefix, function (string $ticketNum) use (
-                $newId, $b, $type, $scope, $customerId, $cname, $hubId, $assignedTo, $user, $_slaExpr
+                $newId, $b, $type, $scope, $customerId, $cname, $hubId, $assignedTo, $user, $_slaExpr, $maintVendorId
             ) {
                 dbRun(
                     "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,sla_breach_at)
                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
                     [$newId, $ticketNum, $b['description'], $b['priority'] ?? 'p3', $type, 'open', $scope,
                      $customerId, $cname, $hubId,
-                     $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id'], $b['vendor_id'] ?: null]
+                     $assignedTo, $b['fault_type_id'], $b['olt'] ?? null, $user['id'], $maintVendorId]
                 );
             });
 
@@ -123,6 +134,8 @@ if (method() === 'POST') {
                     "{$cname}: {$pLabel} — " . substr($b['description'], 0, 80),
                     "/ticket/{$newId}"
                 );
+            } elseif ($maintVendorId) {
+                notifyVendorTeamTicketAssigned($ticket, $maintVendorId);
             }
             if ($cust) emailCustomerTicketCreated($ticket, $cust);
             notifyRoles(

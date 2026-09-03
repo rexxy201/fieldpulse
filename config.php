@@ -3040,6 +3040,75 @@ if (!$_sv40) {
     }
 }
 
+// ─── Schema v41: hub-based maintenance vendor routing ─────────────────────────
+// A maintenance vendor (e.g. a contractor company with its own team of field
+// engineers) needs every ticket in their assigned location visible to their
+// whole team, not just whoever one auto-assign pass happened to pick. Adds
+// hubs.maintenance_vendor_id — when set, ticket creation routes the ticket's
+// vendor_id there instead of an individual engineer, and ticketScopeSql()
+// already grants every user sharing that vendor_id full visibility (same
+// mechanism vendor-scoped installations already use), no further schema
+// change needed for the "whole team sees it" half of this.
+$_sv41 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v41_migrated'");
+if (!$_sv41) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `hubs` ADD COLUMN `maintenance_vendor_id` VARCHAR(36) DEFAULT NULL"); }
+            catch (\Throwable $e) { error_log('Schema v41: add maintenance_vendor_id: ' . $e->getMessage()); }
+        } else {
+            try { db()->exec("ALTER TABLE hubs ADD COLUMN IF NOT EXISTS maintenance_vendor_id VARCHAR(36)"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v41_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v41 migration error: ' . $e->getMessage());
+    }
+}
+
+/** Vendor company responsible for maintenance tickets in a hub's location, if configured. */
+function getMaintenanceVendorForHub(?string $hubId): ?string {
+    if (!$hubId) return null;
+    $row = dbFetch("SELECT maintenance_vendor_id FROM hubs WHERE id = ?", [$hubId]);
+    return $row['maintenance_vendor_id'] ?? null;
+}
+
+/**
+ * Notify (in-app + email) every active engineer on a vendor company's team
+ * that a ticket has been routed to them — used instead of notifyUser() for
+ * hub-based vendor routing, where there's no single assignee, the whole
+ * team needs to know (ticketScopeSql() already makes it visible to all of
+ * them; this just makes sure they're actually told).
+ */
+function notifyVendorTeamTicketAssigned(array $ticket, string $vendorId): void {
+    try {
+        $members = dbFetchAll("SELECT id, name, email FROM users WHERE vendor_id = ? AND status = 'active'", [$vendorId]);
+        if (!$members) return;
+        $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
+        $desc = htmlspecialchars(substr($ticket['description'] ?? '', 0, 200));
+        $prio = strtoupper($ticket['priority'] ?? '');
+        $link = '/ticket/' . $ticket['id'];
+        $fullLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $link;
+        foreach ($members as $m) {
+            notifyUser($m['id'], "Ticket Assigned to Your Team — {$tn}",
+                ($ticket['customer_name'] ?? '') . ': ' . $prio . ' — ' . substr($ticket['description'] ?? '', 0, 80), $link);
+            if (!empty($m['email'])) {
+                try {
+                    sendEmail($m['email'], $m['name'], "Ticket Assigned to Your Team — {$tn}",
+                        "<p>Hi " . htmlspecialchars($m['name']) . ",</p>
+                         <p>A ticket for your team's service area has come in.</p>
+                         <p><strong>Ticket:</strong> {$tn} (Priority: {$prio})</p>
+                         <p><strong>Issue:</strong> {$desc}</p>
+                         <p><a href='{$fullLink}'>View Ticket →</a></p>
+                         <p style='color:#64748b;font-size:.85rem'>FieldPulse · MangoNet</p>");
+                } catch (\Throwable $e) {
+                    error_log("notifyVendorTeamTicketAssigned email error ({$m['email']}): " . $e->getMessage());
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        error_log('notifyVendorTeamTicketAssigned error: ' . $e->getMessage());
+    }
+}
+
 define('TWOFA_CODE_MINUTES', 10);
 
 /** Generates, stores (hashed), and emails a fresh 6-digit code for this user. */

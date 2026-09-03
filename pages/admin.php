@@ -74,6 +74,11 @@ if (method() === 'POST') {
         dbRun("UPDATE hubs SET team_id=? WHERE id=?", [$teamId, $b['hub_id']]);
         $msg = 'Team assignment saved.';
     }
+    if ($action === 'assign_hub_vendor' && !empty($b['hub_id'])) {
+        $vendorId = !empty($b['maintenance_vendor_id']) ? $b['maintenance_vendor_id'] : null;
+        dbRun("UPDATE hubs SET maintenance_vendor_id=? WHERE id=?", [$vendorId, $b['hub_id']]);
+        $msg = 'Maintenance vendor assignment saved.';
+    }
     if ($action === 'add_hub_city' && !empty($b['hub_id']) && trim($b['city_name'] ?? '') !== '') {
         try {
             dbRun("INSERT INTO hub_city_mappings (id,hub_id,city_name) VALUES (?,?,?)",
@@ -276,7 +281,7 @@ if (method() === 'POST') {
         }
     }
     if ($msg !== '') { $_SESSION['admin_flash'] = $msg; $_SESSION['admin_flash_type'] = $msgType; }
-    $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','add_hub_city','del_hub_city','add_location','del_location'];
+    $_hubActions  = ['add_hub','del_hub','edit_hub','assign_hub_team','assign_hub_vendor','add_hub_city','del_hub_city','add_location','del_location'];
     $_permActions = ['save_permissions','add_role','edit_role','del_role'];
     $_apiKeyActions = ['create_api_key','revoke_api_key'];
     if (in_array($action, $_hubActions, true))  $_anchor = '#tab-hubs';
@@ -311,6 +316,9 @@ $webhookFailures = dbFetchAll(
 $teams      = dbFetchAll("SELECT * FROM teams ORDER BY type, name");
 $teamById   = [];
 foreach ($teams as $t) $teamById[$t['id']] = $t;
+$vendors    = dbFetchAll("SELECT id,name FROM vendors ORDER BY name");
+$vendorById = [];
+foreach ($vendors as $v) $vendorById[$v['id']] = $v;
 $locations = dbFetchAll("SELECT * FROM locations ORDER BY name");
 $hubCityMappings = dbFetchAll("SELECT * FROM hub_city_mappings ORDER BY city_name");
 $cityByHub = [];
@@ -558,6 +566,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
               <th>Hub</th>
               <th>Location</th>
               <th>Assigned Team <span class="text-muted fw-normal small">(fiber routing)</span></th>
+              <th>Maintenance Vendor <span class="text-muted fw-normal small">(ticket routing)</span></th>
               <th>Cities</th>
               <th>Customers</th>
               <th style="width:80px"></th>
@@ -565,7 +574,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
           </thead>
           <tbody>
             <?php if (!$hubs): ?>
-            <tr><td colspan="6" class="text-center text-muted py-4">No hubs yet.</td></tr>
+            <tr><td colspan="7" class="text-center text-muted py-4">No hubs yet.</td></tr>
             <?php endif; ?>
             <?php foreach ($hubs as $h):
               $hCities   = $cityByHub[$h['id']] ?? [];
@@ -590,6 +599,24 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
                     <?php foreach ($teams as $t): ?>
                     <option value="<?= $t['id'] ?>" <?= ($h['team_id']===$t['id'])?'selected':'' ?>>
                       <?= htmlspecialchars($t['name']) ?>
+                    </option>
+                    <?php endforeach; ?>
+                  </select>
+                  <button type="submit" class="btn btn-sm btn-outline-primary py-0 px-2" title="Save assignment">
+                    <i class="bi bi-check-lg"></i>
+                  </button>
+                </form>
+              </td>
+              <td>
+                <form method="POST" class="d-flex gap-1 align-items-center">
+                  <?= csrfField() ?>
+                  <input type="hidden" name="_action" value="assign_hub_vendor">
+                  <input type="hidden" name="hub_id" value="<?= $h['id'] ?>">
+                  <select name="maintenance_vendor_id" class="form-select form-select-sm" style="min-width:155px">
+                    <option value="">— None (individual routing) —</option>
+                    <?php foreach ($vendors as $v): ?>
+                    <option value="<?= $v['id'] ?>" <?= ($h['maintenance_vendor_id']??'')===$v['id']?'selected':'' ?>>
+                      <?= htmlspecialchars($v['name']) ?>
                     </option>
                     <?php endforeach; ?>
                   </select>
@@ -634,6 +661,14 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
       <div class="p-3 small text-muted">
         <p class="mb-1">When a <strong>Fiber or Installation</strong> ticket is created, the system checks the customer's city, looks it up in the city mappings, and auto-assigns the ticket to an engineer from that hub's team — <strong>skipping the supervisor queue entirely</strong>.</p>
         <p class="mb-0"><strong>Setup:</strong> (1) Assign a team to each hub using the dropdown above. (2) Click the cities badge to add the city names covered by that hub. City names must match what's stored in the customer's mailing city field exactly (case-insensitive).</p>
+      </div>
+    </div>
+
+    <div class="card-section mt-3">
+      <div class="card-header"><i class="bi bi-info-circle me-1 text-primary"></i>How Maintenance Vendor Routing Works</div>
+      <div class="p-3 small text-muted">
+        <p class="mb-1">When a hub has a <strong>Maintenance Vendor</strong> assigned, every new ticket for that hub's location is routed to that vendor company instead of one individual engineer — <strong>every active user on the vendor's team can see and act on it</strong> (Team & Field &rarr; vendor accounts with that company set), not just whoever an auto-assign pass would have picked. This overrides the fiber/supervisor auto-assign above for that hub.</p>
+        <p class="mb-0"><strong>Setup:</strong> (1) Make sure the vendor company exists under Finance &rarr; Vendors, and each of their engineers has a user account with that vendor selected. (2) Assign the vendor to each relevant hub using the dropdown above. Leave it as "None" for hubs that should keep individual auto-assign.</p>
       </div>
     </div>
   </div>
