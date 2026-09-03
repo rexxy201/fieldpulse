@@ -22,10 +22,17 @@ $photos    = dbFetchAll("SELECT * FROM ticket_photos WHERE ticket_id = ? ORDER B
 $engineers = dbFetchAll("SELECT id,name,role FROM users WHERE role IN ('engineer','noc_engineer','supervisor-fiber','supervisor-noc','cx_supervisor') ORDER BY name");
 $user      = currentUser();
 $role      = $user['role'];
-$canEdit    = hasPermission('tickets.update');
-$canAssign  = hasPermission('tickets.assign');
-$canResolve = hasPermission('tickets.resolve');
-$canClose   = hasPermission('tickets.close');
+// Vendor-type roles get their own limited "Update Status" flow further down
+// ($isOwnVendorTicket / the 'vendor_update' action) — no priority, assign-to,
+// or RCA edits. Excluded here regardless of what tickets.* permissions the
+// role happens to hold in role_permissions, so an admin granting e.g.
+// tickets.assign to vendor-mtce for some other reason can't accidentally
+// surface the full staff "Update Ticket" form alongside it.
+$isVendorRole = in_array($role, ['vendor', 'vendor-mtce'], true);
+$canEdit    = hasPermission('tickets.update')   && !$isVendorRole;
+$canAssign  = hasPermission('tickets.assign')   && !$isVendorRole;
+$canResolve = hasPermission('tickets.resolve')  && !$isVendorRole;
+$canClose   = hasPermission('tickets.close')    && !$isVendorRole;
 // A vendor-role user's own ticket — installation vendor (role 'vendor') or
 // hub-routed maintenance vendor (role 'vendor-mtce', hub-scoped for a team
 // member, unrestricted for their supervisor). Reuses canAccessTicket()'s
