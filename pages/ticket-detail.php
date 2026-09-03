@@ -32,6 +32,7 @@ $canClose   = hasPermission('tickets.close');
 // own logic rather than re-deriving it, so the two can never drift apart.
 $isOwnVendorTicket = in_array($role, ['vendor', 'vendor-mtce'], true) && canAccessTicket($ticket);
 $allVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors ORDER BY name") : [];
+$maintVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors WHERE type='maintenance' ORDER BY name") : [];
 $assignedVendor = !empty($ticket['vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['vendor_id']]) : null;
 $assignedMaintVendor = !empty($ticket['maintenance_vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['maintenance_vendor_id']]) : null;
 
@@ -64,6 +65,26 @@ if (method() === 'POST') {
         dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'vendor_assigned')",
             [newUuid(),$ticketId,$user['id'],$user['name'],"Vendor changed from {$oldName} to {$newName}."]);
         auditLog('assign_vendor','ticket',$ticketId);
+    }
+
+    // Hand this ticket to a maintenance vendor's whole team manually — same
+    // as the automatic hub-based routing (see getMaintenanceVendorForHub()),
+    // just staff-triggered for a one-off reassignment or a hub with no
+    // default vendor configured. Every active member of the new team gets
+    // notified (hub-aware, same rule as auto-routing).
+    if ($action === 'assign_maintenance_vendor' && ($canEdit || $canAssign)) {
+        $newVendorId = trim($b['maintenance_vendor_id'] ?? '');
+        $oldVendorId = $ticket['maintenance_vendor_id'] ?? '';
+        dbRun("UPDATE tickets SET maintenance_vendor_id=?, updated_at=NOW() WHERE id=?", [$newVendorId ?: null, $ticketId]);
+        $oldName = $oldVendorId ? (dbFetch("SELECT name FROM vendors WHERE id=?",[$oldVendorId])['name'] ?? 'Unknown') : 'Unassigned';
+        $newName = $newVendorId ? (dbFetch("SELECT name FROM vendors WHERE id=?",[$newVendorId])['name'] ?? 'Unknown') : 'Unassigned';
+        dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'vendor_assigned')",
+            [newUuid(),$ticketId,$user['id'],$user['name'],"Maintenance vendor changed from {$oldName} to {$newName}."]);
+        auditLog('assign_maintenance_vendor','ticket',$ticketId);
+        if ($newVendorId && $newVendorId !== $oldVendorId) {
+            $freshTicket = dbFetch("SELECT * FROM tickets WHERE id = ?", [$ticketId]);
+            notifyVendorTeamTicketAssigned($freshTicket, $newVendorId);
+        }
     }
 
     // Vendor-side status update — limited to a small set of working statuses,
@@ -344,6 +365,27 @@ require __DIR__ . '/../includes/header.php';
         </dl>
       </div>
     </div>
+
+    <?php if ($canEdit || $canAssign): ?>
+    <div class="card-section mb-3">
+      <div class="card-header">Maintenance Vendor</div>
+      <form method="POST" class="p-3">
+        <input type="hidden" name="_action" value="assign_maintenance_vendor">
+        <?= csrfField() ?>
+        <label class="form-label small fw-semibold mb-1">Assign to Vendor Team</label>
+        <div class="d-flex gap-2">
+          <select name="maintenance_vendor_id" class="form-select form-select-sm">
+            <option value="">— Unassigned —</option>
+            <?php foreach ($maintVendors as $v): ?>
+            <option value="<?= $v['id'] ?>" <?= ($ticket['maintenance_vendor_id']??'')===$v['id']?'selected':'' ?>><?= htmlspecialchars($v['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+        </div>
+        <div class="form-text">Hands this ticket to the vendor's whole team — visible to every hub-scoped member covering this ticket's hub, and to their supervisor regardless of hub. Overrides (or sets, if the hub has no default) automatic hub-based routing for this ticket.</div>
+      </form>
+    </div>
+    <?php endif; ?>
 
     <?php // Installation vendor assignment only makes sense on installation-type
     // tickets — a trouble/fault ticket is resolved by the maintenance vendor

@@ -12,19 +12,28 @@ if (method() === 'POST') {
     $action = $b['_action'] ?? '';
 
     if ($action === 'add_user') {
-        $hubIds = !empty($b['hub_ids']) ? '{' . implode(',', array_map('trim', (array)$b['hub_ids'])) . '}' : null;
+        // One multi-select drives both columns: hub_ids gets the full set
+        // (what ticket/hub-scoping logic actually reads — see
+        // userHubIdList()), hub_id is auto-set to the first pick so the map
+        // and engineer auto-dispatch (which still read the single column)
+        // keep working without needing their own separate field.
+        $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
+        $hubIds = $hubIdsArr ? '{' . implode(',', $hubIdsArr) . '}' : null;
+        $primaryHub = $hubIdsArr[0] ?? null;
         dbRun("INSERT INTO users (id,username,name,email,phone,role,password,hub_id,hub_ids,team_id,vendor_id,status)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
             [newUuid(),$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
-             hashPassword('admin123'),$b['hub_id']??null,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
+             hashPassword('admin123'),$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
         $msg = 'Member added. Default password: admin123';
     }
     if ($action === 'edit_user' && !empty($b['id'])) {
-        $hubIds = !empty($b['hub_ids']) ? '{' . implode(',', array_map('trim', (array)$b['hub_ids'])) . '}' : null;
+        $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
+        $hubIds = $hubIdsArr ? '{' . implode(',', $hubIdsArr) . '}' : null;
+        $primaryHub = $hubIdsArr[0] ?? null;
         $sets = "name=?,email=?,phone=?,role=?,status=?,hub_id=?,hub_ids=?,team_id=?,vendor_id=?";
         dbRun("UPDATE users SET $sets WHERE id=?",
             [$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
-             $b['status']??'active',$b['hub_id']??null,$hubIds,$b['team_id']??null,$b['vendor_id']??null,$b['id']]);
+             $b['status']??'active',$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null,$b['id']]);
         if (!empty($b['new_password'])) {
             dbRun("UPDATE users SET password=? WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
         }
@@ -194,8 +203,8 @@ require __DIR__ . '/../includes/header.php';
               onclick='openEditUser(<?= htmlspecialchars(json_encode([
                 'id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email']??'',
                 'phone'=>$u['phone']??'','role'=>$u['role'],'status'=>$status,
-                'hub_id'=>$u['hub_id']??'','team_id'=>$u['team_id']??'',
-                'vendor_id'=>$u['vendor_id']??'','hub_ids'=>$hubNames
+                'team_id'=>$u['team_id']??'',
+                'vendor_id'=>$u['vendor_id']??'','hub_ids'=>userHubIdList($u)
               ])) ?>)' title="Edit"><i class="bi bi-pencil"></i></button>
             <?php if (!empty($u['twofa_enabled'])): ?>
             <form method="POST" class="d-inline" onsubmit="return confirm('Turn off two-factor sign-in for this member? Use this if they are locked out (e.g. lost access to their email).')">
@@ -377,12 +386,6 @@ require __DIR__ . '/../includes/header.php';
               <?php foreach(roleKeys() as $r): ?><option value="<?=$r?>"><?= $roleLabel[$r] ?? $r ?></option><?php endforeach; ?>
             </select>
           </div>
-          <div class="col-sm-6"><label class="form-label fw-semibold small">Primary Hub</label>
-            <select name="hub_id" class="form-select form-select-sm">
-              <option value="">— None —</option>
-              <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
-            </select>
-          </div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Team</label>
             <select name="team_id" class="form-select form-select-sm">
               <option value="">— None —</option>
@@ -397,7 +400,7 @@ require __DIR__ . '/../includes/header.php';
             </select>
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold small">Additional Hubs (for supervisors)</label>
+            <label class="form-label fw-semibold small">Assigned Hub(s) <span class="text-muted fw-normal">(select every hub this member covers — leave empty if not hub-restricted, e.g. a team supervisor)</span></label>
             <div class="d-flex flex-wrap gap-2">
               <?php foreach($hubs as $h): ?>
               <div class="form-check form-check-inline">
@@ -448,12 +451,6 @@ require __DIR__ . '/../includes/header.php';
               <option value="inactive">Inactive</option>
             </select>
           </div>
-          <div class="col-sm-6"><label class="form-label fw-semibold small">Primary Hub</label>
-            <select name="hub_id" id="eu_hub_id" class="form-select form-select-sm">
-              <option value="">— None —</option>
-              <?php foreach($hubs as $h): ?><option value="<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></option><?php endforeach; ?>
-            </select>
-          </div>
           <div class="col-sm-6"><label class="form-label fw-semibold small">Team</label>
             <select name="team_id" id="eu_team_id" class="form-select form-select-sm">
               <option value="">— None —</option>
@@ -468,12 +465,12 @@ require __DIR__ . '/../includes/header.php';
             </select>
           </div>
           <div class="col-12">
-            <label class="form-label fw-semibold small">Additional Hubs (for supervisors)</label>
+            <label class="form-label fw-semibold small">Assigned Hub(s) <span class="text-muted fw-normal">(select every hub this member covers — leave empty if not hub-restricted, e.g. a team supervisor)</span></label>
             <div class="d-flex flex-wrap gap-2" id="eu_hub_ids_wrap">
               <?php foreach($hubs as $h): ?>
               <div class="form-check form-check-inline">
                 <input class="form-check-input eu-hub-check" type="checkbox" name="hub_ids[]"
-                  id="eh_<?=$h['id']?>" value="<?=$h['name']?>">
+                  id="eh_<?=$h['id']?>" value="<?=$h['id']?>">
                 <label class="form-check-label small" for="eh_<?=$h['id']?>"><?= htmlspecialchars($h['name']) ?></label>
               </div>
               <?php endforeach; ?>
@@ -599,7 +596,6 @@ function openEditUser(u) {
   document.getElementById('eu_phone').value  = u.phone || '';
   document.getElementById('eu_role').value   = u.role || 'engineer';
   document.getElementById('eu_status').value = u.status || 'active';
-  document.getElementById('eu_hub_id').value = u.hub_id || '';
   document.getElementById('eu_team_id').value = u.team_id || '';
   document.getElementById('eu_vendor_id').value = u.vendor_id || '';
   // Tick hub checkboxes
