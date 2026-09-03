@@ -33,6 +33,15 @@ if ($id === 'bulk-update' && method() === 'POST') {
     // either if the caller doesn't hold the specific permission for it.
     if (($b['status'] ?? '') === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
     if (($b['status'] ?? '') === 'closed'   && !hasPermission('tickets.close'))   jsonResponse(['error' => 'Forbidden — missing tickets.close'], 403);
+    // RCA is compulsory when resolving/closing (see the single-ticket PATCH
+    // below) and it's a genuinely per-ticket narrative — the same root
+    // cause/observation/corrective action text can't sensibly apply to a
+    // batch of unrelated tickets at once. Rather than silently skip RCA for
+    // a bulk resolve, block it outright — resolve/close one at a time via
+    // the ticket page, where RCA is actually collected.
+    if (in_array($b['status'] ?? '', ['resolved', 'closed'], true)) {
+        jsonResponse(['error' => 'Resolving or closing requires RCA, which can\'t be set in bulk — update tickets individually.'], 400);
+    }
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     if (!empty($b['status']))     dbRun("UPDATE tickets SET status=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['status']], $ids));
     if (!empty($b['assignedTo'])) dbRun("UPDATE tickets SET assigned_to=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['assignedTo']], $ids));
@@ -79,20 +88,37 @@ if ($id && method() === 'PATCH') {
     $b = getBody();
     $existingForPatch = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
     if (!$existingForPatch) jsonResponse(['error' => 'Not found'], 404);
-    $isOwnVendorTicket = $role === 'vendor' && !empty($user['vendor_id']) && $existingForPatch['vendor_id'] === $user['vendor_id'];
-    if (!hasPermission('tickets.update') && !$isOwnVendorTicket) jsonResponse(['error' => 'Forbidden'], 403);
+    // Vendor-type roles use the exact same permission-gated access as staff
+    // now (see pages/ticket-detail.php) — what they can do is purely
+    // whatever tickets.* permissions their role holds, not a hardcoded
+    // subset. canAccessTicket() still gates whether they can touch this
+    // particular ticket at all (their own company's, hub-scoped for a
+    // vendor-mtce team member) — this used to only check vendor_id equality
+    // for role==='vendor', which both missed 'vendor-mtce' entirely and
+    // never verified hub scope.
+    if (!canAccessTicket($existingForPatch)) jsonResponse(['error' => 'Forbidden'], 403);
+    $_canEditApi = hasPermission('tickets.update');
+    $_canAssignApi = hasPermission('tickets.assign');
+    if (!$_canEditApi && !hasPermission('tickets.resolve') && !hasPermission('tickets.close') && !$_canAssignApi) {
+        jsonResponse(['error' => 'Forbidden'], 403);
+    }
     // Resolve/close are separately permissioned — a caller without the specific
     // permission can't set the ticket to that status via the API either.
     if (($b['status'] ?? null) === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
     if (($b['status'] ?? null) === 'closed'   && !hasPermission('tickets.close'))   jsonResponse(['error' => 'Forbidden — missing tickets.close'], 403);
-    // Vendors may only move their own ticket between a limited set of working
-    // statuses — no priority/assignment/RCA edits via this endpoint.
-    if ($isOwnVendorTicket && !hasPermission('tickets.update')) {
-        if (isset($b['status']) && !in_array($b['status'], ['in_progress','pending_confirmation'], true)) {
-            jsonResponse(['error' => 'Forbidden — vendors may only set status to in_progress or pending_confirmation'], 403);
-        }
-        $b = array_intersect_key($b, ['status' => true]);
+    // RCA is compulsory the first time a ticket transitions to resolved/closed —
+    // same enforcement as the web UI's 'update' action (pages/ticket-detail.php),
+    // previously missing here entirely despite roca_root_cause being an
+    // updatable field below, so this status change could bypass it via the API.
+    $_isResolvingNow = in_array($b['status'] ?? null, ['resolved','closed'], true)
+                        && !in_array($existingForPatch['status'], ['resolved','closed'], true);
+    if ($_isResolvingNow && empty(trim($b['roca_root_cause'] ?? ''))) {
+        jsonResponse(['error' => 'roca_root_cause is required when resolving or closing a ticket.'], 400);
     }
+    // assigned_to is silently dropped (not a hard error) without tickets.assign
+    // — mirrors the web form, which just doesn't offer the field rather than
+    // rejecting the whole request over it.
+    if (!$_canAssignApi) unset($b['assigned_to']);
     $allowed = ['status','priority','assigned_to','description','olt','roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'];
     $sets = []; $vals = [];
     foreach ($allowed as $col) {
