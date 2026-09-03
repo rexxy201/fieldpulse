@@ -66,7 +66,6 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     </button>
   </div>
 
-  <?php if ($role !== 'vendor'): ?>
   <div class="nav-section">Operations</div>
   <a href="/dashboard" class="nav-link <?= $activePath === 'dashboard' ? 'active' : '' ?>">
     <i class="bi bi-grid-1x2"></i> Dashboard
@@ -74,17 +73,6 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
     <i class="bi bi-ticket-perforated"></i> Tickets
   </a>
-  <?php else: ?>
-  <div class="nav-section">My Work</div>
-  <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
-    <i class="bi bi-ticket-perforated"></i> My Tickets
-  </a>
-  <?php if (hasPermission('payment_requests.create') || hasPermission('payment_requests.view')): ?>
-  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
-    <i class="bi bi-cash-coin"></i> My Payment Requests
-  </a>
-  <?php endif; ?>
-  <?php endif; ?>
 
   <?php if (hasPermission('customers.view')): ?>
   <a href="/customers" class="nav-link <?= $activePath === 'customers' ? 'active' : '' ?>">
@@ -121,7 +109,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
     <i class="bi bi-cash-coin"></i> Payment Requests
   </a>
-  <?php elseif ($role !== 'vendor' && (hasPermission('payment_requests.create') || hasPermission('payment_requests.view'))): ?>
+  <?php elseif (hasPermission('payment_requests.create') || hasPermission('payment_requests.view')): ?>
   <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
     <i class="bi bi-cash-coin"></i> Payment Requests
   </a>

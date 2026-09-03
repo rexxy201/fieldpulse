@@ -22,22 +22,17 @@ $photos    = dbFetchAll("SELECT * FROM ticket_photos WHERE ticket_id = ? ORDER B
 $engineers = dbFetchAll("SELECT id,name,role FROM users WHERE role IN ('engineer','noc_engineer','supervisor-fiber','supervisor-noc','cx_supervisor') ORDER BY name");
 $user      = currentUser();
 $role      = $user['role'];
-// Vendor-type roles get their own limited "Update Status" flow further down
-// ($isOwnVendorTicket / the 'vendor_update' action) — no priority, assign-to,
-// or RCA edits. Excluded here regardless of what tickets.* permissions the
-// role happens to hold in role_permissions, so an admin granting e.g.
-// tickets.assign to vendor-mtce for some other reason can't accidentally
-// surface the full staff "Update Ticket" form alongside it.
-$isVendorRole = in_array($role, ['vendor', 'vendor-mtce'], true);
-$canEdit    = hasPermission('tickets.update')   && !$isVendorRole;
-$canAssign  = hasPermission('tickets.assign')   && !$isVendorRole;
-$canResolve = hasPermission('tickets.resolve')  && !$isVendorRole;
-$canClose   = hasPermission('tickets.close')    && !$isVendorRole;
-// A vendor-role user's own ticket — installation vendor (role 'vendor') or
-// hub-routed maintenance vendor (role 'vendor-mtce', hub-scoped for a team
-// member, unrestricted for their supervisor). Reuses canAccessTicket()'s
-// own logic rather than re-deriving it, so the two can never drift apart.
-$isOwnVendorTicket = in_array($role, ['vendor', 'vendor-mtce'], true) && canAccessTicket($ticket);
+// Vendor-type roles use the exact same permission-gated "Update Ticket" form
+// and 'update' action as staff — whatever the admin has granted them in
+// Roles & Permissions (tickets.update/.assign/.resolve/.close) is what they
+// can do here, same as any other role. The only thing that's different for
+// them is ticket *visibility* (their own company's tickets — see
+// ticketScopeSql()/canAccessTicket()), not what they can do once they can
+// see one.
+$canEdit    = hasPermission('tickets.update');
+$canAssign  = hasPermission('tickets.assign');
+$canResolve = hasPermission('tickets.resolve');
+$canClose   = hasPermission('tickets.close');
 $allVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors ORDER BY name") : [];
 $maintVendors = ($canEdit || $canAssign) ? dbFetchAll("SELECT id,name FROM vendors WHERE type='maintenance' ORDER BY name") : [];
 $assignedVendor = !empty($ticket['vendor_id']) ? dbFetch("SELECT name FROM vendors WHERE id=?", [$ticket['vendor_id']]) : null;
@@ -91,18 +86,6 @@ if (method() === 'POST') {
         if ($newVendorId && $newVendorId !== $oldVendorId) {
             $freshTicket = dbFetch("SELECT * FROM tickets WHERE id = ?", [$ticketId]);
             notifyVendorTeamTicketAssigned($freshTicket, $newVendorId);
-        }
-    }
-
-    // Vendor-side status update — limited to a small set of working statuses,
-    // no priority/assignment/RCA edits (those stay staff-only via the 'update' action).
-    if ($action === 'vendor_update' && $isOwnVendorTicket) {
-        $newVendorStatus = $b['status'] ?? '';
-        if (in_array($newVendorStatus, ['in_progress','pending_confirmation'], true)) {
-            dbRun("UPDATE tickets SET status=?, updated_at=NOW() WHERE id=?", [$newVendorStatus, $ticketId]);
-            dbRun("INSERT INTO ticket_comments (id,ticket_id,user_id,user_name,content,type) VALUES (?,?,?,?,?,'stage_change')",
-                [newUuid(),$ticketId,$user['id'],$user['name'],'Status updated to: '.str_replace('_',' ',ucfirst($newVendorStatus))]);
-            auditLog('update','ticket',$ticketId,'vendor_status_update');
         }
     }
 
@@ -414,21 +397,6 @@ require __DIR__ . '/../includes/header.php';
           <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
         </div>
         <div class="form-text">Hand this ticket to a vendor for field work — they'll see it under their own logins.</div>
-      </form>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($isOwnVendorTicket): ?>
-    <div class="card-section mb-3">
-      <div class="card-header">Update Status</div>
-      <form method="POST" class="p-3 d-flex gap-2">
-        <input type="hidden" name="_action" value="vendor_update">
-        <?= csrfField() ?>
-        <select name="status" class="form-select form-select-sm">
-          <option value="in_progress" <?= $ticket['status']==='in_progress'?'selected':'' ?>>In Progress</option>
-          <option value="pending_confirmation" <?= $ticket['status']==='pending_confirmation'?'selected':'' ?>>Pending Confirmation</option>
-        </select>
-        <button type="submit" class="btn btn-sm btn-primary">Save</button>
       </form>
     </div>
     <?php endif; ?>

@@ -231,9 +231,13 @@ if (method() === 'POST') {
         }
     }
     if ($action === 'update_stage') {
-        // canEdit or vendor assigned to this profile
+        // canEdit, or a vendor-type user who actually has this profile in
+        // scope (own company, and their own hub if they're a hub-scoped
+        // vendor-mtce team member) — not just "any vendor", which used to
+        // let one vendor's login modify a stage on a job that wasn't theirs.
         $pid = $b['profile_id'] ?? '';
-        $allowed = $canEdit || ($role === 'vendor' && ($user['vendor_id'] ?? '') !== '');
+        $_profileForAuth = $pid ? dbFetch("SELECT vendor_id, hub_id FROM installation_profiles WHERE id=?", [$pid]) : null;
+        $allowed = $canEdit || (in_array($role, ['vendor','vendor-mtce'], true) && $_profileForAuth && canAccessInstallation($_profileForAuth));
         if ($allowed) {
             $newStatus = $b['status'] ?? 'pending';
             $reason = trim($b['reason'] ?? '');
@@ -351,7 +355,8 @@ if (method() === 'POST') {
     }
     if ($action === 'add_comment') {
         $pid = $b['profile_id'] ?? '';
-        $allowed = $canEdit || ($role === 'vendor');
+        $_profileForAuth = $pid ? dbFetch("SELECT vendor_id, hub_id FROM installation_profiles WHERE id=?", [$pid]) : null;
+        $allowed = $canEdit || (in_array($role, ['vendor','vendor-mtce'], true) && $_profileForAuth && canAccessInstallation($_profileForAuth));
         if ($allowed) {
             $cid = newUuid();
             dbRun("INSERT INTO installation_comments (id,profile_id,user_id,user_name,user_role,content,type) VALUES (?,?,?,?,?,?,?)",
@@ -372,10 +377,12 @@ $paidFilter = $_GET['paid'] ?? '';
 $vendorFilter = $_GET['vendor'] ?? '';
 
 $where=[]; $params=[];
-// Vendor users only ever see their own company's installation jobs — this
-// overrides any ?vendor= query param, it isn't just a default.
-if ($role === 'vendor') {
-    $where[]="p.vendor_id=?"; $params[]=$user['vendor_id'] ?? '__none__';
+// Vendor-type users only ever see their own company's installation jobs
+// (hub-scoped for a vendor-mtce team member — see installationScopeSql())
+// — this overrides any ?vendor= query param, it isn't just a default.
+[$_scopeSql, $_scopeParams] = installationScopeSql('p');
+if ($_scopeSql) {
+    $where[] = $_scopeSql; $params = array_merge($params, $_scopeParams);
 } elseif ($vendorFilter) {
     $where[]="p.vendor_id=?"; $params[]=$vendorFilter;
 }
@@ -394,9 +401,10 @@ $tickets  = dbFetchAll("SELECT id,ticket_number,customer_name,description FROM t
 $hubs     = dbFetchAll("SELECT id,name FROM hubs ORDER BY name");
 $errMsg   = $_GET['err'] ?? '';
 
-// Stats — scoped to the vendor's own jobs when logged in as a vendor
-$_statsVendorSql = ''; $_statsVendorParams = [];
-if ($role === 'vendor') { $_statsVendorSql = ' AND vendor_id=?'; $_statsVendorParams = [$user['vendor_id'] ?? '__none__']; }
+// Stats — scoped the same way as the list above (unaliased query, so no
+// table-alias prefix on the scope fragment).
+[$_statsScopeSql, $_statsVendorParams] = installationScopeSql('');
+$_statsVendorSql = $_statsScopeSql ? " AND {$_statsScopeSql}" : '';
 $stats = [];
 foreach ($STATUS_LABELS as $s => $l) {
     $stats[$s] = (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status=?{$_statsVendorSql}",array_merge([$s],$_statsVendorParams))['c'] ?? 0);
@@ -407,10 +415,10 @@ $paidStats = [
     'unset' => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE (installation_paid IS NULL OR installation_paid=''){$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
 ];
 
-// For detail view — vendors may only open their own jobs
+// For detail view — vendor-type users may only open their own (hub-scoped) jobs
 $detailId = $_GET['detail'] ?? null;
 $detailProfile = $detailId ? dbFetch("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id WHERE p.id=?",[$detailId]) : null;
-if ($detailProfile && $role === 'vendor' && ($detailProfile['vendor_id'] ?? null) !== ($user['vendor_id'] ?? null)) {
+if ($detailProfile && !canAccessInstallation($detailProfile)) {
     $detailProfile = null;
 }
 // The ticket linked to this job (if any) — vendors need to see and open it
@@ -578,7 +586,7 @@ require __DIR__ . '/../includes/header.php';
         <?php if (!empty($detailProfile['terminated_by_vendor_id'])): ?><dt class="col-4 text-muted">Terminated By</dt><dd class="col-8"><?= htmlspecialchars($vendorNames[$detailProfile['terminated_by_vendor_id']] ?? 'Unknown') ?></dd><?php endif; ?>
       </dl>
       <?php
-      $canInteract = $canEdit || ($role === 'vendor' && !empty($user['vendor_id']) && $user['vendor_id'] === $detailProfile['vendor_id']);
+      $canInteract = $canEdit || (in_array($role, ['vendor','vendor-mtce'], true) && canAccessInstallation($detailProfile));
       ?>
       <?php if ($canInteract): ?>
       <form method="POST" class="border rounded p-2 mb-3 bg-light">

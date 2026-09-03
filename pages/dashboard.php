@@ -2,11 +2,11 @@
 require_once __DIR__ . '/../config.php';
 requireAuth();
 
-// Vendors have no dashboard widgets — send them to installations IF they can
-// access it (guard against a redirect loop if that permission was removed).
-if (currentUser()['role'] === 'vendor' && hasPermission('installations.view')) {
-    header('Location: /installations'); exit;
-}
+// Vendor-type users (installation vendor and maintenance-vendor team members)
+// get the same dashboard as staff — tickets/installations already scope to
+// their own company (and hub, for a vendor-mtce team member) via
+// ticketScopeSql()/installationScopeSql(), same as every other query here.
+$isVendorViewer = in_array(currentUser()['role'], ['vendor', 'vendor-mtce'], true);
 
 // Finance roles have no dashboard widgets either — send them to the Finance
 // dashboard IF they can access it (same redirect-loop guard as above).
@@ -34,7 +34,9 @@ $stats = dbFetch("
 ", $_tParams);
 
 $_installTerminalIn = "'" . implode("','", INSTALLATION_TERMINAL_STATUSES) . "'";
-$pendingInstalls = dbFetch("SELECT COUNT(*) AS cnt FROM installation_profiles WHERE status NOT IN ({$_installTerminalIn})");
+[$_iScope, $_iParams] = installationScopeSql('');
+$_iAnd = $_iScope ? "AND ($_iScope)" : '';
+$pendingInstalls = dbFetch("SELECT COUNT(*) AS cnt FROM installation_profiles WHERE status NOT IN ({$_installTerminalIn}) {$_iAnd}", $_iParams);
 
 // ── 4-hour bucket chart: ticket influx vs resolved ────────────────────────────
 $_iv24 = dbNowMinusInterval(24, 'HOUR');
@@ -51,7 +53,10 @@ foreach ($resolvedRaw as $r) if (isset($resolvedArr[(int)$r['bucket']])) $resolv
 $bucketLabels = ['00–03','04–07','08–11','12–15','16–19','20–23'];
 
 // ── Vendor performance ────────────────────────────────────────────────────────
-$vendors = dbFetchAll("
+// Cross-company comparison — not shown to a vendor-type viewer, who has no
+// business seeing another company's numbers, only their own (already
+// covered by the stat cards/charts above, all correctly scoped to them).
+$vendors = $isVendorViewer ? [] : dbFetchAll("
     SELECT v.name,
            COUNT(ip.id)                                                          AS total,
            SUM(CASE WHEN ip.status = 'connected' THEN 1 ELSE 0 END)             AS completed,
@@ -130,7 +135,7 @@ require __DIR__ . '/../includes/header.php';
 <div class="row g-3 mb-3">
 
   <!-- Ticket Volume & Resolution chart -->
-  <div class="col-lg-8">
+  <div class="<?= $isVendorViewer ? 'col-lg-12' : 'col-lg-8' ?>">
     <div class="card-section h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span><i class="bi bi-graph-up me-1 text-primary"></i>Ticket Volume &amp; Resolution (24h)</span>
@@ -140,6 +145,7 @@ require __DIR__ . '/../includes/header.php';
     </div>
   </div>
 
+  <?php if (!$isVendorViewer): ?>
   <!-- Vendor Performance -->
   <div class="col-lg-4">
     <div class="card-section h-100">
@@ -174,6 +180,7 @@ require __DIR__ . '/../includes/header.php';
       </div>
     </div>
   </div>
+  <?php endif; ?>
 
 </div>
 

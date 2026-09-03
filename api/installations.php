@@ -11,17 +11,18 @@ $editRoles = ['admin','project_admin','supervisor-fiber'];
 if ($id && method() === 'GET') {
     $p = dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]);
     if (!$p) jsonResponse(['error'=>'Not found'],404);
-    if ($role === 'vendor' && $p['vendor_id'] !== ($user['vendor_id']??'')) jsonResponse(['error'=>'Forbidden'],403);
-    if (!in_array($role,$editRoles) && $role !== 'vendor' && !hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
+    $isVendorRole = in_array($role, ['vendor','vendor-mtce'], true);
+    if ($isVendorRole && !canAccessInstallation($p)) jsonResponse(['error'=>'Forbidden'],403);
+    if (!in_array($role,$editRoles) && !$isVendorRole && !hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
     jsonResponse($p);
 }
 
 if ($id && method() === 'PATCH') {
     $b = getBody();
     if (!in_array($role, $editRoles)) {
-        if ($role === 'vendor') {
-            $p = dbFetch("SELECT vendor_id FROM installation_profiles WHERE id=?",[$id]);
-            if (!$p || $p['vendor_id'] !== ($user['vendor_id']??'')) jsonResponse(['error'=>'Forbidden'],403);
+        if (in_array($role, ['vendor','vendor-mtce'], true)) {
+            $p = dbFetch("SELECT vendor_id, hub_id FROM installation_profiles WHERE id=?",[$id]);
+            if (!$p || !canAccessInstallation($p)) jsonResponse(['error'=>'Forbidden'],403);
             // Vendors may only progress the stage — not edit the record's other
             // fields — and Cable Laid still requires its date, same as the UI.
             if (($b['status'] ?? '') === 'cable_laying' && empty($b['cable_laid_date'])) {
@@ -90,8 +91,9 @@ if ($id && method() === 'DELETE') {
 
 if (method() === 'GET') {
     if (!hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
-    if ($role === 'vendor') {
-        jsonResponse(dbFetchAll("SELECT * FROM installation_profiles WHERE vendor_id=? ORDER BY created_at DESC",[$user['vendor_id']??'__none__']));
+    [$_scopeSql, $_scopeParams] = installationScopeSql('');
+    if ($_scopeSql) {
+        jsonResponse(dbFetchAll("SELECT * FROM installation_profiles WHERE {$_scopeSql} ORDER BY created_at DESC", $_scopeParams));
     }
     jsonResponse(dbFetchAll("SELECT * FROM installation_profiles ORDER BY created_at DESC"));
 }

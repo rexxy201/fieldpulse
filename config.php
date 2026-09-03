@@ -1155,6 +1155,55 @@ function canAccessTicket(array $ticket): bool {
     return false;
 }
 
+/**
+ * Returns [sqlFragment, params] to AND into an installation_profiles query
+ * for the current user — mirrors ticketScopeSql()'s vendor model: a
+ * vendor-type user (role 'vendor' or 'vendor-mtce') only ever sees their
+ * own company's jobs, further hub-scoped for a 'vendor-mtce' team member
+ * with hub(s) assigned via Team management (their supervisor, with none
+ * assigned, sees the whole company's jobs). Non-vendor roles get no
+ * restriction here — installations.view (required to reach this page/
+ * endpoint at all) is all-or-nothing for internal staff, same as before.
+ * $alias is the installation_profiles table alias used in the query (e.g.
+ * 'p' or '' for an unaliased query).
+ */
+function installationScopeSql(string $alias = 'p'): array {
+    $u = currentUser();
+    if (!$u) return ['1=0', []];
+    $p = $alias ? $alias . '.' : '';
+    $role = $u['role'] ?? '';
+    if ($role === 'vendor' || $role === 'vendor-mtce') {
+        if (empty($u['vendor_id'])) return ['1=0', []];
+        if ($role === 'vendor-mtce') {
+            $hubIds = userHubIdList($u);
+            if ($hubIds) {
+                $ph = implode(',', array_fill(0, count($hubIds), '?'));
+                return ["{$p}vendor_id = ? AND {$p}hub_id IN ($ph)", array_merge([$u['vendor_id']], $hubIds)];
+            }
+        }
+        return ["{$p}vendor_id = ?", [$u['vendor_id']]];
+    }
+    return ['', []];
+}
+
+/** Can the current user view/act on this specific installation profile? */
+function canAccessInstallation(array $profile): bool {
+    $u = currentUser();
+    if (!$u) return false;
+    $role = $u['role'] ?? '';
+    if ($role === 'vendor' || $role === 'vendor-mtce') {
+        if (empty($u['vendor_id']) || ($profile['vendor_id'] ?? null) !== $u['vendor_id']) return false;
+        if ($role === 'vendor-mtce') {
+            $hubIds = userHubIdList($u);
+            if ($hubIds) return in_array($profile['hub_id'] ?? null, $hubIds, true);
+        }
+        return true;
+    }
+    // Non-vendor roles are already gated by requirePermission('installations.view')
+    // at the page/endpoint level — no further per-row restriction for staff.
+    return true;
+}
+
 // ─── Auto-assign supervisor for ticket routing ────────────────────────────────
 /**
  * Given a fault_type id, finds the most recently logged-in active supervisor
