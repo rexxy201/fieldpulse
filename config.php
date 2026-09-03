@@ -1066,10 +1066,13 @@ function ticketScopeSql(string $alias = 't'): array {
     if (!$u) return ['1=0', []];
     $p = $alias ? $alias . '.' : '';
     // Vendors aren't part of the internal permission tiers below — they see only
-    // tickets handed to their company for field work.
+    // tickets handed to their company for field work, whether as the
+    // installation vendor (vendor_id) or the hub-routed maintenance/fiber
+    // vendor (maintenance_vendor_id) — two independent concepts on the same
+    // ticket, either of which puts it in front of this vendor's whole team.
     if (($u['role'] ?? '') === 'vendor') {
         if (empty($u['vendor_id'])) return ['1=0', []];
-        return ["{$p}vendor_id = ?", [$u['vendor_id']]];
+        return ["({$p}vendor_id = ? OR {$p}maintenance_vendor_id = ?)", [$u['vendor_id'], $u['vendor_id']]];
     }
     if (hasPermission('tickets.view_all')) return ['', []];
     $uid = $u['id'];
@@ -1088,7 +1091,9 @@ function canAccessTicket(array $ticket): bool {
     $u = currentUser();
     if (!$u) return false;
     if (($u['role'] ?? '') === 'vendor') {
-        return !empty($u['vendor_id']) && ($ticket['vendor_id'] ?? null) === $u['vendor_id'];
+        if (empty($u['vendor_id'])) return false;
+        return ($ticket['vendor_id'] ?? null) === $u['vendor_id']
+            || ($ticket['maintenance_vendor_id'] ?? null) === $u['vendor_id'];
     }
     if (hasPermission('tickets.view_all')) return true;
     if (($ticket['assigned_to'] ?? null) === $u['id'] || ($ticket['created_by'] ?? null) === $u['id']) return true;
@@ -3061,6 +3066,32 @@ if (!$_sv41) {
         dbUpsertConfig('schema_v41_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v41 migration error: ' . $e->getMessage());
+    }
+}
+
+// ─── Schema v42: keep installation vendor and maintenance vendor separate ─────
+// tickets.vendor_id was already in use as the "installation vendor" field —
+// the manual Vendor picker on the create-ticket form and the Assign to
+// Vendor action on the ticket detail page both write to it. Reusing that
+// same column for hub-based maintenance/fiber vendor routing (as the first
+// version of this feature did) conflates two distinct concepts on the same
+// ticket. Adds tickets.maintenance_vendor_id as its own column, so a ticket
+// can carry both independently: an installation vendor (vendor_id) picked
+// manually, and a maintenance/fiber vendor (maintenance_vendor_id) resolved
+// automatically from the ticket's hub. ticketScopeSql()/canAccessTicket()
+// below now check both columns for vendor-role visibility.
+$_sv42 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v42_migrated'");
+if (!$_sv42) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `maintenance_vendor_id` VARCHAR(36) DEFAULT NULL"); }
+            catch (\Throwable $e) { error_log('Schema v42: add maintenance_vendor_id: ' . $e->getMessage()); }
+        } else {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS maintenance_vendor_id VARCHAR(36)"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v42_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v42 migration error: ' . $e->getMessage());
     }
 }
 

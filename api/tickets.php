@@ -188,17 +188,21 @@ if (method() === 'POST') {
         }
     }
 
-    // Auto-assign: an explicit assignedTo wins outright. Otherwise, a hub with
-    // a maintenance vendor configured (or an explicit vendorId) routes the
-    // whole ticket to that vendor's team — visible to everyone on it via
-    // ticketScopeSql(), not just one picked engineer — overriding the
-    // individual fiber/supervisor auto-assign below. Hubs with no
-    // maintenance vendor configured keep the exact same behavior as before.
+    // Two independent vendor concepts: vendorId (if passed) is the
+    // installation vendor, written to vendor_id. maintenance_vendor_id is
+    // the fiber/maintenance vendor, resolved automatically from the
+    // ticket's hub — when set, it routes the whole ticket to that
+    // company's team (visible to everyone on it via ticketScopeSql(), not
+    // just one picked engineer), overriding individual auto-assign below.
+    // An explicit assignedTo still wins outright over any auto-assign.
+    // Hubs with no maintenance vendor configured keep the exact same
+    // individual-assign behavior as before.
     $assignee = null; $assignedTo = null; $maintVendorId = null;
+    $manualVendorId = $b['vendorId'] ?? null;
     if (!empty($b['assignedTo'])) {
         $assignedTo = $b['assignedTo'];
     } else {
-        $maintVendorId = ($b['vendorId'] ?? null) ?: getMaintenanceVendorForHub($hubId);
+        $maintVendorId = getMaintenanceVendorForHub($hubId);
         if (!$maintVendorId && !empty($b['faultTypeId'])) {
             $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['faultTypeId']]);
             $routeTo = strtolower($ftRoute['route_to'] ?? '');
@@ -215,14 +219,14 @@ if (method() === 'POST') {
     $newId     = newUuid();
     $_slaExpr  = dbNowPlusInterval($hours, 'HOUR');
     $ticketNum = withUniqueTicketNumber($prefix, function (string $ticketNum) use (
-        $newId, $b, $type, $scope, $customerId, $customerName, $hubId, $assignedTo, $user, $_slaExpr, $maintVendorId
+        $newId, $b, $type, $scope, $customerId, $customerName, $hubId, $assignedTo, $user, $_slaExpr, $maintVendorId, $manualVendorId
     ) {
         dbRun(
-            "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,sla_breach_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
+            "INSERT INTO tickets (id,ticket_number,description,priority,type,status,ticket_scope,customer_id,customer_name,hub_id,assigned_to,fault_type_id,olt,created_by,vendor_id,maintenance_vendor_id,sla_breach_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, {$_slaExpr})",
             [$newId,$ticketNum,$b['description']??'',$b['priority']??'p3',$type,'open',$scope,
              $customerId,$customerName,$hubId,
-             $assignedTo,$b['faultTypeId']??null,$b['olt']??null,$user['id'],$maintVendorId]
+             $assignedTo,$b['faultTypeId']??null,$b['olt']??null,$user['id'],$manualVendorId,$maintVendorId]
         );
     });
     $row = dbFetch("SELECT * FROM tickets WHERE id = ?", [$newId]);

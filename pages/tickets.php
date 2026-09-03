@@ -63,11 +63,13 @@ if ($search) {
 $whereSQL = $where ? ' WHERE ' . implode(' AND ', $where) : '';
 $total    = (int)(dbFetch("SELECT COUNT(*) AS c FROM tickets t LEFT JOIN customers cu ON cu.id = t.customer_id" . $whereSQL, $params)['c'] ?? 0);
 $tickets  = dbFetchAll(
-    "SELECT t.*, u.name AS assigned_name, cb.name AS created_by_name, cu.mailing_city AS customer_mailing_city
+    "SELECT t.*, u.name AS assigned_name, cb.name AS created_by_name, cu.mailing_city AS customer_mailing_city,
+            mv.name AS maintenance_vendor_name
      FROM tickets t
      LEFT JOIN users u      ON u.id  = t.assigned_to
      LEFT JOIN users cb     ON cb.id = t.created_by
      LEFT JOIN customers cu ON cu.id = t.customer_id
+     LEFT JOIN vendors mv   ON mv.id = t.maintenance_vendor_id
      $whereSQL
      ORDER BY t.created_at DESC LIMIT 500",
     $params
@@ -252,7 +254,15 @@ require __DIR__ . '/../includes/header.php';
               <?= strtoupper($t['priority'] ?? '') ?>
             </span>
           </td>
-          <td class="small text-muted"><?= htmlspecialchars($t['assigned_name'] ?? 'Unassigned') ?></td>
+          <td class="small text-muted">
+            <?php if ($t['assigned_name']): ?>
+              <?= htmlspecialchars($t['assigned_name']) ?>
+            <?php elseif ($t['maintenance_vendor_name']): ?>
+              <span class="badge bg-light text-dark border" title="Routed to this vendor's whole team"><i class="bi bi-people-fill me-1"></i><?= htmlspecialchars($t['maintenance_vendor_name']) ?></span>
+            <?php else: ?>
+              Unassigned
+            <?php endif; ?>
+          </td>
           <td class="small text-muted"><?= htmlspecialchars($t['created_by_name'] ?? '—') ?></td>
           <td class="small text-muted text-nowrap"><?= $created ?></td>
           <td>
