@@ -17,6 +17,7 @@ set_error_handler(function ($severity, $message, $file, $line) {
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'POST required']); exit;
 }
+verifyCsrf();
 
 $file = $_FILES['file'] ?? null;
 if (!$file || $file['error'] !== UPLOAD_ERR_OK) {

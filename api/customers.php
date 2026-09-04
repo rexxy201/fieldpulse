@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (in_array(method(), ['POST','PATCH','DELETE'], true)) verifyCsrf();
 if (!hasPermission('customers.view')) jsonResponse(['error'=>'Forbidden'],403);
 
 $id = $segments[2] ?? null;

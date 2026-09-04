@@ -11,6 +11,7 @@ if (!hasPermission('tickets.resolve') && !hasPermission('tickets.close') && !has
 }
 
 if (method() !== 'POST') jsonResponse(['error' => 'Method not allowed'], 405);
+verifyCsrf();
 if (!aiEnabled()) jsonResponse(['error' => 'AI Assistant is not enabled'], 503);
 
 $b = getBody();

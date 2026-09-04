@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (in_array(method(), ['POST','PATCH','DELETE'], true)) verifyCsrf();
 // Keys that are never exposed outside admin-level responses
 const SENSITIVE_KEYS = ['smtpPassword', 'smtpUser', 'smtpHost', 'smtpPort', 'smtpFrom', 'smtpFromName', 'smtpSecure', 'openaiApiKey'];
 if (method() === 'GET') {

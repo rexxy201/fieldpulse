@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (in_array(method(), ['POST','PATCH','DELETE'], true)) verifyCsrf();
 
 $user = currentUser();
 $uid  = $user['id'];  // UUID string — do NOT cast to int

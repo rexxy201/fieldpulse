@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (in_array(method(), ['POST','PATCH','DELETE'], true)) verifyCsrf();
 if (method() === 'GET') { jsonResponse(dbFetchAll("SELECT * FROM sla_configs ORDER BY priority")); }
 if (method() === 'POST') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);

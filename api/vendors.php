@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../config.php';
 requireAuth();
+if (in_array(method(), ['POST','PATCH','DELETE'], true)) verifyCsrf();
 $id = $segments[2] ?? null;
 
 if ($id && method() === 'PATCH') {

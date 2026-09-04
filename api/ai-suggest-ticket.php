@@ -9,6 +9,7 @@ requireAuth();
 requirePermission('tickets.create');
 
 if (method() !== 'POST') jsonResponse(['error' => 'Method not allowed'], 405);
+verifyCsrf();
 if (!aiEnabled()) jsonResponse(['error' => 'AI Assistant is not enabled'], 503);
 
 $b = getBody();

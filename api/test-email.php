@@ -3,6 +3,7 @@ require_once __DIR__ . '/../config.php';
 requireAuth();
 if (!isAdmin()) jsonResponse(['error' => 'Forbidden'], 403);
 if (method() !== 'POST') jsonResponse(['error' => 'POST required'], 405);
+verifyCsrf();
 
 $user = currentUser();
 $toEmail = $user['email'] ?? '';
