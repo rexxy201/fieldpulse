@@ -15,6 +15,7 @@ if ($id && $sub === 'password' && method() === 'PATCH') {
 }
 
 if ($id && method() === 'PATCH') {
+    if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $allowed=['name','email','phone','role','hub_id','team_id','vendor_id','status'];
     $sets=[]; $vals=[];
