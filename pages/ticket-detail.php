@@ -19,6 +19,10 @@ $customer = !empty($ticket['customer_id'])
 
 $comments  = dbFetchAll("SELECT * FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at", [$ticketId]);
 $photos    = dbFetchAll("SELECT * FROM ticket_photos WHERE ticket_id = ? ORDER BY created_at DESC", [$ticketId]);
+// Per-record activity timeline — the audit_logs data already exists (every
+// write on this page calls auditLog('...','ticket',$ticketId)), it just
+// wasn't surfaced anywhere but the admin-only global log. Cheap to expose.
+$activity  = dbFetchAll("SELECT * FROM audit_logs WHERE entity='ticket' AND entity_id=? ORDER BY created_at DESC LIMIT 30", [$ticketId]);
 $engineers = dbFetchAll("SELECT id,name,role FROM users WHERE role IN ('engineer','noc_engineer','supervisor-fiber','supervisor-noc','cx_supervisor') ORDER BY name");
 $user      = currentUser();
 $role      = $user['role'];
@@ -127,10 +131,20 @@ if (method() === 'POST') {
             saveTicketPhotos($_FILES['photos'], $ticketId, $user['id'], $user['name']);
         }
         if ($sets) {
-            $sets[]="updated_at=NOW()"; $vals[]=$ticketId;
+            $sets[]="updated_at=NOW()"; $sets[]="lock_version=lock_version+1";
             if ($newStatus === 'resolved') { $sets[]="resolved_at=NOW()"; }
             if ($newStatus === 'closed')   { $sets[]="closed_at=NOW()"; }
-            dbRun("UPDATE tickets SET ".implode(',',$sets)." WHERE id=?",$vals);
+            // Optimistic lock: guard the UPDATE on the lock_version the form was
+            // rendered with, so two people editing the same ticket concurrently
+            // can't silently clobber each other — if someone else's update landed
+            // first, rowCount() is 0 and we bounce back with a conflict notice
+            // instead of overwriting their change.
+            $expectedLockVersion = (int)($b['lock_version'] ?? -1);
+            $vals[] = $ticketId; $vals[] = $expectedLockVersion;
+            $st = dbRun("UPDATE tickets SET ".implode(',',$sets)." WHERE id=? AND lock_version=?", $vals);
+            if ($st->rowCount() === 0) {
+                header("Location: /ticket/{$ticketId}?conflict=1"); exit;
+            }
             auditLog('update','ticket',$ticketId,json_encode(array_keys($b)));
 
             $updatedTicket = dbFetch("SELECT * FROM tickets WHERE id = ?", [$ticketId]);
@@ -406,6 +420,7 @@ require __DIR__ . '/../includes/header.php';
       <div class="card-header">Update Ticket</div>
       <form method="POST" enctype="multipart/form-data" class="p-3 d-flex flex-column gap-2" id="updateForm">
         <input type="hidden" name="_action" value="update">
+        <input type="hidden" name="lock_version" value="<?= (int)($ticket['lock_version'] ?? 0) ?>">
         <?= csrfField() ?>
         <!-- Hidden RCA fields populated by modal -->
         <input type="hidden" name="roca_root_cause" id="hRootCause" value="<?= htmlspecialchars($ticket['roca_root_cause'] ?? '') ?>">
@@ -469,6 +484,12 @@ require __DIR__ . '/../includes/header.php';
         </div>
         <?php endif; ?>
 
+        <?php if (isset($_GET['conflict'])): ?>
+        <div class="alert alert-warning py-2 small mb-0">
+          <i class="bi bi-exclamation-triangle me-1"></i>Someone else updated this ticket while you were editing it. Your changes were <strong>not</strong> saved — the page below now shows the latest version; please re-apply your changes.
+        </div>
+        <?php endif; ?>
+
         <button type="button" class="btn btn-sm btn-primary" onclick="handleSave()">Save Changes</button>
       </form>
     </div>
@@ -488,6 +509,25 @@ require __DIR__ . '/../includes/header.php';
       </form>
     </div>
     <?php endif; ?>
+
+    <!-- Activity timeline -->
+    <div class="card-section mt-3">
+      <div class="card-header"><i class="bi bi-clock-history me-1"></i>Activity (<?= count($activity) ?>)</div>
+      <div class="p-3" style="max-height:320px;overflow-y:auto">
+        <?php if (!$activity): ?>
+        <div class="text-muted small">No activity recorded yet.</div>
+        <?php endif; ?>
+        <?php foreach ($activity as $a): ?>
+        <div class="d-flex align-items-start gap-2 mb-2 small">
+          <span class="badge bg-light text-dark border" style="font-size:.65rem"><?= htmlspecialchars(str_replace('_',' ',$a['action'] ?? '')) ?></span>
+          <div class="flex-grow-1">
+            <div><?= htmlspecialchars($a['user_name'] ?: 'System') ?></div>
+            <div class="text-muted" style="font-size:.72rem"><?= date('d M Y H:i', strtotime($a['created_at'])) ?></div>
+          </div>
+        </div>
+        <?php endforeach; ?>
+      </div>
+    </div>
   </div>
 </div>
 

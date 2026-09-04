@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS `tickets` (
   `resolution_geo_lng`    VARCHAR(50)  DEFAULT NULL,
   `sla_warned_at`         DATETIME     DEFAULT NULL,
   `escalated_at`          DATETIME     DEFAULT NULL,
+  `lock_version`          INT          NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   KEY `idx_tickets_status`    (`status`),
   KEY `idx_tickets_assigned`  (`assigned_to`),

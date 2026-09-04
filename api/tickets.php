@@ -27,7 +27,7 @@ if ($id && $sub === 'comments') {
 // ─── Bulk update
 if ($id === 'bulk-update' && method() === 'POST') {
     $b = getBody();
-    $ids = $b['ids'] ?? [];
+    $ids = array_values(array_filter(array_map('strval', $b['ids'] ?? [])));
     if (empty($ids)) jsonResponse(['error' => 'No IDs'], 400);
     // Resolve/close are separately permissioned — block a bulk status change to
     // either if the caller doesn't hold the specific permission for it.
@@ -42,11 +42,30 @@ if ($id === 'bulk-update' && method() === 'POST') {
     if (in_array($b['status'] ?? '', ['resolved', 'closed'], true)) {
         jsonResponse(['error' => 'Resolving or closing requires RCA, which can\'t be set in bulk — update tickets individually.'], 400);
     }
+    if (!empty($b['status'])     && !hasPermission('tickets.update')) jsonResponse(['error' => 'Forbidden — missing tickets.update'], 403);
+    if (!empty($b['priority'])   && !hasPermission('tickets.update')) jsonResponse(['error' => 'Forbidden — missing tickets.update'], 403);
+    if (!empty($b['assignedTo']) && !hasPermission('tickets.assign')) jsonResponse(['error' => 'Forbidden — missing tickets.assign'], 403);
+
+    // Scope the requested IDs down to tickets this caller can actually see —
+    // ticketScopeSql() is the same rule used everywhere else (list/detail/API),
+    // so a bulk action can't be used to touch tickets outside a vendor's
+    // company or a non-view_all user's own tickets just by guessing IDs.
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    if (!empty($b['status']))     dbRun("UPDATE tickets SET status=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['status']], $ids));
-    if (!empty($b['assignedTo'])) dbRun("UPDATE tickets SET assigned_to=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['assignedTo']], $ids));
-    if (!empty($b['priority']))   dbRun("UPDATE tickets SET priority=?, updated_at=NOW() WHERE id IN ($placeholders)", array_merge([$b['priority']], $ids));
-    jsonResponse(['updated' => count($ids)]);
+    [$scopeSql, $scopeParams] = ticketScopeSql('');
+    $scopedRows = dbFetchAll(
+        "SELECT id FROM tickets WHERE id IN ($placeholders)" . ($scopeSql ? " AND $scopeSql" : ''),
+        array_merge($ids, $scopeParams)
+    );
+    $scopedIds = array_column($scopedRows, 'id');
+    if (!$scopedIds) jsonResponse(['error' => 'None of the selected tickets are accessible to you'], 403);
+    $skipped = count($ids) - count($scopedIds);
+
+    $placeholders = implode(',', array_fill(0, count($scopedIds), '?'));
+    if (!empty($b['status']))     dbRun("UPDATE tickets SET status=?, updated_at=NOW(), lock_version=lock_version+1 WHERE id IN ($placeholders)", array_merge([$b['status']], $scopedIds));
+    if (!empty($b['assignedTo'])) dbRun("UPDATE tickets SET assigned_to=?, updated_at=NOW(), lock_version=lock_version+1 WHERE id IN ($placeholders)", array_merge([$b['assignedTo']], $scopedIds));
+    if (!empty($b['priority']))   dbRun("UPDATE tickets SET priority=?, updated_at=NOW(), lock_version=lock_version+1 WHERE id IN ($placeholders)", array_merge([$b['priority']], $scopedIds));
+    foreach ($scopedIds as $tid) { auditLog('bulk_update', 'ticket', $tid, json_encode(array_intersect_key($b, array_flip(['status','assignedTo','priority'])))); }
+    jsonResponse(['updated' => count($scopedIds), 'skipped' => $skipped]);
 }
 
 // ─── Auto-dispatch
@@ -125,12 +144,24 @@ if ($id && method() === 'PATCH') {
         if (array_key_exists($col, $b)) { $sets[] = "$col = ?"; $vals[] = $b[$col]; }
     }
     if (!$sets) jsonResponse(['error' => 'Nothing to update'], 400);
-    $sets[] = "updated_at = NOW()";
+    $sets[] = "updated_at = NOW()"; $sets[] = "lock_version = lock_version + 1";
     if (($b['status'] ?? '') === 'resolved') { $sets[] = "resolved_at = NOW()"; }
     if (($b['status'] ?? '') === 'closed')   { $sets[] = "closed_at = NOW()"; }
-    $vals[] = $id;
     $prevTicket = dbFetch("SELECT created_by, assigned_to, customer_id, status FROM tickets WHERE id = ?", [$id]);
-    dbRun("UPDATE tickets SET " . implode(', ', $sets) . " WHERE id = ?", $vals);
+    // Optimistic lock: if the caller sent lock_version (the value they last
+    // read), guard the UPDATE on it — same mechanism as the web UI's ticket
+    // form. Callers that don't send it (e.g. older integrations) skip the
+    // guard rather than being broken by it.
+    if (array_key_exists('lock_version', $b)) {
+        $vals[] = $id; $vals[] = (int)$b['lock_version'];
+        $st = dbRun("UPDATE tickets SET " . implode(', ', $sets) . " WHERE id = ? AND lock_version = ?", $vals);
+        if ($st->rowCount() === 0) {
+            jsonResponse(['error' => 'This ticket was updated by someone else since you last read it. Refetch and retry.'], 409);
+        }
+    } else {
+        $vals[] = $id;
+        dbRun("UPDATE tickets SET " . implode(', ', $sets) . " WHERE id = ?", $vals);
+    }
     $t = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
     auditLog('update', 'ticket', $id);
 

@@ -11,3 +11,6 @@ secrets.php
 # Local file uploads and test artifacts — never committed.
 uploads/
 .phpunit.cache/
+
+# Local graphify knowledge-graph output — regenerated on demand, not app code.
+graphify-out/

@@ -75,6 +75,9 @@ $tickets  = dbFetchAll(
     $params
 );
 
+$canBulkUpdate = hasPermission('tickets.update');
+$canBulkAssign = hasPermission('tickets.assign');
+
 $pageTitle = 'Tickets';
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -163,6 +166,40 @@ require __DIR__ . '/../includes/header.php';
     <?php endif; ?>
   </div>
 </div>
+
+<?php if ($canBulkUpdate || $canBulkAssign): ?>
+<!-- Bulk action toolbar — hidden until at least one row is selected -->
+<div id="bulkToolbar" class="d-none align-items-center gap-2 flex-wrap p-2 mb-2 rounded" style="background:#eff6ff;border:1px solid #93c5fd">
+  <span class="small fw-semibold ms-1" id="bulkCount">0 selected</span>
+  <?php if ($canBulkUpdate): ?>
+  <select class="form-select form-select-sm" style="width:auto" id="bulkStatus">
+    <option value="">Set status…</option>
+    <option value="open">Open</option>
+    <option value="in_progress">In Progress</option>
+    <option value="pending_confirmation">Pending Confirmation</option>
+  </select>
+  <select class="form-select form-select-sm" style="width:auto" id="bulkPriority">
+    <option value="">Set priority…</option>
+    <option value="p1">P1 — Critical</option>
+    <option value="p2">P2 — High</option>
+    <option value="p3">P3 — Medium</option>
+    <option value="p4">P4 — Low</option>
+  </select>
+  <?php endif; ?>
+  <?php if ($canBulkAssign): ?>
+  <select class="form-select form-select-sm" style="width:auto" id="bulkAssignee">
+    <option value="">Assign to…</option>
+    <?php foreach ($engineers as $e): ?>
+    <option value="<?= htmlspecialchars($e['id']) ?>"><?= htmlspecialchars($e['name']) ?></option>
+    <?php endforeach; ?>
+  </select>
+  <?php endif; ?>
+  <button type="button" class="btn btn-sm btn-primary" onclick="applyBulkAction()" id="bulkApplyBtn">Apply</button>
+  <span class="small text-muted" id="bulkStatusMsg"></span>
+  <span class="text-muted small ms-auto" style="cursor:pointer" onclick="clearBulkSelection()"><i class="bi bi-x-lg me-1"></i>Clear selection</span>
+  <div class="small text-muted w-100 ms-1">Resolving or closing isn't available in bulk — RCA is required per ticket, so update those individually.</div>
+</div>
+<?php endif; ?>
 
 <!-- Tickets table -->
 <div class="card-section" style="border-radius:0 0 .75rem .75rem">
@@ -371,6 +408,51 @@ function updateSelectionInfo() {
     ? selected + ' ticket' + (selected !== 1 ? 's' : '') + ' selected'
     : '<?= number_format($total) ?> ticket<?= $total !== 1 ? "s" : "" ?> total';
   document.getElementById('selectAll').indeterminate = selected > 0 && selected < total;
+
+  const toolbar = document.getElementById('bulkToolbar');
+  if (toolbar) {
+    toolbar.classList.toggle('d-none', selected === 0);
+    toolbar.classList.toggle('d-flex', selected > 0);
+    document.getElementById('bulkCount').textContent = selected + ' selected';
+  }
+}
+
+function clearBulkSelection() {
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  document.getElementById('selectAll').checked = false;
+  updateSelectionInfo();
+}
+
+async function applyBulkAction() {
+  const ids = Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  const status     = document.getElementById('bulkStatus')?.value || '';
+  const priority   = document.getElementById('bulkPriority')?.value || '';
+  const assignedTo = document.getElementById('bulkAssignee')?.value || '';
+  if (!status && !priority && !assignedTo) {
+    document.getElementById('bulkStatusMsg').textContent = 'Pick something to change first.';
+    return;
+  }
+  const btn = document.getElementById('bulkApplyBtn');
+  btn.disabled = true;
+  document.getElementById('bulkStatusMsg').textContent = 'Applying…';
+  try {
+    const res = await fetch('/api/tickets/bulk-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, status, priority, assignedTo }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('bulkStatusMsg').textContent = data.error || 'Something went wrong.';
+      btn.disabled = false;
+      return;
+    }
+    window.location.reload();
+  } catch (e) {
+    document.getElementById('bulkStatusMsg').textContent = 'Network error — please try again.';
+    btn.disabled = false;
+  }
 }
 </script>
 

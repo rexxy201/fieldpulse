@@ -3195,6 +3195,25 @@ if (!$_sv42) {
     }
 }
 
+// schema_v43: lock_version on tickets — an integer bumped on every update, so
+// concurrent edits to the same ticket (e.g. two dispatchers) can be detected
+// instead of silently last-write-wins. See the optimistic-locking guard in
+// pages/ticket-detail.php and api/tickets.php's PATCH handler.
+$_sv43 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v43_migrated'");
+if (!$_sv43) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE `tickets` ADD COLUMN `lock_version` INT NOT NULL DEFAULT 0"); }
+            catch (\Throwable $e) { error_log('Schema v43: add lock_version: ' . $e->getMessage()); }
+        } else {
+            try { db()->exec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS lock_version INT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v43_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v43 migration error: ' . $e->getMessage());
+    }
+}
+
 /** Vendor company responsible for maintenance tickets in a hub's location, if configured. */
 function getMaintenanceVendorForHub(?string $hubId): ?string {
     if (!$hubId) return null;
@@ -3333,14 +3352,21 @@ function getBudgetStatuses(): array {
 // enforcement in each api/v1/*.php endpoint — a scope existing here doesn't
 // grant anything by itself, each endpoint must explicitly requireApiScope() it.
 define('API_SCOPES', [
-    'customers.read'  => 'Read customer records',
-    'customers.write' => 'Create / update customer records',
-    'payments.read'   => 'Read payment requests',
-    'payments.write'  => 'Record payments against approved payment requests',
+    'customers.read'      => 'Read customer records',
+    'customers.write'     => 'Create / update customer records',
+    'payments.read'       => 'Read payment requests',
+    'payments.write'      => 'Record payments against approved payment requests',
+    'tickets.read'        => 'Read tickets (list, detail)',
+    'tickets.write'       => 'Update ticket status/priority/assignment/RCA, upload photos',
+    'installations.read'  => 'Read installation jobs',
+    'installations.write' => 'Update installation stage/fields',
 ]);
 
 // Events FieldPulse can push to a key's webhook_url, if it has one configured.
-define('WEBHOOK_EVENTS', ['customer.created', 'customer.updated', 'payment.disbursed']);
+define('WEBHOOK_EVENTS', [
+    'customer.created', 'customer.updated', 'payment.disbursed',
+    'ticket.updated', 'installation.updated',
+]);
 
 function generateApiKey(): array {
     $secret = bin2hex(random_bytes(24)); // 48 hex chars
