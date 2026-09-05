@@ -106,6 +106,106 @@
   setInterval(fetchNotifs, 60000);
 })();
 
+// ── Global search ────────────────────────────────────────────────────────
+(function() {
+  const input   = document.getElementById('globalSearchInput');
+  const results = document.getElementById('globalSearchResults');
+  if (!input || !results) return;
+
+  const GROUP_LABELS = { tickets: 'Tickets', customers: 'Customers', installations: 'Installations' };
+  let debounceTimer, activeIndex = -1, currentItems = [];
+
+  function escH(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function render(data) {
+    const groups = data.results || {};
+    currentItems = [];
+    activeIndex = -1;
+    const groupKeys = Object.keys(groups).filter(k => groups[k] && groups[k].length);
+
+    if (!groupKeys.length) {
+      results.innerHTML = '<div class="gs-empty">No matches.</div>';
+      results.classList.remove('d-none');
+      return;
+    }
+    let html = '';
+    groupKeys.forEach(key => {
+      html += `<div class="gs-group-label">${GROUP_LABELS[key] || key}</div>`;
+      groups[key].forEach(item => {
+        currentItems.push(item);
+        html += `<a class="gs-item" href="${escH(item.url)}" data-idx="${currentItems.length - 1}">
+          <div class="gs-item-title">${escH(item.title)}</div>
+          <div class="gs-item-subtitle">${escH(item.subtitle || '')}</div>
+        </a>`;
+      });
+    });
+    results.innerHTML = html;
+    results.classList.remove('d-none');
+  }
+
+  function search(q) {
+    if (q.trim().length < 2) {
+      results.classList.add('d-none');
+      results.innerHTML = '';
+      return;
+    }
+    fetch('/api/search?q=' + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(render)
+      .catch(() => {});
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const q = input.value;
+    debounceTimer = setTimeout(() => search(q), 300);
+  });
+
+  input.addEventListener('focus', () => {
+    if (input.value.trim().length >= 2 && results.innerHTML) results.classList.remove('d-none');
+  });
+
+  // Keyboard navigation through the currently rendered list
+  input.addEventListener('keydown', e => {
+    const items = results.querySelectorAll('.gs-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeIndex = Math.min(activeIndex + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+    } else if (e.key === 'Enter') {
+      if (activeIndex >= 0 && items[activeIndex]) { window.location.href = items[activeIndex].getAttribute('href'); }
+      return;
+    } else if (e.key === 'Escape') {
+      results.classList.add('d-none');
+      input.blur();
+      return;
+    } else {
+      return;
+    }
+    items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+    items[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  });
+
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('globalSearchWrap');
+    if (wrap && !wrap.contains(e.target)) results.classList.add('d-none');
+  });
+
+  // "/" focuses global search from anywhere, unless already typing in a field
+  document.addEventListener('keydown', e => {
+    if (e.key !== '/') return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+    e.preventDefault();
+    input.focus();
+  });
+})();
+
 // ── CSRF: inject token into all POST forms + all fetch() calls ────────────
 (function() {
   const token = document.querySelector('meta[name="csrf-token"]')?.content || '';

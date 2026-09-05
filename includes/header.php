@@ -219,6 +219,14 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     </button>
     <div class="fw-semibold" style="font-size:.9375rem"><?= htmlspecialchars($pageTitle ?? '') ?></div>
   </div>
+
+  <!-- Global search — jump to a ticket/customer/installation from any page -->
+  <div class="global-search d-none d-md-block" id="globalSearchWrap">
+    <i class="bi bi-search"></i>
+    <input type="text" id="globalSearchInput" class="form-control form-control-sm" placeholder="Search tickets, customers, installations…" autocomplete="off">
+    <div class="global-search-results d-none" id="globalSearchResults"></div>
+  </div>
+
   <div class="d-flex align-items-center gap-2">
     <span class="badge bg-light text-dark border small d-none d-sm-inline"><?= htmlspecialchars($role) ?></span>
 

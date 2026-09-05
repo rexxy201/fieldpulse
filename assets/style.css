@@ -140,6 +140,29 @@ a { text-decoration: none; }
 }
 .topbar .fw-semibold { font-size: 1rem; color: var(--text-main); }
 
+/* ── Global search (topbar) ──────────────────────────────────────────────── */
+.global-search { position: relative; width: 320px; flex: 0 1 320px; }
+.global-search > .bi-search {
+    position: absolute; left: .65rem; top: 50%; transform: translateY(-50%);
+    color: #94a3b8; font-size: .85rem; pointer-events: none;
+}
+.global-search input { padding-left: 2rem; }
+.global-search-results {
+    position: absolute; top: calc(100% + .35rem); left: 0; right: 0;
+    background: #fff; border: 1px solid var(--border); border-radius: .5rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); max-height: 420px; overflow-y: auto;
+    z-index: 200; padding: .35rem 0;
+}
+.gs-group-label {
+    font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: #94a3b8; padding: .4rem .9rem .2rem;
+}
+.gs-item { display: block; padding: .45rem .9rem; text-decoration: none; color: var(--text-main); }
+.gs-item:hover, .gs-item.active { background: #f1f5f9; }
+.gs-item-title { font-size: .8375rem; font-weight: 600; }
+.gs-item-subtitle { font-size: .72rem; color: var(--text-muted); }
+.gs-empty, .gs-hint { padding: .75rem .9rem; font-size: .8125rem; color: var(--text-muted); }
+
 .page-content { padding: 1.75rem; flex: 1; }
 
 /* ── Stat cards ───────────────────────────────────────────────────────────── */
