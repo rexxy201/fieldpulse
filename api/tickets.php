@@ -246,6 +246,18 @@ if (method() === 'POST') {
         }
     }
 
+    // Look up route_to up front — this (not the free-text category $type
+    // above) is what actually says where a ticket should go, and it's the
+    // single source of truth for whether hub/vendor *location* routing
+    // applies at all. Only fiber tickets are location-routed; NOC and CX
+    // always go to their department supervisor regardless of which hub
+    // they're tied to.
+    $routeTo = '';
+    if (!empty($b['faultTypeId'])) {
+        $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['faultTypeId']]);
+        $routeTo = strtolower(trim($ftRoute['route_to'] ?? ''));
+    }
+
     // Two independent vendor concepts: vendorId (if passed) is the
     // installation vendor, written to vendor_id. maintenance_vendor_id is
     // the fiber/maintenance vendor, resolved automatically from the
@@ -260,13 +272,14 @@ if (method() === 'POST') {
     if (!empty($b['assignedTo'])) {
         $assignedTo = $b['assignedTo'];
     } else {
-        // Maintenance-vendor routing is for trouble/fault tickets — an
-        // installation-type ticket shouldn't get routed there just because
-        // it shares a hub.
-        $maintVendorId = $type !== 'installation' ? getMaintenanceVendorForHub($hubId) : null;
+        // Maintenance-vendor (whole-team, by hub) routing is for fiber
+        // trouble tickets specifically — previously gated only on $type
+        // !== 'installation', which let any non-installation ticket sharing
+        // a hub with a configured vendor get swept into that vendor's team,
+        // NOC tickets included, bypassing the NOC-supervisor routing below
+        // entirely whenever that hub happened to have a vendor configured.
+        $maintVendorId = ($type !== 'installation' && $routeTo === 'fiber') ? getMaintenanceVendorForHub($hubId) : null;
         if (!$maintVendorId && !empty($b['faultTypeId'])) {
-            $ftRoute = dbFetch("SELECT route_to FROM fault_types WHERE id=?", [$b['faultTypeId']]);
-            $routeTo = strtolower($ftRoute['route_to'] ?? '');
             if (in_array($routeTo, ['fiber', 'installation']) && $hubId) {
                 $assignee = getAutoAssignFiber($b['faultTypeId'], $hubId);
             } else {
