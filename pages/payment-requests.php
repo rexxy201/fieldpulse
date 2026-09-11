@@ -17,6 +17,27 @@ if (!$canCreate && !$canView) { header('Location: /dashboard'); exit; }
 
 $isVendor = $role === 'vendor';
 
+// Deep-link from a ticket's "Create Payment Request" button — pre-selects
+// that ticket as the Link Type/Ticket and pre-fills a short description.
+// Re-validated here (not just trusted from the URL) against the same
+// ownership rule the submit-time check below uses, and against
+// canAccessTicket() generally, so the link can't be used to attach a
+// payment request to a ticket the caller can't actually see.
+$prefillTicketId = '';
+$prefillDesc = '';
+if ($canCreate && !empty($_GET['prefillTicket'])) {
+    $prefillTicketRow = dbFetch("SELECT * FROM tickets WHERE id=?", [trim($_GET['prefillTicket'])]);
+    if ($prefillTicketRow && canAccessTicket($prefillTicketRow)) {
+        $prefillOwnedByVendor = !$isVendor
+            || $prefillTicketRow['vendor_id'] === ($user['vendor_id'] ?? null)
+            || $prefillTicketRow['maintenance_vendor_id'] === ($user['vendor_id'] ?? null);
+        if ($prefillOwnedByVendor) {
+            $prefillTicketId = $prefillTicketRow['id'];
+            $prefillDesc = trim($_GET['prefillDesc'] ?? '');
+        }
+    }
+}
+
 const PR_CATEGORIES = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials','Other'];
 // Request Type controls whether this voucher is tied to one or more real
 // customer records. 'operational' — Customer-type: at least one customer
@@ -265,8 +286,8 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                 if (!$p || $p['vendor_id'] !== $vendorId) { $linkedId = null; $linkedType = null; }
             }
             if ($isVendor && $linkedType === 'ticket') {
-                $t = dbFetch("SELECT vendor_id FROM tickets WHERE id=?", [$linkedId]);
-                if (!$t || $t['vendor_id'] !== $vendorId) { $linkedId = null; $linkedType = null; }
+                $t = dbFetch("SELECT vendor_id, maintenance_vendor_id FROM tickets WHERE id=?", [$linkedId]);
+                if (!$t || ($t['vendor_id'] !== $vendorId && $t['maintenance_vendor_id'] !== $vendorId)) { $linkedId = null; $linkedType = null; }
             }
             $hubId = trim($b['hub_id'] ?? '') ?: getHubIdForCity($b['location'] ?? '');
             // Admin Requests never carry a customer, regardless of what was
@@ -492,10 +513,22 @@ $stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized')
 // Records available to link, scoped to the current user
 if ($isVendor && !empty($user['vendor_id'])) {
     $linkInstalls = dbFetchAll("SELECT id,name FROM installation_profiles WHERE vendor_id=? ORDER BY created_at DESC", [$user['vendor_id']]);
-    $linkTickets  = dbFetchAll("SELECT id,ticket_number,customer_name FROM tickets WHERE vendor_id=? ORDER BY created_at DESC", [$user['vendor_id']]);
+    // Either vendor role a ticket can be tied to — the manually-picked
+    // installation vendor (vendor_id) or the hub-routed maintenance/fiber
+    // vendor (maintenance_vendor_id), same "own this ticket" definition
+    // canAccessTicket() already uses elsewhere.
+    $linkTickets  = dbFetchAll("SELECT id,ticket_number,customer_name FROM tickets WHERE vendor_id=? OR maintenance_vendor_id=? ORDER BY created_at DESC", [$user['vendor_id'], $user['vendor_id']]);
 } else {
     $linkInstalls = $canCreate ? dbFetchAll("SELECT id,name FROM installation_profiles ORDER BY created_at DESC LIMIT 500") : [];
     $linkTickets  = $canCreate ? dbFetchAll("SELECT id,ticket_number,customer_name FROM tickets ORDER BY created_at DESC LIMIT 500") : [];
+}
+// The ticket deep-linked into via ?prefillTicket= might be older than the
+// 500 most recent (or, for a vendor, just not among the ones fetched above
+// for some other reason) — make sure it's always an option in the picker
+// so the JS setValue() below actually has something to select.
+if ($prefillTicketId && !in_array($prefillTicketId, array_column($linkTickets, 'id'), true)) {
+    $prefillTicketRowForPicker = dbFetch("SELECT id,ticket_number,customer_name FROM tickets WHERE id=?", [$prefillTicketId]);
+    if ($prefillTicketRowForPicker) array_unshift($linkTickets, $prefillTicketRowForPicker);
 }
 $allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM customers ORDER BY name LIMIT 2000") : [];
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
@@ -961,6 +994,17 @@ document.addEventListener('DOMContentLoaded', function () {
   linkTicketTS  = new TomSelect('#linkTicketSelect',  { create:false, sortField:{field:'text',direction:'asc'} });
   customerIdsTS = new TomSelect('#prCustomerIds', { plugins:['remove_button'], sortField:{field:'text',direction:'asc'} });
   <?php if ($err): ?>
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
+  <?php endif; ?>
+  <?php if ($prefillTicketId): ?>
+  // Arrived via a ticket's "Create Payment Request" button — open the
+  // modal pre-linked to that ticket with a short description filled in;
+  // everything else (amount, category, etc.) the requester still fills in.
+  resetForCreate();
+  document.getElementById('linkType').value = 'ticket';
+  toggleLinkPicker('ticket');
+  if (linkTicketTS) linkTicketTS.setValue(<?= json_encode($prefillTicketId) ?>);
+  document.getElementById('prDescription').value = <?= json_encode($prefillDesc) ?>;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
   <?php endif; ?>
 });

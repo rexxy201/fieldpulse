@@ -195,6 +195,23 @@ require __DIR__ . '/../includes/header.php';
   <span class="badge bg-<?= $statusBg[$ticket['status']]??'secondary' ?>"><?= str_replace('_',' ',ucfirst($ticket['status'])) ?></span>
   <span class="badge bg-<?= $prioBg[$ticket['priority']]??'secondary' ?>"><?= strtoupper($ticket['priority']??'') ?></span>
   <?php if ($isBreached): ?><span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>SLA Breached</span><?php endif; ?>
+
+  <?php if (hasPermission('payment_requests.create')): ?>
+  <?php
+    // Short context for the payment-request Description field — the requester
+    // still fills in the actual amount/breakdown, this just saves them from
+    // retyping what the ticket already says.
+    $_prPrefillDesc = trim(
+        ($ticket['ticket_number'] ? $ticket['ticket_number'] . ' — ' : '')
+        . ($ticket['customer_name'] ? $ticket['customer_name'] . ': ' : '')
+        . substr($ticket['description'] ?? '', 0, 150)
+    );
+  ?>
+  <a href="/payment-requests?prefillTicket=<?= urlencode($ticketId) ?>&prefillDesc=<?= urlencode($_prPrefillDesc) ?>"
+     class="btn btn-sm btn-outline-primary ms-auto">
+    <i class="bi bi-cash-coin me-1"></i>Create Payment Request
+  </a>
+  <?php endif; ?>
 </div>
 
 <div class="row g-3">
