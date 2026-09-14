@@ -10,6 +10,9 @@ $search  = trim($_GET['search'] ?? '');
 $status  = $_GET['status'] ?? '';
 $paid    = $_GET['paid'] ?? '';
 $vendorId = $_GET['vendor'] ?? '';
+// Same Date Range presets as the list page — the export mirrors exactly what
+// the filtered screen shows.
+['from' => $dateFrom, 'to' => $dateTo] = resolveDateRange($_GET);
 
 $where = []; $params = [];
 // Vendor users only ever export their own company's installation jobs — this
@@ -23,6 +26,8 @@ if ($search) { $where[] = "(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)";
 if ($status) { $where[] = "p.status = ?"; $params[] = $status; }
 if ($paid === 'unset') { $where[] = "(p.installation_paid IS NULL OR p.installation_paid = '')"; }
 elseif ($paid) { $where[] = "p.installation_paid = ?"; $params[] = $paid; }
+if ($dateFrom) { $where[] = "p.created_at >= ?"; $params[] = $dateFrom . ' 00:00:00'; }
+if ($dateTo)   { $where[] = "p.created_at <= ?"; $params[] = $dateTo . ' 23:59:59'; }
 $whereSQL = $where ? ' WHERE ' . implode(' AND ', $where) : '';
 
 $profiles = dbFetchAll(

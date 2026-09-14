@@ -375,6 +375,9 @@ $search  = $_GET['search'] ?? '';
 $stFilter = $_GET['status'] ?? '';
 $paidFilter = $_GET['paid'] ?? '';
 $vendorFilter = $_GET['vendor'] ?? '';
+// Date Range filter — presets ("Previous Month", "Quarter To Date", …) resolve
+// to concrete dates server-side; see includes/date-range.php.
+['range' => $dateRange, 'from' => $dateFrom, 'to' => $dateTo] = resolveDateRange($_GET);
 
 $where=[]; $params=[];
 // Vendor-type users only ever see their own company's installation jobs
@@ -390,6 +393,9 @@ if ($search) { $where[]="(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ?)"; $
 if ($stFilter) { $where[]="p.status=?"; $params[]=$stFilter; }
 if ($paidFilter === 'unset') { $where[]="(p.installation_paid IS NULL OR p.installation_paid='')"; }
 elseif ($paidFilter) { $where[]="p.installation_paid=?"; $params[]=$paidFilter; }
+// Date range applies to when the job was raised, matching the Tickets list.
+if ($dateFrom) { $where[]="p.created_at >= ?"; $params[]=$dateFrom.' 00:00:00'; }
+if ($dateTo)   { $where[]="p.created_at <= ?"; $params[]=$dateTo.' 23:59:59'; }
 
 $profiles = dbFetchAll("SELECT p.*,v.name AS vendor_name,h.name AS hub_name FROM installation_profiles p LEFT JOIN vendors v ON v.id=p.vendor_id LEFT JOIN hubs h ON h.id=p.hub_id".($where?" WHERE ".implode(' AND ',$where):'')." ORDER BY p.created_at DESC",$params);
 $vendors  = $canEdit ? dbFetchAll("SELECT id,name FROM vendors WHERE type='installation' AND status='active' ORDER BY name") : [];
@@ -405,6 +411,10 @@ $errMsg   = $_GET['err'] ?? '';
 // table-alias prefix on the scope fragment).
 [$_statsScopeSql, $_statsVendorParams] = installationScopeSql('');
 $_statsVendorSql = $_statsScopeSql ? " AND {$_statsScopeSql}" : '';
+// The cards also honour the Date Range filter, so the counts always add up to
+// what the list below is actually showing.
+if ($dateFrom) { $_statsVendorSql .= " AND created_at >= ?"; $_statsVendorParams[] = $dateFrom.' 00:00:00'; }
+if ($dateTo)   { $_statsVendorSql .= " AND created_at <= ?"; $_statsVendorParams[] = $dateTo.' 23:59:59'; }
 $stats = [];
 foreach ($STATUS_LABELS as $s => $l) {
     $stats[$s] = (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE status=?{$_statsVendorSql}",array_merge([$s],$_statsVendorParams))['c'] ?? 0);
@@ -414,6 +424,10 @@ $paidStats = [
     'No'    => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE installation_paid='No'{$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
     'unset' => (int)(dbFetch("SELECT COUNT(*) AS c FROM installation_profiles WHERE (installation_paid IS NULL OR installation_paid=''){$_statsVendorSql}",$_statsVendorParams)['c'] ?? 0),
 ];
+// Filters preserved when clicking a stat card or exporting.
+$_instFilters = array_filter(['search'=>$search,'status'=>$stFilter,'paid'=>$paidFilter,'vendor'=>$vendorFilter,
+                              'dateRange'=>$dateRange,'dateFrom'=>$dateFrom,'dateTo'=>$dateTo], fn($v) => $v !== '' && $v !== null);
+$_instDateOnly = array_filter($_instFilters, fn($k) => in_array($k, ['dateRange','dateFrom','dateTo'], true), ARRAY_FILTER_USE_KEY);
 
 // For detail view — vendor-type users may only open their own (hub-scoped) jobs
 $detailId = $_GET['detail'] ?? null;
@@ -440,20 +454,20 @@ require __DIR__ . '/../includes/header.php';
 <div class="row g-2 mb-3">
   <?php foreach ($STATUS_LABELS as $s => $l): ?>
   <div class="col-6 col-sm-4 col-xl-2">
-    <a href="/installations?status=<?=$s?>" class="stat-card py-2 text-decoration-none d-block text-center <?= $stFilter===$s?'border-primary':'' ?>">
+    <a href="/installations?<?= http_build_query(array_merge($_instDateOnly, ['status'=>$s])) ?>" class="stat-card py-2 text-decoration-none d-block text-center <?= $stFilter===$s?'border-primary':'' ?>">
       <div class="fw-bold fs-5"><?= $stats[$s] ?></div>
       <div style="font-size:.7rem;color:#64748b"><?= $l ?></div>
     </a>
   </div>
   <?php endforeach; ?>
   <div class="col-6 col-sm-4 col-xl-2">
-    <a href="/installations?paid=Yes" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='Yes'?'border-primary':'' ?>">
+    <a href="/installations?<?= http_build_query(array_merge($_instDateOnly, ['paid'=>'Yes'])) ?>" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='Yes'?'border-primary':'' ?>">
       <div class="fw-bold fs-5"><?= $paidStats['Yes'] ?></div>
       <div style="font-size:.7rem;color:#64748b">Installation Paid</div>
     </a>
   </div>
   <div class="col-6 col-sm-4 col-xl-2">
-    <a href="/installations?paid=No" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='No'?'border-primary':'' ?>">
+    <a href="/installations?<?= http_build_query(array_merge($_instDateOnly, ['paid'=>'No'])) ?>" class="stat-card py-2 text-decoration-none d-block text-center <?= $paidFilter==='No'?'border-primary':'' ?>">
       <div class="fw-bold fs-5"><?= $paidStats['No'] ?></div>
       <div style="font-size:.7rem;color:#64748b">Installation Not Paid</div>
     </a>
@@ -463,6 +477,7 @@ require __DIR__ . '/../includes/header.php';
 <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
   <form class="d-flex gap-2 flex-grow-1 flex-wrap" method="GET">
     <?php if ($paidFilter): ?><input type="hidden" name="paid" value="<?= htmlspecialchars($paidFilter) ?>"><?php endif; ?>
+    <?php foreach ($_instDateOnly as $_k => $_v): ?><input type="hidden" name="<?= $_k ?>" value="<?= htmlspecialchars($_v) ?>"><?php endforeach; ?>
     <div class="input-group" style="max-width:260px">
       <span class="input-group-text"><i class="bi bi-search"></i></span>
       <input type="text" name="search" class="form-control" placeholder="Search…" value="<?= htmlspecialchars($search) ?>">
@@ -475,9 +490,9 @@ require __DIR__ . '/../includes/header.php';
       <option value="">All Vendors</option>
       <?php foreach($allVendors as $v): ?><option value="<?=$v['id']?>" <?=$vendorFilter===$v['id']?'selected':''?>><?= htmlspecialchars($v['name']) ?></option><?php endforeach; ?>
     </select>
-    <?php if ($search||$stFilter||$paidFilter||$vendorFilter): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
+    <?php if ($_instFilters): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
   </form>
-  <a href="/api/installations-export.php?<?= http_build_query(['search'=>$search,'status'=>$stFilter,'paid'=>$paidFilter,'vendor'=>$vendorFilter]) ?>" class="btn btn-outline-success btn-sm">
+  <a href="/api/installations-export.php?<?= http_build_query($_instFilters) ?>" class="btn btn-outline-success btn-sm">
     <i class="bi bi-file-earmark-excel me-1"></i>Export
   </a>
   <?php if ($canEdit): ?>
@@ -495,6 +510,10 @@ require __DIR__ . '/../includes/header.php';
     <i class="bi bi-plus-lg me-1"></i>New Profile
   </button>
   <?php endif; ?>
+</div>
+
+<div class="mb-3">
+  <?php renderDateRangeFilter('/installations', $dateRange, $dateFrom, $dateTo, $_instFilters); ?>
 </div>
 
 <div class="card-section">
