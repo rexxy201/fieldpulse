@@ -2,13 +2,28 @@
 deployment:
   tasks:
     - export DEPLOYPATH=/home/mangonetcom/fieldpulse.mangonetonline.com/
-    - /bin/cp -R index.php $DEPLOYPATH
-    - /bin/cp -R config.php $DEPLOYPATH
-    - /bin/cp -R pages $DEPLOYPATH
-    - /bin/cp -R api $DEPLOYPATH
-    - /bin/cp -R includes $DEPLOYPATH
-    - /bin/cp -R assets $DEPLOYPATH
-    - /bin/cp -R vendor $DEPLOYPATH
+    # Code directories are mirrored with --delete so a file removed from the
+    # repo also disappears from the live site. Without it a deleted page stays
+    # on the server forever and is still reachable through the router.
+    #
+    # Every path below is scoped to one subdirectory with a trailing slash on
+    # both sides. Never run --delete against $DEPLOYPATH itself: that would
+    # remove secrets.php and the runtime uploads/ tree, neither of which is in
+    # git.
+    - /usr/bin/rsync -a --delete pages/    ${DEPLOYPATH}pages/
+    - /usr/bin/rsync -a --delete api/      ${DEPLOYPATH}api/
+    - /usr/bin/rsync -a --delete includes/ ${DEPLOYPATH}includes/
+    # assets/uploads/ is where the admin panel writes the company logo and
+    # favicon at runtime. It is gitignored, so --delete would destroy the
+    # site's branding on every deploy — hence the exclude.
+    - /usr/bin/rsync -a --delete --exclude 'uploads/' assets/ ${DEPLOYPATH}assets/
+    # --delete here also clears out packages dropped from composer.lock,
+    # which plain cp would leave behind indefinitely.
+    - /usr/bin/rsync -a --delete vendor/   ${DEPLOYPATH}vendor/
+    # Root-level files stay a plain copy. There is no safe way to mirror the
+    # document root itself.
+    - /bin/cp index.php $DEPLOYPATH
+    - /bin/cp config.php $DEPLOYPATH
     - /bin/cp composer.json $DEPLOYPATH
     - /bin/cp composer.lock $DEPLOYPATH
     - /bin/cp .htaccess $DEPLOYPATH

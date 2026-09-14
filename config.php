@@ -34,6 +34,9 @@ if (file_exists($_autoload)) require_once $_autoload;
 // ─── AI helper (OpenAI wrapper) ────────────────────────────────────────────────
 require_once __DIR__ . '/includes/ai.php';
 
+// ─── Shared Date Range filter (presets + bounds + filter-bar markup) ──────────
+require_once __DIR__ . '/includes/date-range.php';
+
 // ─── Database ───────────────────────────────────────────────────────────────
 // Auto-detects environment:
 //   Replit  → uses DATABASE_URL (PostgreSQL, no SSL for internal connections)

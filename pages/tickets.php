@@ -8,15 +8,10 @@ $status     = $_GET['status'] ?? '';
 $prio       = $_GET['priority'] ?? '';
 $engineerId = $_GET['engineer'] ?? '';
 $createdBy  = $_GET['createdBy'] ?? '';
-$dateFrom   = $_GET['dateFrom'] ?? '';
-$dateTo     = $_GET['dateTo'] ?? '';
-$dateRange  = $_GET['dateRange'] ?? '';
-// Any explicit from/to without a recognized preset (e.g. a direct link) still
-// displays as "Custom" in the dropdown, rather than looking unselected.
-$DATE_RANGE_PRESETS = ['month_to_date'=>'Month To Date','this_quarter'=>'This Quarter','quarter_to_date'=>'Quarter To Date',
-    'this_year'=>'This Year','year_to_date'=>'Year To Date','previous_day'=>'Previous Day','previous_week'=>'Previous Week',
-    'previous_month'=>'Previous Month','previous_quarter'=>'Previous Quarter','previous_year'=>'Previous Year','custom'=>'Custom'];
-if (!$dateRange && ($dateFrom || $dateTo)) $dateRange = 'custom';
+// Presets resolve to concrete dates server-side; any explicit from/to without a
+// preset (e.g. a direct link) still displays as "Custom" in the dropdown,
+// rather than looking unselected — see includes/date-range.php.
+['range' => $dateRange, 'from' => $dateFrom, 'to' => $dateTo] = resolveDateRange($_GET);
 // Drill-down filters (mostly linked to from /reports; faultType also has a
 // visible dropdown below — not exposed as visible dropdowns otherwise)
 $department = $_GET['department'] ?? '';
@@ -148,22 +143,8 @@ require __DIR__ . '/../includes/header.php';
       <i class="bi bi-download me-1"></i>Export CSV
     </a>
   </div>
-  <div class="px-3 pb-3 d-flex gap-2 flex-wrap align-items-center border-top pt-3">
-    <span class="text-muted small fw-semibold text-uppercase me-1" style="font-size:.72rem;letter-spacing:.05em">Date Range</span>
-    <select class="form-select form-select-sm" style="width:auto;min-width:170px" id="dateRangeSelect" onchange="applyDateRangePreset(this.value)">
-      <option value="" <?= !$dateRange?'selected':'' ?>>All Time</option>
-      <?php foreach ($DATE_RANGE_PRESETS as $drKey => $drLabel): ?>
-      <option value="<?= $drKey ?>" <?= $dateRange===$drKey?'selected':'' ?>><?= $drLabel ?></option>
-      <?php endforeach; ?>
-    </select>
-    <span id="customRangeWrap" class="d-flex gap-2 align-items-center <?= $dateRange==='custom'?'':'d-none' ?>">
-      <input type="date" class="form-control form-control-sm" style="width:auto" id="dateFromInput" value="<?= htmlspecialchars($dateFrom) ?>" onchange="applyDateRange()">
-      <span class="text-muted small">to</span>
-      <input type="date" class="form-control form-control-sm" style="width:auto" id="dateToInput" value="<?= htmlspecialchars($dateTo) ?>" onchange="applyDateRange()">
-    </span>
-    <?php if ($dateRange): ?>
-    <a href="/tickets<?= array_filter($_carryOver, fn($k)=>!in_array($k,['dateRange','dateFrom','dateTo'],true), ARRAY_FILTER_USE_KEY) ? '?'.http_build_query(array_filter($_carryOver, fn($k)=>!in_array($k,['dateRange','dateFrom','dateTo'],true), ARRAY_FILTER_USE_KEY)) : '' ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-lg me-1"></i>Clear</a>
-    <?php endif; ?>
+  <div class="px-3 pb-3 border-top pt-3">
+    <?php renderDateRangeFilter('/tickets', $dateRange, $dateFrom, $dateTo, $_carryOver); ?>
   </div>
 </div>
 
@@ -336,62 +317,7 @@ function applyFilter(key, val) {
   window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
 }
 
-// ── Date Range filter ───────────────────────────────────────────────────────
-function toISODate(d) {
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-}
-function quarterStart(year, q) { return new Date(year, q*3, 1); }
-function quarterEnd(year, q) { return new Date(year, q*3+3, 0); }
-function applyDateRangePreset(preset) {
-  if (preset === 'custom') {
-    // Reveal the pickers and let the user pick dates — don't navigate yet.
-    document.getElementById('customRangeWrap').classList.remove('d-none');
-    return;
-  }
-  if (!preset) {
-    // "All Time" — clear everything.
-    const params = new URLSearchParams(window.location.search);
-    params.delete('dateRange'); params.delete('dateFrom'); params.delete('dateTo');
-    window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
-    return;
-  }
-  const now = new Date();
-  const y = now.getFullYear(), q = Math.floor(now.getMonth()/3);
-  let from, to;
-  switch (preset) {
-    case 'month_to_date':   from = new Date(y, now.getMonth(), 1); to = now; break;
-    case 'this_quarter':    from = quarterStart(y, q); to = quarterEnd(y, q); break;
-    case 'quarter_to_date': from = quarterStart(y, q); to = now; break;
-    case 'this_year':       from = new Date(y, 0, 1); to = new Date(y, 11, 31); break;
-    case 'year_to_date':    from = new Date(y, 0, 1); to = now; break;
-    case 'previous_day':    from = new Date(now); from.setDate(now.getDate()-1); to = new Date(from); break;
-    case 'previous_week': {
-      const day = now.getDay(); // 0=Sun..6=Sat
-      const mondayOffset = (day === 0 ? -6 : 1 - day) - 7;
-      from = new Date(now); from.setDate(now.getDate() + mondayOffset);
-      to = new Date(from); to.setDate(from.getDate() + 6);
-      break;
-    }
-    case 'previous_month':   from = new Date(y, now.getMonth()-1, 1); to = new Date(y, now.getMonth(), 0); break;
-    case 'previous_quarter': from = quarterStart(y, q-1); to = quarterEnd(y, q-1); break;
-    case 'previous_year':    from = new Date(y-1, 0, 1); to = new Date(y-1, 11, 31); break;
-    default: return;
-  }
-  const params = new URLSearchParams(window.location.search);
-  params.set('dateRange', preset);
-  params.set('dateFrom', toISODate(from));
-  params.set('dateTo', toISODate(to));
-  window.location.href = '/tickets' + '?' + params.toString();
-}
-function applyDateRange() {
-  const from = document.getElementById('dateFromInput').value;
-  const to = document.getElementById('dateToInput').value;
-  const params = new URLSearchParams(window.location.search);
-  params.set('dateRange', 'custom');
-  from ? params.set('dateFrom', from) : params.delete('dateFrom');
-  to ? params.set('dateTo', to) : params.delete('dateTo');
-  window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
-}
+// Date Range filter lives in /assets/date-range.js (shared with Installations).
 
 // ── Bulk checkbox ──────────────────────────────────────────────────────────
 function toggleAll(master) {

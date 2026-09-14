@@ -8,14 +8,15 @@ $msg = ''; $msgType = 'success';
 // Permissions shown/managed on the Roles & Permissions matrix (tab-permissions
 // below). Kept as a single source of truth so the save handler only ever
 // touches permissions actually represented on screen — anything granted
-// elsewhere (e.g. Payment Requests / Finance stage permissions, which aren't
-// shown in this matrix) is left alone rather than being silently wiped on
-// every save.
+// elsewhere is left alone rather than being silently wiped on every save.
 $PERMISSION_GROUPS = [
     'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
     'Customers'     => ['customers.view','customers.create','customers.update','customers.delete'],
     'Installations' => ['installations.view','installations.create','installations.update','installations.delete'],
-    'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view'],
+    'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view','reports.view'],
+    // Who may raise a payment request, and who signs one off at each stage.
+    'Payment Requests' => ['payment_requests.create','payment_requests.view','payment_requests.authorize','payment_requests.approve','payment_requests.finance_check'],
+    'Finance'          => ['finance.view','installations.financial'],
     'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill'],
     'System'        => ['admin.access'],
 ];
@@ -205,8 +206,9 @@ if (method() === 'POST') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
         // Only ever touch permissions actually shown on the matrix — leave
-        // anything else (Payment Requests / Finance stage grants, etc.)
-        // untouched so this save can't silently wipe grants made elsewhere.
+        // anything else untouched so this save can't silently wipe a grant
+        // made elsewhere (e.g. by a future permission added in code but not
+        // yet given a row in $PERMISSION_GROUPS).
         $managedPerms = array_merge(...array_values($PERMISSION_GROUPS));
         $ph = implode(',', array_fill(0, count($managedPerms), '?'));
         foreach (roleKeys() as $r) {
@@ -224,6 +226,31 @@ if (method() === 'POST') {
             }
         }
         $msg = 'Permissions updated successfully.';
+
+        // The payment-request workflow has three sign-off stages. A save that
+        // leaves one with no role holding it doesn't break the app — full
+        // admins bypass role_permissions entirely and can still act — but it
+        // does funnel every voucher at that stage through an admin, which is
+        // rarely what was intended. Warn rather than block: an admin-only
+        // stage is a legitimate setup for a small team.
+        $stageLabels = [
+            'payment_requests.authorize'     => 'Authorize',
+            'payment_requests.approve'       => 'Approve',
+            'payment_requests.finance_check' => 'Finance Check',
+        ];
+        $orphanStages = [];
+        foreach ($stageLabels as $perm => $label) {
+            $held = false;
+            foreach ($submitted as $r => $rolePerms) {
+                if ($r !== 'admin' && !empty($rolePerms[$perm])) { $held = true; break; }
+            }
+            if (!$held) $orphanStages[] = $label;
+        }
+        if ($orphanStages) {
+            $msg .= ' Note: no role now holds ' . implode(' or ', $orphanStages)
+                 . ' — payment requests at ' . (count($orphanStages) > 1 ? 'those stages' : 'that stage')
+                 . ' can only be actioned by a full Admin.';
+        }
     }
     // ── Integration API keys ──
     if ($action === 'create_api_key') {
