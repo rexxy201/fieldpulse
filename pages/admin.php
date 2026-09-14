@@ -226,6 +226,31 @@ if (method() === 'POST') {
             }
         }
         $msg = 'Permissions updated successfully.';
+
+        // The payment-request workflow has three sign-off stages. A save that
+        // leaves one with no role holding it doesn't break the app — full
+        // admins bypass role_permissions entirely and can still act — but it
+        // does funnel every voucher at that stage through an admin, which is
+        // rarely what was intended. Warn rather than block: an admin-only
+        // stage is a legitimate setup for a small team.
+        $stageLabels = [
+            'payment_requests.authorize'     => 'Authorize',
+            'payment_requests.approve'       => 'Approve',
+            'payment_requests.finance_check' => 'Finance Check',
+        ];
+        $orphanStages = [];
+        foreach ($stageLabels as $perm => $label) {
+            $held = false;
+            foreach ($submitted as $r => $rolePerms) {
+                if ($r !== 'admin' && !empty($rolePerms[$perm])) { $held = true; break; }
+            }
+            if (!$held) $orphanStages[] = $label;
+        }
+        if ($orphanStages) {
+            $msg .= ' Note: no role now holds ' . implode(' or ', $orphanStages)
+                 . ' — payment requests at ' . (count($orphanStages) > 1 ? 'those stages' : 'that stage')
+                 . ' can only be actioned by a full Admin.';
+        }
     }
     // ── Integration API keys ──
     if ($action === 'create_api_key') {

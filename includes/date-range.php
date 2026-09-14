@@ -80,6 +80,24 @@ function dateRangeBounds(string $preset, ?string $today = null): ?array
 }
 
 /**
+ * A user-supplied date is only usable if it is a real calendar date in Y-m-d
+ * form. Anything else ('abc', '2026-13-40', an array from ?dateFrom[]=x) is
+ * discarded rather than concatenated into a timestamp comparison: PostgreSQL
+ * rejects a malformed timestamp outright, so an unvalidated value here is a
+ * broken page for anyone who edits the query string.
+ */
+function dateRangeSanitiseDate($value): string
+{
+    if (!is_string($value)) return '';
+    $value = trim($value);
+    if ($value === '') return '';
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $value);
+    // createFromFormat is lenient (it rolls 2026-02-31 over into March), so
+    // round-trip the result and require it to match what was asked for.
+    return ($d && $d->format('Y-m-d') === $value) ? $value : '';
+}
+
+/**
  * Read dateRange/dateFrom/dateTo out of a query array (typically $_GET) and
  * return the normalised ['range','from','to'] the page should actually use.
  *
@@ -90,9 +108,10 @@ function dateRangeBounds(string $preset, ?string $today = null): ?array
  */
 function resolveDateRange(array $query): array
 {
-    $range = (string)($query['dateRange'] ?? '');
-    $from  = trim((string)($query['dateFrom'] ?? ''));
-    $to    = trim((string)($query['dateTo'] ?? ''));
+    $rangeRaw = $query['dateRange'] ?? '';
+    $range = is_string($rangeRaw) ? trim($rangeRaw) : '';
+    $from  = dateRangeSanitiseDate($query['dateFrom'] ?? '');
+    $to    = dateRangeSanitiseDate($query['dateTo'] ?? '');
 
     if ($range !== '' && $range !== 'custom' && !isset(DATE_RANGE_PRESETS[$range])) {
         return ['range' => '', 'from' => '', 'to' => ''];

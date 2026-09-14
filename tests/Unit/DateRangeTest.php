@@ -67,6 +67,40 @@ final class DateRangeTest extends TestCase
         $this->assertSame(['range' => '', 'from' => '', 'to' => ''], resolveDateRange([]));
     }
 
+    /**
+     * A malformed date must never reach the query: PostgreSQL rejects an
+     * invalid timestamp outright, so `?dateFrom=abc` would otherwise be a
+     * broken page rather than an ignored filter.
+     */
+    public function testMalformedDatesAreDiscarded(): void
+    {
+        $this->assertSame('', dateRangeSanitiseDate('abc'));
+        $this->assertSame('', dateRangeSanitiseDate('2026-13-40'));
+        $this->assertSame('', dateRangeSanitiseDate('2026-02-31'), 'Rolled-over dates must not be accepted.');
+        $this->assertSame('', dateRangeSanitiseDate('2026-1-1'), 'Only zero-padded Y-m-d is accepted.');
+        $this->assertSame('', dateRangeSanitiseDate('2026-05-01 00:00:00'));
+        $this->assertSame('2026-02-28', dateRangeSanitiseDate('2026-02-28'));
+        $this->assertSame('2026-05-01', dateRangeSanitiseDate(' 2026-05-01 '));
+    }
+
+    public function testNonStringQueryValuesDoNotBlowUp(): void
+    {
+        // ?dateFrom[]=x&dateRange[]=y — array values would otherwise reach
+        // htmlspecialchars() in the filter markup and fatal the page.
+        $this->assertSame(
+            ['range' => '', 'from' => '', 'to' => ''],
+            resolveDateRange(['dateRange' => ['y'], 'dateFrom' => ['x']])
+        );
+    }
+
+    public function testACustomRangeKeepsOnlyTheValidHalf(): void
+    {
+        $this->assertSame(
+            ['range' => 'custom', 'from' => '', 'to' => '2026-05-01'],
+            resolveDateRange(['dateRange' => 'custom', 'dateFrom' => 'abc', 'dateTo' => '2026-05-01'])
+        );
+    }
+
     public function testResolveDateRangeDropsAnUnknownPresetRatherThanFilteringNothing(): void
     {
         $this->assertSame(
