@@ -1,6 +1,26 @@
 <?php
 declare(strict_types=1);
 
+// ─── Error handling hardening ──────────────────────────────────────────────
+// Never let PHP's default handler print an exception/stack trace (which can
+// include SQL text and file paths) to the browser — log it and show a
+// generic message instead. Pinned explicitly here rather than relying on the
+// hosting php.ini's display_errors default, which could silently regress on
+// a PHP version bump or hosting migration.
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+set_exception_handler(function (\Throwable $e): void {
+    error_log('Uncaught exception: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+    if (!headers_sent()) http_response_code(500);
+    $isApi = str_starts_with($_SERVER['REQUEST_URI'] ?? '', '/api/');
+    if ($isApi) {
+        if (!headers_sent()) header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error' => 'Something went wrong. Please try again.']);
+    } else {
+        echo 'Something went wrong. Please try again, or contact support if this persists.';
+    }
+});
+
 // ─── App version ──────────────────────────────────────────────────────────────
 // Bump this on every release. Auto-recorded into app_config (with a deploy
 // timestamp) below once the DB connection is up, so it's queryable/reportable
@@ -3212,6 +3232,83 @@ if (!$_sv43) {
     } catch (\Throwable $e) {
         error_log('Schema v43 migration error: ' . $e->getMessage());
     }
+}
+
+// schema_v44: generic rate_limit_hits table — a single reusable fixed-window
+// counter (bucket + key -> count/window_start) backing rateLimitCheck()
+// below. Used for the public customer-portal account lookup (previously
+// fully unthrottled, letting account numbers be enumerated), 2FA code
+// verification (previously no attempt cap, making the second factor
+// brute-forceable within its 10-minute validity window), and
+// password-reset requests (previously unlimited, a mail-bombing vector).
+$_sv44 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v44_migrated'");
+if (!$_sv44) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try {
+                db()->exec("CREATE TABLE IF NOT EXISTS `rate_limit_hits` (
+                    `id`            VARCHAR(36) NOT NULL,
+                    `bucket`        VARCHAR(50) NOT NULL,
+                    `rate_key`      VARCHAR(191) NOT NULL,
+                    `attempt_count` INT NOT NULL DEFAULT 1,
+                    `window_start`  DATETIME NOT NULL,
+                    `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uniq_bucket_key` (`bucket`,`rate_key`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+            } catch (\Throwable $e) { error_log('Schema v44: create rate_limit_hits: ' . $e->getMessage()); }
+        } else {
+            try {
+                db()->exec("CREATE TABLE IF NOT EXISTS rate_limit_hits (
+                    id            VARCHAR(36) PRIMARY KEY,
+                    bucket        VARCHAR(50) NOT NULL,
+                    rate_key      VARCHAR(191) NOT NULL,
+                    attempt_count INT NOT NULL DEFAULT 1,
+                    window_start  TIMESTAMP NOT NULL,
+                    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (bucket, rate_key)
+                )");
+            } catch (\Throwable $e) {}
+        }
+        dbUpsertConfig('schema_v44_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v44 migration error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Generic fixed-window rate limiter. Returns true (and records the attempt)
+ * if the caller is still within $maxAttempts for this (bucket, key) pair
+ * inside the current $windowMinutes window; returns false once the limit is
+ * hit, without recording further attempts (so retrying doesn't reset the
+ * window early). The window resets naturally once $windowMinutes has
+ * elapsed since the first attempt in it.
+ */
+function rateLimitCheck(string $bucket, string $key, int $maxAttempts, int $windowMinutes): bool {
+    $row = dbFetch("SELECT * FROM rate_limit_hits WHERE bucket=? AND rate_key=?", [$bucket, $key]);
+    if (!$row) {
+        try {
+            dbRun("INSERT INTO rate_limit_hits (id,bucket,rate_key,attempt_count,window_start) VALUES (?,?,?,1,NOW())",
+                [newUuid(), $bucket, $key]);
+        } catch (\Throwable $e) {
+            // Unique-key race — another request just inserted the same
+            // (bucket,key) row a moment ago; treat as allowed rather than
+            // erroring the caller's whole request over a rate-limit bookkeeping race.
+        }
+        return true;
+    }
+    if (time() - strtotime($row['window_start']) > $windowMinutes * 60) {
+        dbRun("UPDATE rate_limit_hits SET attempt_count=1, window_start=NOW() WHERE id=?", [$row['id']]);
+        return true;
+    }
+    if ((int)$row['attempt_count'] >= $maxAttempts) return false;
+    dbRun("UPDATE rate_limit_hits SET attempt_count=attempt_count+1 WHERE id=?", [$row['id']]);
+    return true;
+}
+
+/** Best-effort client IP for rate-limit keys — not identity, just a throttle key. */
+function clientIp(): string {
+    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 }
 
 /** Vendor company responsible for maintenance tickets in a hub's location, if configured. */

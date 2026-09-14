@@ -91,7 +91,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
 }
 
 // ── Handle account lookup ────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup') {
+// This is a fully public, unauthenticated page — without a throttle, an
+// account number (a guessable/sequential identifier, e.g. ACC-001234) could
+// be brute-forced to enumerate every customer's name/email/plan/ticket
+// history. 20 lookups per 15 minutes per IP is generous for a real customer
+// checking their own account, but stops a scripted enumeration sweep. Only
+// counted against an actual lookup attempt below, not every page view.
+$lookupRateLimited = false;
+$isLookupAttempt = ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup')
+    || (isset($_GET['account']) && ($_POST['_action'] ?? '') !== 'raise_ticket');
+if ($isLookupAttempt && !rateLimitCheck('portal_lookup', clientIp(), 20, 15)) {
+    $lookupRateLimited = true;
+}
+
+if ($lookupRateLimited) {
+    $searched = true;
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup') {
     verifyCsrf();
     $account = trim($_POST['account'] ?? '');
     if ($account) {
@@ -188,7 +203,12 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         </div>
       </div>
 
-      <?php if ($searched && !$cust): ?>
+      <?php if ($lookupRateLimited): ?>
+      <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        Too many lookups from this connection. Please wait a few minutes and try again.
+      </div>
+      <?php elseif ($searched && !$cust): ?>
       <div class="alert alert-warning">
         <i class="bi bi-exclamation-triangle me-1"></i>
         No account found for <strong><?= htmlspecialchars($account) ?></strong>. Please check your account number.

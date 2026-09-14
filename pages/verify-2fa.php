@@ -24,6 +24,16 @@ if (method() === 'POST') {
         }
         $error = '';
     } else {
+        // Cap guesses against the current code — previously unlimited, so
+        // anyone who already had a correct username/password (e.g. from a
+        // breach/reuse) could brute-force the 6-digit code within its
+        // 10-minute validity window. 5 attempts per 10 minutes forces
+        // re-login (a fresh code) rather than letting the same code be
+        // guessed indefinitely.
+        if (!rateLimitCheck('twofa_verify', $user['id'], 5, 10)) {
+            unset($_SESSION['twofa_pending_user_id'], $_SESSION['twofa_last_resend']);
+            header('Location: /login?twofa_locked=1'); exit;
+        }
         $code = trim($_POST['code'] ?? '');
         if (verifyTwoFactorCode($user['id'], $code)) {
             unset($_SESSION['twofa_pending_user_id'], $_SESSION['twofa_last_resend']);

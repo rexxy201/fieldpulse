@@ -13,6 +13,11 @@ if (method() === 'POST') {
     $email = trim($_POST['email'] ?? '');
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = 'Enter a valid email address.';
+    } elseif (!rateLimitCheck('password_reset_request', strtolower($email), 3, 60)) {
+        // Previously unlimited — an attacker could mail-bomb any address by
+        // repeatedly POSTing here. Same "always success" response either
+        // way, so this still doesn't reveal whether the email has an account.
+        $sent = true;
     } else {
         // Always the same outcome whether or not the email exists — issuePasswordReset()
         // silently no-ops for an unknown/inactive email, so this can't be used to

@@ -32,6 +32,9 @@ if (method() === 'POST') {
     }
     $error = $result['error'];
 }
+if (empty($error) && isset($_GET['twofa_locked'])) {
+    $error = 'Too many incorrect verification codes. Please sign in again to get a new code.';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
