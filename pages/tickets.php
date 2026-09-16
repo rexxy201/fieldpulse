@@ -317,8 +317,6 @@ function applyFilter(key, val) {
   window.location.href = '/tickets' + (params.toString() ? '?' + params.toString() : '');
 }
 
-// Date Range filter lives in /assets/date-range.js (shared with Installations).
-
 // ── Bulk checkbox ──────────────────────────────────────────────────────────
 function toggleAll(master) {
   document.querySelectorAll('.row-check').forEach(cb => cb.checked = master.checked);
@@ -382,4 +380,3 @@ async function applyBulkAction() {
 }
 </script>
 
-<?php require __DIR__ . '/../includes/footer.php'; ?>

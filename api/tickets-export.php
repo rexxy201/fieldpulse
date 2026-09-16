@@ -10,8 +10,6 @@ $status     = $_GET['status'] ?? '';
 $prio       = $_GET['priority'] ?? '';
 $engineerId = $_GET['engineer'] ?? '';
 $createdBy  = $_GET['createdBy'] ?? '';
-// Date Range presets resolve server-side, so a link carrying only
-// ?dateRange=previous_month exports the same rows the list page shows.
 ['from' => $dateFrom, 'to' => $dateTo] = resolveDateRange($_GET);
 $department = $_GET['department'] ?? '';
 $vendorId   = $_GET['vendor'] ?? '';
@@ -75,4 +73,3 @@ foreach ($tickets as $t) {
         $t['sla_breach_at'] ?? '',
     ]);
 }
-fclose($out);

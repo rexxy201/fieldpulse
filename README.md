@@ -6,7 +6,7 @@
 
   ## Tech Stack
   - **Backend**: PHP 8.2 (built-in dev server)
-  - **Database**: PostgreSQL via PDO
+  - **Database**: MySQL/MariaDB via PDO
   - **Frontend**: Bootstrap 5.3, Bootstrap Icons, vanilla JS
   - **Maps**: Leaflet.js + OpenStreetMap
   - **Charts**: Chart.js 4.x

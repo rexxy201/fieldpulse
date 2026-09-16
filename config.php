@@ -33,7 +33,6 @@ if (file_exists($_autoload)) require_once $_autoload;
 
 // ─── AI helper (OpenAI wrapper) ────────────────────────────────────────────────
 require_once __DIR__ . '/includes/ai.php';
-
 // ─── Shared Date Range filter (presets + bounds + filter-bar markup) ──────────
 require_once __DIR__ . '/includes/date-range.php';
 
@@ -3570,4 +3569,3 @@ try {
     }
 } catch (\Throwable $e) {
     error_log('App version tracking error: ' . $e->getMessage());
-}

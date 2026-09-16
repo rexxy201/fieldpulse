@@ -14,3 +14,5 @@ uploads/
 
 # Local graphify knowledge-graph output — regenerated on demand, not app code.
 graphify-out/
+# PHP dependencies
+vendor/

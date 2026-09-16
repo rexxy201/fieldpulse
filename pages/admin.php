@@ -8,7 +8,9 @@ $msg = ''; $msgType = 'success';
 // Permissions shown/managed on the Roles & Permissions matrix (tab-permissions
 // below). Kept as a single source of truth so the save handler only ever
 // touches permissions actually represented on screen — anything granted
-// elsewhere is left alone rather than being silently wiped on every save.
+// elsewhere (e.g. Payment Requests / Finance stage permissions, which aren't
+// shown in this matrix) is left alone rather than being silently wiped on
+// every save.
 $PERMISSION_GROUPS = [
     'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
     'Customers'     => ['customers.view','customers.create','customers.update','customers.delete'],
@@ -206,9 +208,8 @@ if (method() === 'POST') {
         // $b['perms'][role][permission] = '1'
         $submitted = $b['perms'] ?? [];
         // Only ever touch permissions actually shown on the matrix — leave
-        // anything else untouched so this save can't silently wipe a grant
-        // made elsewhere (e.g. by a future permission added in code but not
-        // yet given a row in $PERMISSION_GROUPS).
+        // anything else (Payment Requests / Finance stage grants, etc.)
+        // untouched so this save can't silently wipe grants made elsewhere.
         $managedPerms = array_merge(...array_values($PERMISSION_GROUPS));
         $ph = implode(',', array_fill(0, count($managedPerms), '?'));
         foreach (roleKeys() as $r) {
@@ -226,7 +227,6 @@ if (method() === 'POST') {
             }
         }
         $msg = 'Permissions updated successfully.';
-
         // The payment-request workflow has three sign-off stages. A save that
         // leaves one with no role holding it doesn't break the app — full
         // admins bypass role_permissions entirely and can still act — but it
@@ -1974,4 +1974,3 @@ async function sendTestEmail() {
 }
 </script>
 
-<?php require __DIR__ . '/../includes/footer.php'; ?>
