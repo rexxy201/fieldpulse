@@ -30,6 +30,13 @@ $linkedCustomers = dbFetchAll(
 );
 $balance = round((float)$r['amount'] - (float)$r['amount_paid'], 2);
 
+// Fetch signatures for sign-off table
+$sigAuth     = $r['authorized_by']       ? dbFetch("SELECT signature_data FROM users WHERE id=?", [$r['authorized_by']]) : null;
+$sigApprover = $r['approved_by']         ? dbFetch("SELECT signature_data FROM users WHERE id=?", [$r['approved_by']]) : null;
+$sigFinance  = $r['finance_reviewed_by'] ? dbFetch("SELECT signature_data FROM users WHERE id=?", [$r['finance_reviewed_by']]) : null;
+$sigDisburse = $r['disbursed_by']        ? dbFetch("SELECT signature_data FROM users WHERE id=?", [$r['disbursed_by']]) : null;
+$sigHelper   = fn($u) => ($u && !empty($u['signature_data'])) ? '<img src="'.htmlspecialchars($u['signature_data']).'" style="max-height:38px;max-width:120px">' : '';
+
 $appCfg = getAppConfig();
 $co = htmlspecialchars($appCfg['companyName'] ?? 'MangoNet Integrated Technologies Limited');
 $categories = ['Operational','Deployment/Expansion','Fiber Cut Restoration','Equipment','Inventory/Materials'];
@@ -73,8 +80,8 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
   <div class="company"><?= $co ?></div>
   <h1>REQUEST VOUCHER
     <?php
-    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','returned'=>'#64748b','partially_disbursed'=>'#eab308','disbursed'=>'#10b981','rejected'=>'#ef4444'];
-    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','returned'=>'RETURNED','partially_disbursed'=>'PARTIALLY PAID','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
+    $statusColors = ['pending'=>'#f59e0b','authorized'=>'#0ea5e9','approved'=>'#3b82f6','finance_review'=>'#1e293b','returned'=>'#64748b','partially_disbursed'=>'#eab308','disbursed'=>'#10b981','rejected'=>'#ef4444'];
+    $statusLabels = ['pending'=>'PENDING','authorized'=>'AUTHORIZED','approved'=>'APPROVED','finance_review'=>'FINANCE REVIEW','returned'=>'RETURNED','partially_disbursed'=>'PARTIALLY PAID','disbursed'=>'DISBURSED','rejected'=>'REJECTED'];
     ?>
     <span class="status-badge" style="background:<?= $statusColors[$r['status']] ?? '#64748b' ?>"><?= $statusLabels[$r['status']] ?? strtoupper($r['status']) ?></span>
   </h1>
@@ -172,6 +179,11 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
     <div class="field">Note: the requested amount was revised from ₦<?= number_format((float)$r['original_amount'], 2) ?> to ₦<?= number_format((float)$r['amount'], 2) ?> by <?= htmlspecialchars($r['authorized_by_name'] ?? '') ?> at the Authorize stage.</div>
   </div>
   <?php endif; ?>
+  <?php if (!empty($r['finance_review_notes'])): ?>
+  <div class="field-row" style="font-size:11px;color:#555">
+    <div class="field"><strong>Finance Review Note:</strong> <?= htmlspecialchars($r['finance_review_notes']) ?> — <?= htmlspecialchars($r['finance_reviewed_by_name'] ?? '') ?> (<?= $fmtDate($r['finance_reviewed_at']) ?>)</div>
+  </div>
+  <?php endif; ?>
 
   <?php if ($payments): ?>
   <div class="section-title">Payment History</div>
@@ -204,19 +216,27 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
       <tr>
         <td><strong>Authorized</strong></td>
         <td><?= htmlspecialchars($r['authorized_by_name'] ?? '') ?></td>
-        <td></td>
+        <td><?= $sigHelper($sigAuth) ?></td>
         <td><?= $fmtDate($r['authorized_at']) ?></td>
       </tr>
       <tr>
         <td><strong>Approved</strong></td>
         <td><?= htmlspecialchars($r['approved_by_name'] ?? '') ?></td>
-        <td></td>
+        <td><?= $sigHelper($sigApprover) ?></td>
         <td><?= $fmtDate($r['approved_at']) ?></td>
       </tr>
+      <?php if (!empty($r['finance_reviewed_by_name'])): ?>
+      <tr>
+        <td><strong>Accountant</strong></td>
+        <td><?= htmlspecialchars($r['finance_reviewed_by_name']) ?></td>
+        <td><?= $sigHelper($sigFinance) ?></td>
+        <td><?= $fmtDate($r['finance_reviewed_at']) ?></td>
+      </tr>
+      <?php endif; ?>
       <tr>
         <td><strong>Disbursed</strong></td>
         <td><?= htmlspecialchars($r['disbursed_by_name'] ?? '') ?></td>
-        <td></td>
+        <td><?= $sigHelper($sigDisburse) ?></td>
         <td><?= $r['status']==='disbursed' ? $fmtDate($r['paid_at']) : '' ?></td>
       </tr>
       <?php if ($r['status'] === 'returned'): ?>

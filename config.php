@@ -3278,6 +3278,32 @@ if (!$_sv44) {
     }
 }
 
+// schema_v45: finance_review stage columns on payment_requests + signature_data
+// on users. finance_review is an internal audit stage inserted between 'approved'
+// and disbursement — the accountant can edit line items and resubmit for
+// re-approval. signature_data stores the user's on-file signature as a base64
+// PNG data URL, auto-embedded in the print voucher.
+$_k = dbKey();
+$_sv45 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v45_migrated'");
+if (!$_sv45) {
+    try {
+        try { db()->exec("ALTER TABLE `users` ADD COLUMN `signature_data` MEDIUMTEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE users ADD COLUMN signature_data MEDIUMTEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `finance_reviewed_by` VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE payment_requests ADD COLUMN finance_reviewed_by VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `finance_reviewed_by_name` VARCHAR(191) DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE payment_requests ADD COLUMN finance_reviewed_by_name VARCHAR(191) DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `finance_reviewed_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE payment_requests ADD COLUMN finance_reviewed_at DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE `payment_requests` ADD COLUMN `finance_review_notes` TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE payment_requests ADD COLUMN finance_review_notes TEXT DEFAULT NULL"); } catch (\Throwable $e) {}
+        dbUpsertConfig('schema_v45_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v45 migration error: ' . $e->getMessage());
+    }
+}
+
+
 /**
  * Generic fixed-window rate limiter. Returns true (and records the attempt)
  * if the caller is still within $maxAttempts for this (bucket, key) pair

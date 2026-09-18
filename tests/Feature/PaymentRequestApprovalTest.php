@@ -157,6 +157,33 @@ final class PaymentRequestApprovalTest extends TestCase
         $this->assertJsonOk($body);
         $this->assertSame('approved', $this->reload($pr['id'])['status']);
 
+        // ── Finance Review: accountant starts review ──────────────────────
+        [, $body] = $this->request('POST', '/payment-requests', [
+            'ajax' => '1', '_csrf' => $csrf, 'action' => 'start_finance_review', 'req_id' => $pr['id'],
+        ]);
+        $this->assertJsonOk($body);
+        $this->assertSame('finance_review', $this->reload($pr['id'])['status']);
+
+        // ── Finance Review: accountant submits with adjusted line items ───
+        [, $body] = $this->request('POST', '/payment-requests', [
+            'ajax' => '1', '_csrf' => $csrf, 'action' => 'submit_finance_review', 'req_id' => $pr['id'],
+            'item_description[]' => ['Adjusted Item'],
+            'item_qty[]'         => ['1'],
+            'item_unit_price[]'  => ['4500'],
+            'review_notes'       => 'Reduced by 500 after audit',
+        ]);
+        $this->assertJsonOk($body);
+        $reviewed = $this->reload($pr['id']);
+        $this->assertSame('authorized', $reviewed['status'], 'After finance review, status must revert to authorized for re-approval.');
+        $this->assertSame(4500.0, (float)$reviewed['amount'], 'Amount must reflect adjusted line items.');
+
+        // ── Re-Approve after finance review ───────────────────────────────
+        [, $body] = $this->request('POST', '/payment-requests', [
+            'ajax' => '1', '_csrf' => $csrf, 'action' => 'approve', 'req_id' => $pr['id'],
+        ]);
+        $this->assertJsonOk($body);
+        $this->assertSame('approved', $this->reload($pr['id'])['status']);
+
         // ── Finance Check: a partial payment first (bill-style, like Zoho Books) ──
         [, $body] = $this->request('POST', '/payment-requests', [
             'ajax' => '1', '_csrf' => $csrf, 'action' => 'disburse', 'req_id' => $pr['id'],
@@ -167,7 +194,7 @@ final class PaymentRequestApprovalTest extends TestCase
         $this->assertSame('partially_disbursed', $partial['status']);
         $this->assertSame(2000.0, (float)$partial['amount_paid']);
 
-        // A payment can't exceed the remaining balance (3000, not 5000).
+        // A payment can't exceed the remaining balance (2500, not 4500).
         [, $body] = $this->request('POST', '/payment-requests', [
             'ajax' => '1', '_csrf' => $csrf, 'action' => 'disburse', 'req_id' => $pr['id'],
             'pay_amount' => '5000', 'payment_reference' => 'TEST-OVER',
@@ -179,12 +206,12 @@ final class PaymentRequestApprovalTest extends TestCase
         // ── Finish it off ────────────────────────────────────────────────
         [, $body] = $this->request('POST', '/payment-requests', [
             'ajax' => '1', '_csrf' => $csrf, 'action' => 'disburse', 'req_id' => $pr['id'],
-            'pay_amount' => '3000', 'payment_reference' => 'TEST-FINAL',
+            'pay_amount' => '2500', 'payment_reference' => 'TEST-FINAL',
         ]);
         $this->assertJsonOk($body);
         $final = $this->reload($pr['id']);
         $this->assertSame('disbursed', $final['status']);
-        $this->assertSame(5000.0, (float)$final['amount_paid']);
+        $this->assertSame(4500.0, (float)$final['amount_paid']);
 
         $paymentCount = (int)dbFetch("SELECT COUNT(*) c FROM payment_request_payments WHERE payment_request_id = ?", [$pr['id']])['c'];
         $this->assertSame(2, $paymentCount, 'Two accepted payments (partial + final) should be on record.');

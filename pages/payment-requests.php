@@ -191,6 +191,82 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         }
         echo json_encode(['ok'=>true,'full'=>$isFull]); exit;
     }
+    if ($action === 'start_finance_review') {
+        if (!$canFinanceCheck) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        $rows = dbRun(
+            "UPDATE payment_requests SET status='finance_review', finance_reviewed_by=?, finance_reviewed_by_name=?, finance_reviewed_at=NOW() WHERE id=? AND status='approved'",
+            [$user['id'], $user['name'], $reqId]
+        );
+        if ($rows->rowCount() === 0) { echo json_encode(['ok'=>false,'msg'=>'Request not found or not in Approved status.']); exit; }
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            notifyPaymentRequestOriginator($_pr, "Payment Request Under Finance Review — {$_pr['request_no']}",
+                "Your payment request is being reviewed by " . htmlspecialchars($user['name']) . " (Finance). The line items may be adjusted before re-approval.");
+        }
+        echo json_encode(['ok'=>true]); exit;
+    }
+    if ($action === 'submit_finance_review') {
+        if (!$canFinanceCheck) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        // Validate this PR is still in finance_review status and owned by this session
+        $pr = dbFetch("SELECT id, requester_id, authorized_by, authorized_by_name, request_no, requester_name FROM payment_requests WHERE id=? AND status='finance_review'", [$reqId]);
+        if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Request not found or not under finance review.']); exit; }
+
+        // Rebuild line items from POST
+        $itemDescs  = $_POST['item_description'] ?? [];
+        $itemQtys   = $_POST['item_qty'] ?? [];
+        $itemPrices = $_POST['item_unit_price'] ?? [];
+        $newItems = [];
+        $grandTotal = 0.0;
+        foreach ($itemDescs as $i => $d) {
+            $d = trim($d);
+            $qty   = is_numeric($itemQtys[$i] ?? '') ? (float)$itemQtys[$i] : 0;
+            $price = is_numeric($itemPrices[$i] ?? '') ? (float)$itemPrices[$i] : 0;
+            if ($d === '' && $qty == 0 && $price == 0) continue;
+            $qty = $qty > 0 ? $qty : 1;
+            $lineTotal = round($qty * $price, 2);
+            $newItems[] = ['description' => $d, 'qty' => $qty, 'unit_price' => $price, 'line_total' => $lineTotal];
+            $grandTotal += $lineTotal;
+        }
+        $grandTotal = round($grandTotal, 2);
+        if (!$newItems) { echo json_encode(['ok'=>false,'msg'=>'Add at least one line item.']); exit; }
+        if ($grandTotal <= 0) { echo json_encode(['ok'=>false,'msg'=>'Total must be greater than zero.']); exit; }
+
+        // Replace line items
+        dbRun("DELETE FROM payment_request_items WHERE payment_request_id=?", [$reqId]);
+        foreach ($newItems as $sortIdx => $it) {
+            dbRun("INSERT INTO payment_request_items (id,payment_request_id,description,qty,unit_price,line_total,sort_order) VALUES (?,?,?,?,?,?,?)",
+                [newUuid(), $reqId, $it['description'], $it['qty'], $it['unit_price'], $it['line_total'], $sortIdx]);
+        }
+
+        $frNotes = trim($notes);
+        // Preserve current amount as original_amount if not already set, then set new amount
+        dbRun("UPDATE payment_requests SET amount=?, status='authorized', finance_review_notes=?,
+               authorized_at=NOW()
+               WHERE id=?",
+            [$grandTotal, $frNotes ?: null, $reqId]);
+
+        if ($_pr = fetchPaymentRequestForNotify($reqId)) {
+            // Notify the approver to re-approve
+            notifyPermissionHolders('payment_requests.approve',
+                'Payment Request Needs Re-Approval After Finance Review',
+                "Finance has reviewed {$_pr['requester_name']}'s request ({$_pr['request_no']}) and adjusted the line items. Please re-approve.",
+                '/payment-requests?status=authorized',
+                "Re-Approval Required — Finance Reviewed {$_pr['request_no']}",
+                paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed a review of this payment request and adjusted the line items. The updated total is ₦" . number_format($grandTotal, 2) . ". Please re-approve."));
+            // Notify originator and authorizer
+            notifyPaymentRequestOriginator($_pr, "Finance Review Complete — {$_pr['request_no']}",
+                "Your payment request has been reviewed by Finance. The line items were adjusted and it is now pending re-approval. New total: ₦" . number_format($grandTotal, 2) . ".");
+            if (!empty($pr['authorized_by'])) {
+                $authUser = dbFetch("SELECT id FROM users WHERE id=?", [$pr['authorized_by']]);
+                if ($authUser) {
+                    createNotification($pr['authorized_by'],
+                        "Finance Review Complete — {$_pr['request_no']}",
+                        "A payment request you authorized has been reviewed by Finance and now needs re-approval. New total: ₦" . number_format($grandTotal, 2) . ".",
+                        '/payment-requests?status=authorized');
+                }
+            }
+        }
+        echo json_encode(['ok'=>true,'new_total'=>$grandTotal]); exit;
+    }
     echo json_encode(['ok'=>false,'msg'=>'Unknown action']); exit;
 }
 
@@ -534,8 +610,8 @@ $allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM cust
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
 $locations = $canCreate ? dbFetchAll("SELECT name FROM locations ORDER BY name") : [];
 
-$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','returned'=>'Returned','partially_disbursed'=>'Partial Payment','disbursed'=>'Disbursed','rejected'=>'Rejected'];
-$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','returned'=>'text-bg-secondary','partially_disbursed'=>'text-bg-warning','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
+$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','finance_review'=>'Finance Review','returned'=>'Returned','partially_disbursed'=>'Partial Payment','disbursed'=>'Disbursed','rejected'=>'Rejected'];
+$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','finance_review'=>'text-bg-dark','returned'=>'text-bg-secondary','partially_disbursed'=>'text-bg-warning','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
 
 $pageTitle = 'Payment Requests';
 require __DIR__ . '/../includes/header.php';
@@ -579,11 +655,12 @@ require __DIR__ . '/../includes/header.php';
     ['Pending','#f59e0b',(int)($stats['pending']??0),'pending'],
     ['Authorized','#0ea5e9',(int)($stats['authorized']??0),'authorized'],
     ['Approved','#3b82f6',(int)($stats['approved']??0),'approved'],
+    ['Finance Review','#1e293b',(int)($stats['finance_review']??0),'finance_review'],
     ['Returned','#64748b',(int)($stats['returned']??0),'returned'],
     ['Partial Payment','#eab308',(int)($stats['partially_disbursed']??0),'partially_disbursed'],
     ['Disbursed','#10b981',(int)($stats['disbursed']??0),'disbursed'],
     ['Rejected','#ef4444',(int)($stats['rejected']??0),'rejected'],
-    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['returned']??0)+($stats['partially_disbursed']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
+    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['finance_review']??0)+($stats['returned']??0)+($stats['partially_disbursed']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
   ] as [$lbl,$clr,$val,$sf]): ?>
   <div class="col-6 col-md-4 col-xl-2">
     <a href="?status=<?= $sf ?>" class="stat-card py-2 d-block text-center text-decoration-none <?= $status===$sf?'border-primary':'' ?>">
@@ -659,10 +736,15 @@ require __DIR__ . '/../includes/header.php';
               <button class="btn btn-sm btn-primary" onclick="review('<?= $r['id'] ?>','approve')" title="Approve"><i class="bi bi-check-lg"></i> Approve</button>
               <button class="btn btn-sm btn-danger" onclick="review('<?= $r['id'] ?>','reject')" title="Reject"><i class="bi bi-x-lg"></i></button>
             </div>
+            <?php elseif ($canFinanceCheck && $r['status']==='finance_review'): ?>
+            <div class="d-inline-flex gap-1">
+              <button class="btn btn-sm btn-dark" onclick="openFinanceReview('<?= $r['id'] ?>')" title="Edit line items &amp; re-submit for approval"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Re-Submit</button>
+            </div>
             <?php elseif ($canFinanceCheck && in_array($r['status'], ['approved','partially_disbursed'], true)): ?>
             <div class="d-inline-flex gap-1">
               <button class="btn btn-sm btn-outline-success" onclick="openDisburse('<?= $r['id'] ?>')" title="View &amp; Record Payment"><i class="bi bi-cash-stack me-1"></i><?= $r['status']==='partially_disbursed' ? 'Record Payment' : 'Disburse' ?></button>
               <?php if ($r['status']==='approved'): ?>
+              <button class="btn btn-sm btn-dark" onclick="startFinanceReview('<?= $r['id'] ?>')" title="Finance review — adjust line items before disbursement"><i class="bi bi-search me-1"></i>Finance Review</button>
               <button class="btn btn-sm btn-warning" onclick="review('<?= $r['id'] ?>','return')" title="Return to requester for edits"><i class="bi bi-arrow-return-left"></i> Return</button>
               <?php endif; ?>
             </div>
@@ -677,6 +759,14 @@ require __DIR__ . '/../includes/header.php';
           <td></td>
           <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-muted fst-italic py-1">
             <i class="bi bi-chat-left-quote me-1"></i><?= htmlspecialchars($r['reviewed_by_name'] ?? '') ?>: “<?= htmlspecialchars($r['review_notes']) ?>”
+          </td>
+        </tr>
+        <?php endif; ?>
+        <?php if ($r['status']==='finance_review' && $r['finance_review_notes']): ?>
+        <tr class="table-dark">
+          <td></td>
+          <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-white-50 fst-italic py-1">
+            <i class="bi bi-search me-1"></i>Finance review note: "<?= htmlspecialchars($r['finance_review_notes']) ?>"
           </td>
         </tr>
         <?php endif; ?>
@@ -1136,7 +1226,135 @@ function recalcItems() {
   });
   document.getElementById('grandTotalDisplay').textContent = grand.toFixed(2);
 }
+
+// ── Finance Review ──────────────────────────────────────────────────────
+function startFinanceReview(id) {
+  if (!confirm('Start Finance Review? You will be able to edit line items before re-submitting for approval.')) return;
+  const fd = new FormData();
+  fd.append('ajax','1'); fd.append('action','start_finance_review'); fd.append('req_id', id);
+  fetch('', {method:'POST', body:fd})
+    .then(r=>r.json()).then(d=>{ if(!d.ok){alert(d.msg||'Error');return;} location.reload(); });
+}
+
+const FR_MODAL_EL = () => bootstrap.Modal.getOrCreateInstance(document.getElementById('financeReviewModal'));
+const FR_DATA = <?php
+  // Build finance-review data for rows currently in finance_review status
+  $frRows = dbFetchAll(
+    "SELECT pr.id, pr.request_no, pr.amount, pr.finance_review_notes,
+            pr.requester_name, pr.description
+     FROM payment_requests pr WHERE pr.status='finance_review'" .
+    ($canFinanceCheck ? '' : ' AND 1=0')
+  );
+  $frData = [];
+  foreach ($frRows as $fr) {
+    $fr['items'] = dbFetchAll(
+      "SELECT description, qty, unit_price, line_total FROM payment_request_items WHERE payment_request_id=? ORDER BY sort_order",
+      [$fr['id']]
+    );
+    $frData[$fr['id']] = $fr;
+  }
+  echo json_encode($frData, JSON_HEX_TAG);
+?>;
+
+function openFinanceReview(id) {
+  const rec = FR_DATA[id];
+  if (!rec) { alert('Request data not loaded. Refresh the page.'); return; }
+  document.getElementById('frId').value = id;
+  document.getElementById('frErr').classList.add('d-none');
+  document.getElementById('frNotes').value = rec.finance_review_notes || '';
+  document.getElementById('frRequestInfo').innerHTML =
+    `<span class="fw-semibold text-primary">${esc(rec.request_no)}</span> — ${esc(rec.requester_name)} &mdash; ${esc(rec.description||'')}`;
+  // Populate line items
+  const tbody = document.getElementById('frItemsBody');
+  tbody.innerHTML = '';
+  const items = (rec.items && rec.items.length) ? rec.items : [{description:'',qty:1,unit_price:0,line_total:0}];
+  items.forEach(it => frAddItemRow(it));
+  frRecalc();
+  FR_MODAL_EL().show();
+}
+function frAddItemRow(prefill) {
+  const tbody = document.getElementById('frItemsBody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="text" name="item_description[]" class="form-control form-control-sm" required></td>
+    <td><input type="number" step="0.01" min="0.01" name="item_qty[]" class="form-control form-control-sm fr-qty" value="1" oninput="frRecalc()"></td>
+    <td><input type="number" step="0.01" min="0" name="item_unit_price[]" class="form-control form-control-sm fr-price" value="0" oninput="frRecalc()"></td>
+    <td class="text-end small fr-line-total pt-2">0.00</td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="frRemoveRow(this)"><i class="bi bi-x"></i></button></td>`;
+  if (prefill) {
+    tr.querySelector('[name="item_description[]"]').value = prefill.description || '';
+    tr.querySelector('.fr-qty').value = prefill.qty || 1;
+    tr.querySelector('.fr-price').value = prefill.unit_price || 0;
+  }
+  tbody.appendChild(tr);
+  frRecalc();
+}
+function frRemoveRow(btn) {
+  const tbody = document.getElementById('frItemsBody');
+  if (tbody.rows.length > 1) btn.closest('tr').remove();
+  frRecalc();
+}
+function frRecalc() {
+  let grand = 0;
+  document.querySelectorAll('#frItemsBody tr').forEach(tr => {
+    const qty = parseFloat(tr.querySelector('.fr-qty')?.value) || 0;
+    const price = parseFloat(tr.querySelector('.fr-price')?.value) || 0;
+    const total = qty * price;
+    tr.querySelector('.fr-line-total').textContent = total.toFixed(2);
+    grand += total;
+  });
+  document.getElementById('frGrandTotal').textContent = fmtMoney(grand);
+}
+async function confirmFinanceReview() {
+  const id = document.getElementById('frId').value;
+  const notes = document.getElementById('frNotes').value.trim();
+  const err = document.getElementById('frErr');
+  const fd = new FormData();
+  fd.append('ajax','1'); fd.append('action','submit_finance_review');
+  fd.append('req_id', id); fd.append('review_notes', notes);
+  // collect line item fields
+  document.querySelectorAll('#frItemsBody [name="item_description[]"]').forEach(el => fd.append('item_description[]', el.value));
+  document.querySelectorAll('#frItemsBody .fr-qty').forEach(el => fd.append('item_qty[]', el.value));
+  document.querySelectorAll('#frItemsBody .fr-price').forEach(el => fd.append('item_unit_price[]', el.value));
+  const d = await (await fetch('', {method:'POST', body:fd})).json();
+  if (!d.ok) { err.textContent = d.msg||'Error'; err.classList.remove('d-none'); return; }
+  FR_MODAL_EL().hide();
+  location.reload();
+}
 </script>
+
+<!-- Finance Review Modal -->
+<div class="modal fade" id="financeReviewModal" tabindex="-1">
+<div class="modal-dialog modal-lg modal-dialog-scrollable">
+<div class="modal-content">
+  <div class="modal-header bg-dark text-white">
+    <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Finance Review — Edit Line Items</h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+  </div>
+  <div class="modal-body">
+    <p class="text-muted small mb-2" id="frRequestInfo"></p>
+    <input type="hidden" id="frId">
+    <div class="alert alert-danger d-none small py-2" id="frErr"></div>
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr>
+        <th>Description</th><th style="width:90px">Qty</th><th style="width:120px">Unit Price (₦)</th>
+        <th class="text-end" style="width:110px">Total</th><th style="width:40px"></th>
+      </tr></thead>
+      <tbody id="frItemsBody"></tbody>
+    </table>
+    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="frAddItemRow()"><i class="bi bi-plus-circle me-1"></i>Add Row</button>
+    <div class="text-end mt-2 fw-bold">Grand Total: ₦<span id="frGrandTotal">0.00</span></div>
+    <div class="mt-3">
+      <label class="form-label small fw-semibold">Finance Review Notes (optional)</label>
+      <textarea id="frNotes" class="form-control form-control-sm" rows="2" placeholder="Note any changes or observations for the approval team…"></textarea>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+    <button class="btn btn-dark btn-sm" onclick="confirmFinanceReview()"><i class="bi bi-send me-1"></i>Submit for Re-Approval</button>
+  </div>
+</div></div></div>
+
 <?php endif; ?>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>

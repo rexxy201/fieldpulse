@@ -44,6 +44,19 @@ if (method() === 'POST') {
             $msg = 'Two-factor sign-in is now off.';
             $fresh['twofa_enabled'] = 0;
         }
+    } elseif ($action === 'save_signature') {
+        $sig = trim($_POST['signature_data'] ?? '');
+        if ($sig && str_starts_with($sig, 'data:image/')) {
+            dbRun("UPDATE users SET signature_data=? WHERE id=?", [$sig, $user['id']]);
+            $fresh['signature_data'] = $sig;
+            $msg = 'Signature saved.';
+        } elseif ($sig === '__clear__') {
+            dbRun("UPDATE users SET signature_data=NULL WHERE id=?", [$user['id']]);
+            $fresh['signature_data'] = null;
+            $msg = 'Signature cleared.';
+        } else {
+            $msg = 'No signature data received.'; $msgType = 'danger';
+        }
     }
 }
 if (!empty($_SESSION['2fa_setup_pending'])) $showCodeEntry = true;
@@ -122,5 +135,107 @@ require __DIR__ . '/../includes/header.php';
     </div>
   </div>
 </div>
+
+
+<div class="row g-3 mt-0">
+  <div class="col-12">
+    <div class="card-section">
+      <div class="card-header"><i class="bi bi-pen me-1 text-primary"></i>My Signature</div>
+      <div class="p-3">
+        <p class="small text-muted mb-3">Your signature is auto-stamped on payment vouchers that you Authorize, Approve, or Finance-Review. Draw it below or upload an image.</p>
+
+        <?php if (!empty($fresh['signature_data'])): ?>
+        <div class="mb-3">
+          <div class="text-muted" style="font-size:.75rem">CURRENT SIGNATURE ON FILE</div>
+          <img src="<?= htmlspecialchars($fresh['signature_data']) ?>" class="border rounded mt-1" style="max-height:80px;background:#fff;padding:4px">
+        </div>
+        <?php endif; ?>
+
+        <!-- Draw pad -->
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">Draw your signature</label>
+          <canvas id="sigCanvas" width="480" height="120" style="border:1px solid #ced4da;border-radius:.375rem;cursor:crosshair;background:#fff;display:block;max-width:100%"></canvas>
+          <div class="d-flex gap-2 mt-1">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearCanvas()"><i class="bi bi-eraser me-1"></i>Clear</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="saveSignature('canvas')"><i class="bi bi-floppy me-1"></i>Save Drawn Signature</button>
+          </div>
+        </div>
+
+        <!-- Upload -->
+        <div class="mb-3">
+          <label class="form-label small fw-semibold mb-1">Or upload an image</label>
+          <input type="file" id="sigFile" accept="image/*" class="form-control form-control-sm" style="max-width:300px" onchange="previewUpload(this)">
+          <img id="sigFilePreview" class="border rounded mt-1" style="max-height:80px;background:#fff;padding:4px;display:none">
+          <div class="mt-1"><button type="button" class="btn btn-sm btn-primary" id="sigUploadBtn" onclick="saveSignature('upload')" style="display:none"><i class="bi bi-floppy me-1"></i>Save Uploaded Signature</button></div>
+        </div>
+
+        <?php if (!empty($fresh['signature_data'])): ?>
+        <form method="POST">
+          <?= csrfField() ?>
+          <input type="hidden" name="_action" value="save_signature">
+          <input type="hidden" name="signature_data" value="__clear__">
+          <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Remove Signature</button>
+        </form>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Signature canvas ──────────────────────────────────────────────────────
+const canvas = document.getElementById('sigCanvas');
+const ctx = canvas.getContext('2d');
+let drawing = false;
+function getPos(e) {
+  const r = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / r.width, scaleY = canvas.height / r.height;
+  if (e.touches) return { x: (e.touches[0].clientX - r.left) * scaleX, y: (e.touches[0].clientY - r.top) * scaleY };
+  return { x: (e.clientX - r.left) * scaleX, y: (e.clientY - r.top) * scaleY };
+}
+canvas.addEventListener('mousedown', e => { drawing=true; const p=getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); });
+canvas.addEventListener('mousemove', e => { if(!drawing) return; const p=getPos(e); ctx.lineTo(p.x,p.y); ctx.strokeStyle='#111'; ctx.lineWidth=1.8; ctx.lineCap='round'; ctx.stroke(); });
+canvas.addEventListener('mouseup', ()=>drawing=false);
+canvas.addEventListener('mouseleave', ()=>drawing=false);
+canvas.addEventListener('touchstart', e=>{e.preventDefault();drawing=true;const p=getPos(e);ctx.beginPath();ctx.moveTo(p.x,p.y);},{passive:false});
+canvas.addEventListener('touchmove', e=>{e.preventDefault();if(!drawing)return;const p=getPos(e);ctx.lineTo(p.x,p.y);ctx.strokeStyle='#111';ctx.lineWidth=1.8;ctx.lineCap='round';ctx.stroke();},{passive:false});
+canvas.addEventListener('touchend', ()=>drawing=false);
+function clearCanvas(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
+function previewUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const preview = document.getElementById('sigFilePreview');
+    preview.src = e.target.result; preview.style.display='block';
+    document.getElementById('sigUploadBtn').style.display='inline-block';
+  };
+  reader.readAsDataURL(file);
+}
+function saveSignature(source) {
+  let dataUrl;
+  if (source === 'canvas') {
+    // Check if canvas has any drawing
+    const blank = document.createElement('canvas'); blank.width=canvas.width; blank.height=canvas.height;
+    if (canvas.toDataURL() === blank.toDataURL()) { alert('Please draw your signature first.'); return; }
+    dataUrl = canvas.toDataURL('image/png');
+  } else {
+    dataUrl = document.getElementById('sigFilePreview').src;
+    if (!dataUrl || !dataUrl.startsWith('data:')) { alert('Please select an image file first.'); return; }
+  }
+  const fd = new FormData();
+  fd.append('_csrf', document.querySelector('[name="_csrf"]')?.value || '');
+  fd.append('_action', 'save_signature');
+  fd.append('signature_data', dataUrl);
+  // Use a hidden form to stay consistent with CSRF pattern
+  const form = document.createElement('form'); form.method='POST'; form.style.display='none';
+  const inpAction = document.createElement('input'); inpAction.name='_action'; inpAction.value='save_signature'; form.appendChild(inpAction);
+  const inpSig = document.createElement('input'); inpSig.name='signature_data'; inpSig.value=dataUrl; form.appendChild(inpSig);
+  // inject csrf token
+  const csrfEl = document.querySelector('input[name="_csrf"]');
+  if (csrfEl) { const c=csrfEl.cloneNode(); form.appendChild(c); }
+  document.body.appendChild(form); form.submit();
+}
+</script>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>
