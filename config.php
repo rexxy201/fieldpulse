@@ -3569,3 +3569,4 @@ try {
     }
 } catch (\Throwable $e) {
     error_log('App version tracking error: ' . $e->getMessage());
+}
