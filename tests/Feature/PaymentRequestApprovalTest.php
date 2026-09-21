@@ -167,9 +167,9 @@ final class PaymentRequestApprovalTest extends TestCase
         // ── Finance Review: accountant submits with adjusted line items ───
         [, $body] = $this->request('POST', '/payment-requests', [
             'ajax' => '1', '_csrf' => $csrf, 'action' => 'submit_finance_review', 'req_id' => $pr['id'],
-            'item_description[]' => ['Adjusted Item'],
-            'item_qty[]'         => ['1'],
-            'item_unit_price[]'  => ['4500'],
+            'item_description[]' => 'Adjusted Item',
+            'item_qty[]'         => '1',
+            'item_unit_price[]'  => '4500',
             'review_notes'       => 'Reduced by 500 after audit',
         ]);
         $this->assertJsonOk($body);
