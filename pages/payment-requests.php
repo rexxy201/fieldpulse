@@ -11,8 +11,9 @@ $canView    = hasPermission('payment_requests.view');
 // Payable — disburses or returns to the requester for edits).
 $canAuthorize    = hasPermission('payment_requests.authorize');
 $canApproveStage = hasPermission('payment_requests.approve');
-$canFinanceCheck = hasPermission('payment_requests.finance_check');
-$canReview       = $canAuthorize || $canApproveStage || $canFinanceCheck;
+$canFinanceCheck  = hasPermission('payment_requests.finance_check');
+$canFinanceRecall = hasPermission('payment_requests.finance_recall');
+$canReview        = $canAuthorize || $canApproveStage || $canFinanceCheck || $canFinanceRecall;
 if (!$canCreate && !$canView) { header('Location: /dashboard'); exit; }
 
 $isVendor = $role === 'vendor';
@@ -266,6 +267,26 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
             }
         }
         echo json_encode(['ok'=>true,'new_total'=>$grandTotal]); exit;
+    }
+    if ($action === 'finance_recall') {
+        if (!$canFinanceRecall) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        $pr = dbFetch(
+            "SELECT id, status, request_no FROM payment_requests WHERE id=? AND status IN ('disbursed','partially_disbursed','finance_review')",
+            [$reqId]
+        );
+        if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Request not found or cannot be recalled from its current status.']); exit; }
+        if (in_array($pr['status'], ['disbursed','partially_disbursed'], true)) {
+            dbRun(
+                "UPDATE payment_requests SET status='approved', amount_paid=0, paid_at=NULL, payment_reference=NULL, disbursed_by=NULL, disbursed_by_name=NULL WHERE id=?",
+                [$reqId]
+            );
+        } else { // finance_review
+            dbRun(
+                "UPDATE payment_requests SET status='approved', finance_reviewed_by=NULL, finance_reviewed_by_name=NULL, finance_reviewed_at=NULL WHERE id=?",
+                [$reqId]
+            );
+        }
+        echo json_encode(['ok'=>true,'msg'=>"Request {$pr['request_no']} recalled to Approved."]); exit;
     }
     echo json_encode(['ok'=>false,'msg'=>'Unknown action']); exit;
 }
@@ -749,6 +770,8 @@ require __DIR__ . '/../includes/header.php';
               <button class="btn btn-sm btn-warning" onclick="review('<?= $r['id'] ?>','return')" title="Return to requester for edits"><i class="bi bi-arrow-return-left"></i> Return</button>
               <?php endif; ?>
             </div>
+            <?php elseif ($canFinanceRecall && in_array($r['status'], ['disbursed','partially_disbursed','finance_review'], true)): ?>
+            <button class="btn btn-sm btn-outline-danger" onclick="recallRequest('<?= $r['id'] ?>','<?= htmlspecialchars($r['request_no'], ENT_QUOTES) ?>','<?= $r['status'] ?>')" title="Recall — revert to Approved"><i class="bi bi-arrow-counterclockwise me-1"></i>Recall</button>
             <?php elseif ($isOwnReturned): ?>
             <button class="btn btn-sm btn-outline-warning" onclick="openResubmit('<?= $r['id'] ?>')" title="Edit &amp; Resubmit"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Resubmit</button>
             <?php else: ?><span class="small text-muted">—</span><?php endif; ?>
@@ -1229,6 +1252,20 @@ function recalcItems() {
 }
 
 // ── Finance Review ──────────────────────────────────────────────────────
+async function recallRequest(id, requestNo, status) {
+  const label = status === 'finance_review' ? 'Finance Review' : (status === 'disbursed' ? 'Disbursed' : 'Partially Disbursed');
+  if (!confirm(`Recall ${requestNo}?\n\nThis will revert it from "${label}" back to Approved. Payment records and review notes will be cleared. This cannot be undone.`)) return;
+  const fd = new FormData();
+  fd.append('ajax','1'); fd.append('action','finance_recall'); fd.append('req_id', id);
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  if (csrfToken) fd.append('_csrf', csrfToken);
+  try {
+    const d = await (await fetch('', {method:'POST', body:fd})).json();
+    if (!d.ok) { alert(d.msg || 'Recall failed'); return; }
+    location.reload();
+  } catch(e) { alert('Recall failed — please refresh and try again.'); }
+}
+
 function startFinanceReview(id) {
   if (!confirm('Start Finance Review? You will be able to edit line items before re-submitting for approval.')) return;
   const fd = new FormData();
