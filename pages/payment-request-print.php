@@ -85,6 +85,9 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
     ?>
     <span class="status-badge" style="background:<?= $statusColors[$r['status']] ?? '#64748b' ?>"><?= $statusLabels[$r['status']] ?? strtoupper($r['status']) ?></span>
   </h1>
+  <div style="text-align:center;font-size:1rem;font-weight:bold;margin-bottom:.75rem;letter-spacing:.03em">
+    Request No: <?= htmlspecialchars($r['request_no'] ?? '—') ?>
+  </div>
 
   <div class="finance-box">
     <strong>For Finance Use Only:</strong>
@@ -206,7 +209,7 @@ $fmtDate = fn($d) => $d ? date('d M Y', strtotime($d)) : '';
 
   <div class="field-row">
     <div class="field"><label>Receiver</label><div class="value"><?= htmlspecialchars($r['receiver'] ?? '') ?></div></div>
-    <?php if ($r['vendor_name']): ?><div class="field"><label>Vendor</label><div class="value"><?= htmlspecialchars($r['vendor_name']) ?></div></div><?php endif; ?>
+    <div class="field"><label>Vendor</label><div class="value"><?= htmlspecialchars($r['vendor_name'] ?? '') ?></div></div>
   </div>
 
   <div class="section-title">Approval / Sign-off</div>

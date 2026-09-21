@@ -550,6 +550,7 @@ if ($canFinanceCheck) {
             $linkLbl = $r['linked_type']==='installation' ? ($installLabels[$r['linked_id']] ?? null)
                      : ($r['linked_type']==='ticket' ? ($ticketLabels[$r['linked_id']] ?? null) : null);
             $disburseData[$r['id']] = [
+                'request_no'       => $r['request_no'],
                 'requester_name'   => $r['requester_name'],
                 'date_of_request'  => $r['date_of_request'],
                 'department'       => $r['department'],
@@ -1035,7 +1036,7 @@ function openDisburse(id){
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">CUSTOMER</div><div>${esc(rec.customer_name)||'—'} ${rec.customer_user_id?'('+esc(rec.customer_user_id)+')':''}</div></div>
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">LOCATION / POP</div><div>${esc(rec.location)||'—'} ${rec.hub_name?'/ '+esc(rec.hub_name):''}</div></div>
       <div class="col-4"><div class="text-muted" style="font-size:.7rem">RECEIVER</div><div>${esc(rec.receiver)||'—'}</div></div>
-      ${rec.vendor_name ? `<div class="col-4"><div class="text-muted" style="font-size:.7rem">VENDOR</div><div>${esc(rec.vendor_name)}</div></div>` : ''}
+      <div class="col-4"><div class="text-muted" style="font-size:.7rem">VENDOR</div><div>${esc(rec.vendor_name)||'—'}</div></div>
       ${rec.linked_label ? `<div class="col-4"><div class="text-muted" style="font-size:.7rem">LINKED TO</div><div>${esc(rec.linked_label)}</div></div>` : ''}
     </div>
     <div class="mb-2"><div class="text-muted" style="font-size:.7rem">REASON / DESCRIPTION</div><div>${esc(rec.description)||'—'}</div></div>
@@ -1309,15 +1310,20 @@ async function confirmFinanceReview() {
   const id = document.getElementById('frId').value;
   const notes = document.getElementById('frNotes').value.trim();
   const err = document.getElementById('frErr');
+  err.classList.add('d-none');
   const fd = new FormData();
   fd.append('ajax','1'); fd.append('action','submit_finance_review');
   fd.append('req_id', id); fd.append('review_notes', notes);
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  if (csrfToken) fd.append('_csrf', csrfToken);
   // collect line item fields
   document.querySelectorAll('#frItemsBody [name="item_description[]"]').forEach(el => fd.append('item_description[]', el.value));
   document.querySelectorAll('#frItemsBody .fr-qty').forEach(el => fd.append('item_qty[]', el.value));
   document.querySelectorAll('#frItemsBody .fr-price').forEach(el => fd.append('item_unit_price[]', el.value));
-  const d = await (await fetch('', {method:'POST', body:fd})).json();
-  if (!d.ok) { err.textContent = d.msg||'Error'; err.classList.remove('d-none'); return; }
+  try {
+    const d = await (await fetch('', {method:'POST', body:fd})).json();
+    if (!d.ok) { err.textContent = d.msg||'Error'; err.classList.remove('d-none'); return; }
+  } catch(e) { err.textContent = 'Submission failed — please refresh and try again.'; err.classList.remove('d-none'); return; }
   FR_MODAL_EL().hide();
   location.reload();
 }
