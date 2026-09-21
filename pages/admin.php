@@ -1610,11 +1610,6 @@ function openRole(r) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('roleModal')).show();
 }
 
-// Keep the Permissions tab active after a role/permission redirect (#tab-permissions)
-if (location.hash === '#tab-permissions') {
-  const t = document.querySelector('[href="#tab-permissions"]');
-  if (t) bootstrap.Tab.getOrCreateInstance(t).show();
-}
 </script>
 
 <!-- Add Hub Modal -->
