@@ -258,7 +258,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
             if (!empty($pr['authorized_by'])) {
                 $authUser = dbFetch("SELECT id FROM users WHERE id=?", [$pr['authorized_by']]);
                 if ($authUser) {
-                    createNotification($pr['authorized_by'],
+                    notifyUser($pr['authorized_by'],
                         "Finance Review Complete — {$_pr['request_no']}",
                         "A payment request you authorized has been reviewed by Finance and now needs re-approval. New total: ₦" . number_format($grandTotal, 2) . ".",
                         '/payment-requests?status=authorized');
