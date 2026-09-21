@@ -628,7 +628,7 @@ if ($prefillTicketId && !in_array($prefillTicketId, array_column($linkTickets, '
     $prefillTicketRowForPicker = dbFetch("SELECT id,ticket_number,customer_name FROM tickets WHERE id=?", [$prefillTicketId]);
     if ($prefillTicketRowForPicker) array_unshift($linkTickets, $prefillTicketRowForPicker);
 }
-$allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM customers ORDER BY name LIMIT 2000") : [];
+$allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM customers ORDER BY name") : [];
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
 $locations = $canCreate ? dbFetchAll("SELECT name FROM locations ORDER BY name") : [];
 
