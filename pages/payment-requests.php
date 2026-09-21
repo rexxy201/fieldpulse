@@ -1197,13 +1197,15 @@ function openResubmit(id) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById('newRequestModal')).show();
 }
 function toggleLinkPicker(v) {
-  // Both selects share name="linked_id" — only the visible one should be
-  // submitted, so disable the hidden one (disabled inputs are excluded from
-  // form submission) or it would silently overwrite the chosen value.
+  // Both selects share name="linked_id" — only the active one must be enabled
+  // so the correct value is submitted. Use TomSelect's API when available so
+  // its internal is_disabled flag stays in sync with the underlying <select>.
   document.getElementById('linkInstallWrap').classList.toggle('d-none', v !== 'installation');
-  document.getElementById('linkInstallSelect').disabled = v !== 'installation';
   document.getElementById('linkTicketWrap').classList.toggle('d-none', v !== 'ticket');
-  document.getElementById('linkTicketSelect').disabled = v !== 'ticket';
+  if (linkInstallTS) { v === 'installation' ? linkInstallTS.enable() : linkInstallTS.disable(); }
+  else { document.getElementById('linkInstallSelect').disabled = v !== 'installation'; }
+  if (linkTicketTS) { v === 'ticket' ? linkTicketTS.enable() : linkTicketTS.disable(); }
+  else { document.getElementById('linkTicketSelect').disabled = v !== 'ticket'; }
 }
 function checkDocsCount(input) {
   const warn = document.getElementById('docsCountWarn');
