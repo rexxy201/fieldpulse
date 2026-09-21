@@ -505,6 +505,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
                     title="Edit"><i class="bi bi-pencil"></i></button>
                   <form method="POST" onsubmit="return confirm('Delete this fault type?')" class="d-inline">
                     <input type="hidden" name="_action" value="del_fault">
+                    <?= csrfField() ?>
                     <input type="hidden" name="id" value="<?= $f['id'] ?>">
                     <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Delete"><i class="bi bi-trash3"></i></button>
                   </form>
@@ -534,6 +535,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
             <tr>
               <form method="POST">
                 <input type="hidden" name="_action" value="add_sla">
+                <?= csrfField() ?>
                 <input type="hidden" name="priority" value="<?= $p ?>">
                 <td>
                   <span class="badge badge-<?= $p ?>"><?= strtoupper($p) ?></span>
@@ -559,6 +561,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         <p class="small text-muted mb-3">Target turnaround from payment confirmation to a completed installation. Drives the SLA Due dates and overdue flags on the Installations board.</p>
         <form method="POST" class="d-flex align-items-end gap-3 flex-wrap">
           <input type="hidden" name="_action" value="save_installation_sla">
+          <?= csrfField() ?>
           <div>
             <label class="form-label fw-semibold mb-1 small">Installation completion target</label>
             <div class="input-group" style="max-width:200px">
@@ -578,6 +581,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
       <div class="p-3">
         <form method="POST" class="d-flex align-items-end gap-3 flex-wrap">
           <input type="hidden" name="_action" value="save_sla_warning">
+          <?= csrfField() ?>
           <div>
             <label class="form-label fw-semibold mb-1 small">Send warning email when SLA breach is within</label>
             <div class="input-group" style="max-width:200px">
@@ -784,6 +788,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
           <div class="p-4">
             <form method="POST" enctype="multipart/form-data">
               <input type="hidden" name="_action" value="save_branding">
+              <?= csrfField() ?>
               <div class="mb-3">
                 <label class="form-label fw-semibold">Company / Brand Name</label>
                 <input type="text" name="companyName" class="form-control"
@@ -926,6 +931,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         <p class="text-muted small mb-4">Configure outbound email for ticket alerts sent to engineers and supervisors.</p>
         <form method="POST" id="smtpForm">
           <input type="hidden" name="_action" value="save_notifications">
+          <?= csrfField() ?>
           <div class="row g-3 mb-3">
             <div class="col-md-8">
               <label class="form-label fw-semibold">SMTP Host</label>
@@ -1036,6 +1042,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </p>
         <form method="POST" id="aiForm">
           <input type="hidden" name="_action" value="save_ai_settings">
+          <?= csrfField() ?>
           <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" role="switch" id="aiEnabledSwitch" name="aiAssistantEnabled" value="1"
               <?= ($aiCfg['aiAssistantEnabled'] ?? '1') !== '0' ? 'checked' : '' ?>>
@@ -1089,6 +1096,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </p>
         <form method="POST" id="digestForm">
           <input type="hidden" name="_action" value="save_digest_settings">
+          <?= csrfField() ?>
           <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" role="switch" id="digestEnabledSwitch" name="opsDigestEnabled" value="1"
               <?= ($cfg['opsDigestEnabled'] ?? '0') === '1' ? 'checked' : '' ?>>
@@ -1123,6 +1131,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </p>
         <form method="POST" id="financeDigestForm">
           <input type="hidden" name="_action" value="save_finance_digest_settings">
+          <?= csrfField() ?>
           <div class="form-check form-switch mb-3">
             <input class="form-check-input" type="checkbox" role="switch" id="financeDigestEnabledSwitch" name="financeDigestEnabled" value="1"
               <?= ($cfg['financeDigestEnabled'] ?? '0') === '1' ? 'checked' : '' ?>>
@@ -1174,7 +1183,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
                   <button class="btn btn-sm btn-outline-secondary" onclick='openRole(<?= htmlspecialchars(json_encode(["name"=>$rn,"label"=>$r["label"],"department"=>$r["department"],"is_system"=>(int)$r["is_system"]]), ENT_QUOTES) ?>)' title="Edit"><i class="bi bi-pencil"></i></button>
                   <?php if ($rn !== 'admin' && (int)$r['is_system'] === 0): ?>
                   <form method="POST" class="d-inline" onsubmit="return confirm('Delete this role?<?= $uCount>0 ? ' It still has '.$uCount.' user(s).' : '' ?>')">
-                    <input type="hidden" name="_action" value="del_role"><input type="hidden" name="name" value="<?= htmlspecialchars($rn) ?>">
+                    <input type="hidden" name="_action" value="del_role"><?= csrfField() ?><input type="hidden" name="name" value="<?= htmlspecialchars($rn) ?>">
                     <button class="btn btn-sm btn-outline-danger" title="Delete"><i class="bi bi-trash3"></i></button>
                   </form>
                   <?php endif; ?>
@@ -1191,6 +1200,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
     <div class="modal fade" id="roleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
       <form method="POST">
         <input type="hidden" name="_action" id="roleAction" value="add_role">
+        <?= csrfField() ?>
         <div class="modal-header"><h5 class="modal-title" id="roleModalTitle">New Role</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
           <div class="mb-3">
@@ -1227,6 +1237,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </p>
         <form method="POST">
           <input type="hidden" name="_action" value="save_permissions">
+          <?= csrfField() ?>
           <?php
           // Build current permissions map: [role][perm] = true
           $currentPerms = [];
@@ -1516,7 +1527,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
 <!-- Add Fault Type Modal -->
 <div class="modal fade" id="addFaultModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
-    <form method="POST"><input type="hidden" name="_action" value="add_fault">
+    <form method="POST"><input type="hidden" name="_action" value="add_fault"><?= csrfField() ?>
       <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-exclamation-diamond me-1 text-primary"></i>Add Fault Type</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -1550,6 +1561,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
   <div class="modal-dialog"><div class="modal-content">
     <form method="POST">
       <input type="hidden" name="_action" value="edit_fault">
+      <?= csrfField() ?>
       <input type="hidden" name="id" id="ef_id">
       <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-pencil-square me-1 text-primary"></i>Edit Fault Type</h5>
