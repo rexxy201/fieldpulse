@@ -3049,14 +3049,18 @@ function captureInstallationHandoff(string $profileId, string $newStatus, ?strin
  */
 function generatePaymentRequestNumber(?string $year = null): string {
     $year = $year ?: date('Y');
-    $rows = dbFetchAll("SELECT request_no FROM payment_requests WHERE request_no LIKE ?", ["PR-$year-%"]);
+    // Include legacy PR- records so the sequence never resets after the prefix change
+    $rows = dbFetchAll(
+        "SELECT request_no FROM payment_requests WHERE request_no LIKE ? OR request_no LIKE ?",
+        ["REQ-$year-%", "PR-$year-%"]
+    );
     $seq = 1;
     foreach ($rows as $row) {
         $parts = explode('-', $row['request_no'] ?? '');
         $n = (int)end($parts);
         if ($n >= $seq) $seq = $n + 1;
     }
-    return sprintf('PR-%s-%04d', $year, $seq);
+    return sprintf('REQ-%s-%04d', $year, $seq);
 }
 
 /**
