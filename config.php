@@ -999,7 +999,8 @@ define('ALL_PERMISSIONS', [
     'payment_requests.view'        => 'View all payment requests (not just own)',
     'payment_requests.authorize'   => 'Authorize payment requests (Line Manager / Supervisor stage)',
     'payment_requests.approve'     => 'Approve payment requests (COO / senior management stage)',
-    'payment_requests.finance_check' => 'Finance check — disburse or return to requester',
+    'payment_requests.finance_check'  => 'Finance check — disburse or return to requester',
+    'payment_requests.finance_recall' => 'Recall finance action — revert disbursed / partially disbursed / finance review back to Approved',
     // ── Finance module ──
     'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
 ]);

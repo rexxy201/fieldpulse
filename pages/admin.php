@@ -17,7 +17,7 @@ $PERMISSION_GROUPS = [
     'Installations' => ['installations.view','installations.create','installations.update','installations.delete'],
     'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view','reports.view'],
     // Who may raise a payment request, and who signs one off at each stage.
-    'Payment Requests' => ['payment_requests.create','payment_requests.view','payment_requests.authorize','payment_requests.approve','payment_requests.finance_check'],
+    'Payment Requests' => ['payment_requests.create','payment_requests.view','payment_requests.authorize','payment_requests.approve','payment_requests.finance_check','payment_requests.finance_recall'],
     'Finance'          => ['finance.view','installations.financial'],
     'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill'],
     'System'        => ['admin.access'],
