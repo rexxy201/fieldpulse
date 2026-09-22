@@ -606,7 +606,7 @@ if (!$canView) {
     else { $sw[] = "requester_id = ?"; $sp[] = $user['id']; }
 }
 $swSql = $sw ? ' WHERE ' . implode(' AND ', $sw) : '';
-$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='returned') returned, SUM(status='partially_disbursed') partially_disbursed, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
+$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='finance_review') finance_review, SUM(status='returned') returned, SUM(status='partially_disbursed') partially_disbursed, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
 
 // Records available to link, scoped to the current user
 if ($isVendor && !empty($user['vendor_id'])) {

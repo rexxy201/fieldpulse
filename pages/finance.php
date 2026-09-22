@@ -129,28 +129,28 @@ require __DIR__ . '/../includes/header.php';
   <div class="p-3">
     <div class="row g-2 mb-3">
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/payment-requests?status=pending" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#f59e0b">₦<?= number_format((float)($prAmounts['pending_amount']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['pending']??0) ?> Pending</div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/payment-requests?status=authorized" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#3b82f6">₦<?= number_format((float)($prAmounts['approved_amount']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) + (int)($prByStatus['partial']??0) ?> Authorized/Approved (outstanding balance)<?php if (($prByStatus['partial']??0) > 0): ?> · <?= (int)$prByStatus['partial'] ?> Partial<?php endif; ?><?php if (($prByStatus['returned']??0) > 0): ?> · <?= (int)$prByStatus['returned'] ?> Returned<?php endif; ?></div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/payment-requests?status=disbursed" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($prAmounts['paid_amount']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['paid']??0) ?> Fully Disbursed (all-time)</div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/payment-requests?status=disbursed" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($prAmounts['paid_last_30d']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b">Disbursed — last 30 days</div>
-        </div>
+        </a>
       </div>
     </div>
     <?php if ($prByVendor): ?>
@@ -175,28 +175,28 @@ require __DIR__ . '/../includes/header.php';
   <div class="p-3">
     <div class="row g-2 mb-3">
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/installations?paid=Yes" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#10b981">₦<?= number_format((float)($installMoney['total_amount_paid']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b">Total Amount Paid</div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/installations" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#64748b">₦<?= number_format((float)($installMoney['total_cost']??0)) ?></div>
           <div style="font-size:.7rem;color:#64748b">Total Installation Cost</div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/installations?paid=Yes" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#10b981"><?= (int)($installMoney['paid_count']??0) ?></div>
           <div style="font-size:.7rem;color:#64748b">Installation Paid</div>
-        </div>
+        </a>
       </div>
       <div class="col-6 col-md-3">
-        <div class="stat-card py-2 text-center">
+        <a href="/installations?paid=No" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#ef4444"><?= (int)($installMoney['unpaid_count']??0) ?></div>
           <div style="font-size:.7rem;color:#64748b">Installation Not Paid</div>
-        </div>
+        </a>
       </div>
     </div>
     <?php if ($installByVendor): ?>
