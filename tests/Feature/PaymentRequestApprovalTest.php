@@ -174,15 +174,8 @@ final class PaymentRequestApprovalTest extends TestCase
         ]);
         $this->assertJsonOk($body);
         $reviewed = $this->reload($pr['id']);
-        $this->assertSame('authorized', $reviewed['status'], 'After finance review, status must revert to authorized for re-approval.');
+        $this->assertSame('approved', $reviewed['status'], 'After finance review, status must be approved and ready for disbursement.');
         $this->assertSame(4500.0, (float)$reviewed['amount'], 'Amount must reflect adjusted line items.');
-
-        // ── Re-Approve after finance review ───────────────────────────────
-        [, $body] = $this->request('POST', '/payment-requests', [
-            'ajax' => '1', '_csrf' => $csrf, 'action' => 'approve', 'req_id' => $pr['id'],
-        ]);
-        $this->assertJsonOk($body);
-        $this->assertSame('approved', $this->reload($pr['id'])['status']);
 
         // ── Finance Check: a partial payment first (bill-style, like Zoho Books) ──
         [, $body] = $this->request('POST', '/payment-requests', [

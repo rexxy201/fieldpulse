@@ -45,9 +45,9 @@ const PR_CATEGORIES = ['Operational','Deployment/Expansion','Fiber Cut Restorati
 // must be linked (feeds the Customers module). 'expansion' / 'deployment' —
 // not tied to a specific customer; the customer picker is shown but optional.
 // 'admin' — Admin Requests: no customer involved, the picker isn't offered.
-const PR_REQUEST_TYPES = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests'];
+const PR_REQUEST_TYPES = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests', 'equipment_purchase' => 'Equipment Purchase'];
 const PR_CUSTOMER_REQUIRED_TYPES = ['operational'];
-const PR_CUSTOMER_HIDDEN_TYPES = ['admin'];
+const PR_CUSTOMER_HIDDEN_TYPES = ['admin', 'equipment_purchase'];
 
 // ─── AJAX authorize / approve / reject / return / disburse ──────────────────
 if (method() === 'POST' && isset($_POST['ajax'])) {
@@ -239,32 +239,19 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         }
 
         $frNotes = trim($notes);
-        // Preserve current amount as original_amount if not already set, then set new amount
-        dbRun("UPDATE payment_requests SET amount=?, status='authorized', finance_review_notes=?,
-               authorized_at=NOW()
-               WHERE id=?",
+        dbRun("UPDATE payment_requests SET amount=?, status='approved', finance_review_notes=? WHERE id=?",
             [$grandTotal, $frNotes ?: null, $reqId]);
 
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
-            // Notify the approver to re-approve
-            notifyPermissionHolders('payment_requests.approve',
-                'Payment Request Needs Re-Approval After Finance Review',
-                "Finance has reviewed {$_pr['requester_name']}'s request ({$_pr['request_no']}) and adjusted the line items. Please re-approve.",
-                '/payment-requests?status=authorized',
-                "Re-Approval Required — Finance Reviewed {$_pr['request_no']}",
-                paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed a review of this payment request and adjusted the line items. The updated total is ₦" . number_format($grandTotal, 2) . ". Please re-approve."));
-            // Notify originator and authorizer
+            // Notify finance team that the request is ready for disbursement
+            notifyPermissionHolders('payment_requests.finance_check',
+                'Payment Request Ready for Disbursement — ' . $_pr['request_no'],
+                "Finance review complete for {$_pr['requester_name']}'s request ({$_pr['request_no']}). Line items adjusted. New total: ₦" . number_format($grandTotal, 2) . ". Ready to disburse.",
+                '/payment-requests?status=approved',
+                "Ready to Disburse — {$_pr['request_no']}",
+                paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed review of this payment request. New total: ₦" . number_format($grandTotal, 2) . ". It is now ready for disbursement."));
             notifyPaymentRequestOriginator($_pr, "Finance Review Complete — {$_pr['request_no']}",
-                "Your payment request has been reviewed by Finance. The line items were adjusted and it is now pending re-approval. New total: ₦" . number_format($grandTotal, 2) . ".");
-            if (!empty($pr['authorized_by'])) {
-                $authUser = dbFetch("SELECT id FROM users WHERE id=?", [$pr['authorized_by']]);
-                if ($authUser) {
-                    notifyUser($pr['authorized_by'],
-                        "Finance Review Complete — {$_pr['request_no']}",
-                        "A payment request you authorized has been reviewed by Finance and now needs re-approval. New total: ₦" . number_format($grandTotal, 2) . ".",
-                        '/payment-requests?status=authorized');
-                }
-            }
+                "Your payment request has been reviewed by Finance. New total: ₦" . number_format($grandTotal, 2) . ". It is now approved and pending disbursement.");
         }
         echo json_encode(['ok'=>true,'new_total'=>$grandTotal]); exit;
     }
@@ -760,7 +747,7 @@ require __DIR__ . '/../includes/header.php';
             </div>
             <?php elseif ($canFinanceCheck && $r['status']==='finance_review'): ?>
             <div class="d-inline-flex gap-1">
-              <button class="btn btn-sm btn-dark" onclick="openFinanceReview('<?= $r['id'] ?>')" title="Edit line items &amp; re-submit for approval"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Re-Submit</button>
+              <button class="btn btn-sm btn-dark" onclick="openFinanceReview('<?= $r['id'] ?>')" title="Edit line items &amp; submit for disbursement"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Submit</button>
             </div>
             <?php elseif ($canFinanceCheck && in_array($r['status'], ['approved','partially_disbursed'], true)): ?>
             <div class="d-inline-flex gap-1">
@@ -1401,7 +1388,7 @@ async function confirmFinanceReview() {
   </div>
   <div class="modal-footer">
     <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
-    <button class="btn btn-dark btn-sm" onclick="confirmFinanceReview()"><i class="bi bi-send me-1"></i>Submit for Re-Approval</button>
+    <button class="btn btn-dark btn-sm" onclick="confirmFinanceReview()"><i class="bi bi-send me-1"></i>Submit for Disbursement</button>
   </div>
 </div></div></div>
 
