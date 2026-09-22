@@ -45,9 +45,9 @@ const PR_CATEGORIES = ['Operational','Deployment/Expansion','Fiber Cut Restorati
 // must be linked (feeds the Customers module). 'expansion' / 'deployment' —
 // not tied to a specific customer; the customer picker is shown but optional.
 // 'admin' — Admin Requests: no customer involved, the picker isn't offered.
-const PR_REQUEST_TYPES = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests'];
+const PR_REQUEST_TYPES = ['operational' => 'Operational', 'expansion' => 'Expansion', 'deployment' => 'Deployment', 'admin' => 'Admin Requests', 'equipment_purchase' => 'Equipment Purchase'];
 const PR_CUSTOMER_REQUIRED_TYPES = ['operational'];
-const PR_CUSTOMER_HIDDEN_TYPES = ['admin'];
+const PR_CUSTOMER_HIDDEN_TYPES = ['admin', 'equipment_purchase'];
 
 // ─── AJAX authorize / approve / reject / return / disburse ──────────────────
 if (method() === 'POST' && isset($_POST['ajax'])) {
