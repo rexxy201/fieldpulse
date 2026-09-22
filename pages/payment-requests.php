@@ -1268,12 +1268,17 @@ async function recallRequest(id, requestNo, status) {
   } catch(e) { alert('Recall failed — please refresh and try again.'); }
 }
 
-function startFinanceReview(id) {
+async function startFinanceReview(id) {
   if (!confirm('Start Finance Review? You will be able to edit line items before re-submitting for approval.')) return;
   const fd = new FormData();
   fd.append('ajax','1'); fd.append('action','start_finance_review'); fd.append('req_id', id);
-  fetch('', {method:'POST', body:fd})
-    .then(r=>r.json()).then(d=>{ if(!d.ok){alert(d.msg||'Error');return;} location.reload(); });
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  if (csrfToken) fd.append('_csrf', csrfToken);
+  try {
+    const d = await (await fetch('', {method:'POST', body:fd})).json();
+    if (!d.ok) { alert(d.msg || 'Error starting finance review'); return; }
+    location.reload();
+  } catch(e) { alert('Submission failed — please refresh and try again.'); }
 }
 
 const FR_MODAL_EL = () => bootstrap.Modal.getOrCreateInstance(document.getElementById('financeReviewModal'));
