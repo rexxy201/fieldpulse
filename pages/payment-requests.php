@@ -144,7 +144,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
             echo json_encode(['ok'=>false,'msg'=>'Enter a valid payment amount.']); exit;
         }
         $payAmt = round((float)$payAmt, 2);
-        $pr = dbFetch("SELECT amount, amount_paid FROM payment_requests WHERE id=? AND status IN ('approved','partially_disbursed')", [$reqId]);
+        $pr = dbFetch("SELECT amount, amount_paid FROM payment_requests WHERE id=? AND status IN ('approved','pending_disbursement','partially_disbursed')", [$reqId]);
         if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Request not found or not awaiting payment.']); exit; }
         $balance = round((float)$pr['amount'] - (float)$pr['amount_paid'], 2);
         if ($payAmt > $balance + 0.01) {
@@ -239,7 +239,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         }
 
         $frNotes = trim($notes);
-        dbRun("UPDATE payment_requests SET amount=?, status='approved', finance_review_notes=? WHERE id=?",
+        dbRun("UPDATE payment_requests SET amount=?, status='pending_disbursement', finance_review_notes=? WHERE id=?",
             [$grandTotal, $frNotes ?: null, $reqId]);
 
         if ($_pr = fetchPaymentRequestForNotify($reqId)) {
@@ -247,7 +247,7 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
             notifyPermissionHolders('payment_requests.finance_check',
                 'Payment Request Ready for Disbursement — ' . $_pr['request_no'],
                 "Finance review complete for {$_pr['requester_name']}'s request ({$_pr['request_no']}). Line items adjusted. New total: ₦" . number_format($grandTotal, 2) . ". Ready to disburse.",
-                '/payment-requests?status=approved',
+                '/payment-requests?status=pending_disbursement',
                 "Ready to Disburse — {$_pr['request_no']}",
                 paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed review of this payment request. New total: ₦" . number_format($grandTotal, 2) . ". It is now ready for disbursement."));
             notifyPaymentRequestOriginator($_pr, "Finance Review Complete — {$_pr['request_no']}",
@@ -258,13 +258,18 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
     if ($action === 'finance_recall') {
         if (!$canFinanceRecall) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
         $pr = dbFetch(
-            "SELECT id, status, request_no FROM payment_requests WHERE id=? AND status IN ('disbursed','partially_disbursed','finance_review')",
+            "SELECT id, status, request_no FROM payment_requests WHERE id=? AND status IN ('disbursed','partially_disbursed','finance_review','pending_disbursement')",
             [$reqId]
         );
         if (!$pr) { echo json_encode(['ok'=>false,'msg'=>'Request not found or cannot be recalled from its current status.']); exit; }
         if (in_array($pr['status'], ['disbursed','partially_disbursed'], true)) {
             dbRun(
                 "UPDATE payment_requests SET status='approved', amount_paid=0, paid_at=NULL, payment_reference=NULL, disbursed_by=NULL, disbursed_by_name=NULL WHERE id=?",
+                [$reqId]
+            );
+        } elseif ($pr['status'] === 'pending_disbursement') {
+            dbRun(
+                "UPDATE payment_requests SET status='approved', finance_review_notes=NULL WHERE id=?",
                 [$reqId]
             );
         } else { // finance_review
@@ -445,7 +450,7 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
 }
 
 $status = $_GET['status'] ?? 'all';
-if (!in_array($status, ['all','pending','authorized','approved','partially_disbursed','disbursed','rejected','returned'], true)) $status = 'all';
+if (!in_array($status, ['all','pending','authorized','approved','finance_review','pending_disbursement','partially_disbursed','disbursed','rejected','returned'], true)) $status = 'all';
 
 // Scope: approvers/viewers see everyone's; vendors see their own vendor_id;
 // everyone else sees only what they personally submitted.
@@ -542,7 +547,7 @@ if ($ownReturnedIds) {
 // without a second round trip.
 $disburseData = [];
 if ($canFinanceCheck) {
-    $payableIds = array_values(array_map(fn($r) => $r['id'], array_filter($requests, fn($r) => in_array($r['status'], ['approved','partially_disbursed'], true))));
+    $payableIds = array_values(array_map(fn($r) => $r['id'], array_filter($requests, fn($r) => in_array($r['status'], ['approved','pending_disbursement','partially_disbursed'], true))));
     if ($payableIds) {
         $ph = implode(',', array_fill(0, count($payableIds), '?'));
         $itemsByPr = [];
@@ -593,7 +598,7 @@ if (!$canView) {
     else { $sw[] = "requester_id = ?"; $sp[] = $user['id']; }
 }
 $swSql = $sw ? ' WHERE ' . implode(' AND ', $sw) : '';
-$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='finance_review') finance_review, SUM(status='returned') returned, SUM(status='partially_disbursed') partially_disbursed, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
+$stats = dbFetch("SELECT SUM(status='pending') pending, SUM(status='authorized') authorized, SUM(status='approved') approved, SUM(status='finance_review') finance_review, SUM(status='pending_disbursement') pending_disbursement, SUM(status='returned') returned, SUM(status='partially_disbursed') partially_disbursed, SUM(status='disbursed') disbursed, SUM(status='rejected') rejected FROM payment_requests" . $swSql, $sp);
 
 // Records available to link, scoped to the current user
 if ($isVendor && !empty($user['vendor_id'])) {
@@ -619,8 +624,8 @@ $allCustomers = $canCreate ? dbFetchAll("SELECT id,name,account_number FROM cust
 $hubs      = $canCreate ? dbFetchAll("SELECT id,name FROM hubs ORDER BY name") : [];
 $locations = $canCreate ? dbFetchAll("SELECT name FROM locations ORDER BY name") : [];
 
-$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','finance_review'=>'Finance Review','returned'=>'Returned','partially_disbursed'=>'Partial Payment','disbursed'=>'Disbursed','rejected'=>'Rejected'];
-$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','finance_review'=>'text-bg-dark','returned'=>'text-bg-secondary','partially_disbursed'=>'text-bg-warning','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
+$STATUS_LABELS = ['pending'=>'Pending','authorized'=>'Authorized','approved'=>'Approved','finance_review'=>'Finance Review','pending_disbursement'=>'Pending Disbursement','returned'=>'Returned','partially_disbursed'=>'Partial Payment','disbursed'=>'Disbursed','rejected'=>'Rejected'];
+$STATUS_COLORS = ['pending'=>'text-bg-warning','authorized'=>'text-bg-info','approved'=>'text-bg-primary','finance_review'=>'text-bg-dark','pending_disbursement'=>'text-bg-purple','returned'=>'text-bg-secondary','partially_disbursed'=>'text-bg-warning','disbursed'=>'text-bg-success','rejected'=>'text-bg-danger'];
 
 $pageTitle = 'Payment Requests';
 require __DIR__ . '/../includes/header.php';
@@ -665,11 +670,12 @@ require __DIR__ . '/../includes/header.php';
     ['Authorized','#0ea5e9',(int)($stats['authorized']??0),'authorized'],
     ['Approved','#3b82f6',(int)($stats['approved']??0),'approved'],
     ['Finance Review','#1e293b',(int)($stats['finance_review']??0),'finance_review'],
+    ['Pending Disbursement','#7c3aed',(int)($stats['pending_disbursement']??0),'pending_disbursement'],
     ['Returned','#64748b',(int)($stats['returned']??0),'returned'],
     ['Partial Payment','#eab308',(int)($stats['partially_disbursed']??0),'partially_disbursed'],
     ['Disbursed','#10b981',(int)($stats['disbursed']??0),'disbursed'],
     ['Rejected','#ef4444',(int)($stats['rejected']??0),'rejected'],
-    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['finance_review']??0)+($stats['returned']??0)+($stats['partially_disbursed']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
+    ['All','#64748b',(int)(($stats['pending']??0)+($stats['authorized']??0)+($stats['approved']??0)+($stats['finance_review']??0)+($stats['pending_disbursement']??0)+($stats['returned']??0)+($stats['partially_disbursed']??0)+($stats['disbursed']??0)+($stats['rejected']??0)),'all'],
   ] as [$lbl,$clr,$val,$sf]): ?>
   <div class="col-6 col-md-4 col-xl-2">
     <a href="?status=<?= $sf ?>" class="stat-card py-2 d-block text-center text-decoration-none <?= $status===$sf?'border-primary':'' ?>">
@@ -749,7 +755,7 @@ require __DIR__ . '/../includes/header.php';
             <div class="d-inline-flex gap-1">
               <button class="btn btn-sm btn-dark" onclick="openFinanceReview('<?= $r['id'] ?>')" title="Edit line items &amp; submit for disbursement"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Submit</button>
             </div>
-            <?php elseif ($canFinanceCheck && in_array($r['status'], ['approved','partially_disbursed'], true)): ?>
+            <?php elseif ($canFinanceCheck && in_array($r['status'], ['approved','pending_disbursement','partially_disbursed'], true)): ?>
             <div class="d-inline-flex gap-1">
               <button class="btn btn-sm btn-outline-success" onclick="openDisburse('<?= $r['id'] ?>')" title="View &amp; Record Payment"><i class="bi bi-cash-stack me-1"></i><?= $r['status']==='partially_disbursed' ? 'Record Payment' : 'Disburse' ?></button>
               <?php if ($r['status']==='approved'): ?>
@@ -757,7 +763,7 @@ require __DIR__ . '/../includes/header.php';
               <button class="btn btn-sm btn-warning" onclick="review('<?= $r['id'] ?>','return')" title="Return to requester for edits"><i class="bi bi-arrow-return-left"></i> Return</button>
               <?php endif; ?>
             </div>
-            <?php elseif ($canFinanceRecall && in_array($r['status'], ['disbursed','partially_disbursed','finance_review'], true)): ?>
+            <?php elseif ($canFinanceRecall && in_array($r['status'], ['disbursed','partially_disbursed','finance_review','pending_disbursement'], true)): ?>
             <button class="btn btn-sm btn-outline-danger" onclick="recallRequest('<?= $r['id'] ?>','<?= htmlspecialchars($r['request_no'], ENT_QUOTES) ?>','<?= $r['status'] ?>')" title="Recall — revert to Approved"><i class="bi bi-arrow-counterclockwise me-1"></i>Recall</button>
             <?php elseif ($isOwnReturned): ?>
             <button class="btn btn-sm btn-outline-warning" onclick="openResubmit('<?= $r['id'] ?>')" title="Edit &amp; Resubmit"><i class="bi bi-pencil-square me-1"></i>Edit &amp; Resubmit</button>
