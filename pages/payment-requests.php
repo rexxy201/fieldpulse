@@ -779,7 +779,7 @@ require __DIR__ . '/../includes/header.php';
           </td>
         </tr>
         <?php endif; ?>
-        <?php if ($r['status']==='finance_review' && $r['finance_review_notes']): ?>
+        <?php if (in_array($r['status'], ['finance_review','pending_disbursement'], true) && $r['finance_review_notes']): ?>
         <tr class="table-dark">
           <td></td>
           <td colspan="<?= ($canReview||$canCreate)?11:10 ?>" class="small text-white-50 fst-italic py-1">
