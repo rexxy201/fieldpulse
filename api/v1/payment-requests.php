@@ -64,8 +64,8 @@ if (method() === 'POST' && $resource === 'payments') {
     $ref  = trim($b['reference'] ?? '');
     $note = trim($b['note'] ?? '');
 
-    $pr = dbFetch("SELECT amount, amount_paid FROM payment_requests WHERE id=? AND status IN ('approved','partially_disbursed')", [$id]);
-    if (!$pr) jsonResponse(['error' => 'Request not found, or not in a payable state (must be approved or partially_disbursed)'], 409);
+    $pr = dbFetch("SELECT amount, amount_paid FROM payment_requests WHERE id=? AND status IN ('approved','pending_disbursement','partially_disbursed')", [$id]);
+    if (!$pr) jsonResponse(['error' => 'Request not found, or not in a payable state (must be approved, pending_disbursement or partially_disbursed)'], 409);
     $balance = round((float)$pr['amount'] - (float)$pr['amount_paid'], 2);
     if ($amount > $balance + 0.01) {
         jsonResponse(['error' => "Amount {$amount} exceeds the outstanding balance of {$balance}"], 400);

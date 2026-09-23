@@ -174,7 +174,7 @@ final class PaymentRequestApprovalTest extends TestCase
         ]);
         $this->assertJsonOk($body);
         $reviewed = $this->reload($pr['id']);
-        $this->assertSame('approved', $reviewed['status'], 'After finance review, status must be approved and ready for disbursement.');
+        $this->assertSame('pending_disbursement', $reviewed['status'], 'After finance review, status must be pending_disbursement ready for disbursement.');
         $this->assertSame(4500.0, (float)$reviewed['amount'], 'Amount must reflect adjusted line items.');
 
         // ── Finance Check: a partial payment first (bill-style, like Zoho Books) ──
