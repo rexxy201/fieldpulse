@@ -208,6 +208,7 @@ a { text-decoration: none; }
 
 /* ── Badges ───────────────────────────────────────────────────────────────── */
 .badge { font-weight: 600; letter-spacing: .01em; }
+.text-bg-purple { background-color: #7c3aed !important; color: #fff !important; }
 
 /* Priority */
 .badge-p1 { background: #fee2e2 !important; color: #dc2626 !important; }
