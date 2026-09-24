@@ -83,6 +83,47 @@ $STATUS_CLASS = [
     'unknown'     => 'secondary',
 ];
 
+// ── Trends tab data (Phase 2) ─────────────────────────────────────────────────
+$trendsByHub    = [];
+$trendsFaults   = [];
+$trendsRouters  = [];
+if ($tab === 'trends') {
+    // ONU status per hub
+    $trendsByHub = dbFetchAll(
+        "SELECT h.name AS hub_name, o.status, COUNT(*) AS cnt
+         FROM   onu_units o
+         JOIN   network_devices nd ON nd.id = o.olt_device_id
+         JOIN   hubs h ON h.id = nd.hub_id
+         GROUP BY h.name, o.status ORDER BY h.name"
+    );
+    // Fault events per day — last 7 days
+    $trendsFaults = dbFetchAll(
+        "SELECT DATE(detected_at) AS day, to_status AS status, COUNT(*) AS cnt
+         FROM   onu_status_events
+         WHERE  detected_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+           AND  to_status <> 'working'
+         GROUP BY DATE(detected_at), to_status ORDER BY day"
+    );
+    // Latest router stats (table added in Phase 2 migration)
+    try {
+        $trendsRouters = dbFetchAll(
+            "SELECT hds.cpu_load, hds.mem_used_bytes, hds.mem_total_bytes,
+                    hds.pppoe_sessions, hds.sampled_at,
+                    nd.name AS device_name, h.name AS hub_name
+             FROM   hub_device_stats hds
+             JOIN   network_devices nd ON nd.id = hds.device_id
+             JOIN   hubs h ON h.id = hds.hub_id
+             WHERE  hds.sampled_at = (
+                 SELECT MAX(s2.sampled_at) FROM hub_device_stats s2
+                 WHERE s2.device_id = hds.device_id
+             )
+             ORDER BY h.name, nd.name"
+        );
+    } catch (\PDOException $e) {
+        if (($e->errorInfo[1] ?? 0) !== 1146) throw $e;
+    }
+}
+
 $pageTitle = 'Network Status';
 require __DIR__ . '/../includes/header.php';
 ?>
@@ -136,6 +177,11 @@ require __DIR__ . '/../includes/header.php';
   <li class="nav-item">
     <a class="nav-link <?= $tab === 'events' ? 'active' : '' ?>" href="?tab=events">
       <i class="bi bi-clock-history me-1"></i>Fault Events
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link <?= $tab === 'trends' ? 'active' : '' ?>" href="?tab=trends">
+      <i class="bi bi-bar-chart-line me-1"></i>Trends
     </a>
   </li>
 </ul>
@@ -348,6 +394,191 @@ require __DIR__ . '/../includes/header.php';
   </tbody>
 </table>
 </div>
+<?php endif; ?>
+<?php endif; ?>
+
+<!-- ── TAB: TRENDS ───────────────────────────────────────────────────────────── -->
+<?php if ($tab === 'trends'): ?>
+<?php
+// Build data structures for Chart.js
+// Chart 1: ONU status stacked bar per hub
+$hubNames   = [];
+$statusSets = ['working' => [], 'offline' => [], 'los' => [], 'lof' => [], 'dying_gasp' => [], 'unknown' => []];
+foreach ($trendsByHub as $row) {
+    if (!in_array($row['hub_name'], $hubNames, true)) $hubNames[] = $row['hub_name'];
+}
+foreach ($hubNames as $hub) {
+    foreach (array_keys($statusSets) as $st) {
+        $found = null;
+        foreach ($trendsByHub as $r) {
+            if ($r['hub_name'] === $hub && $r['status'] === $st) { $found = (int)$r['cnt']; break; }
+        }
+        $statusSets[$st][] = $found ?? 0;
+    }
+}
+
+// Chart 2: Fault events per day (last 7 days)
+$last7 = [];
+for ($d = 6; $d >= 0; $d--) $last7[] = date('Y-m-d', strtotime("-{$d} days"));
+$faultStatuses = ['offline', 'los', 'lof', 'dying_gasp'];
+$faultMap = [];
+foreach ($trendsFaults as $r) {
+    $faultMap[$r['day']][$r['status']] = (int)$r['cnt'];
+}
+$faultDatasets = [];
+$faultColors   = ['offline' => '#ef4444', 'los' => '#dc2626', 'lof' => '#f59e0b', 'dying_gasp' => '#f97316'];
+foreach ($faultStatuses as $st) {
+    $faultDatasets[] = [
+        'label' => strtoupper($st),
+        'data'  => array_map(fn($d) => $faultMap[$d][$st] ?? 0, $last7),
+        'borderColor' => $faultColors[$st],
+        'backgroundColor' => $faultColors[$st] . '33',
+        'tension' => 0.3, 'fill' => false,
+    ];
+}
+?>
+<div class="row g-4">
+
+  <!-- ONU Status by Hub -->
+  <div class="col-12 col-xl-7">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-0 fw-semibold">ONU Status by Hub</div>
+      <div class="card-body" style="position:relative;height:320px">
+        <?php if (empty($hubNames)): ?>
+          <div class="text-center text-muted py-5">No ONU data yet — start the OLT poller.</div>
+        <?php else: ?>
+          <canvas id="hubStatusChart"></canvas>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fault Events Trend -->
+  <div class="col-12 col-xl-5">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-0 fw-semibold">Fault Events — Last 7 Days</div>
+      <div class="card-body" style="position:relative;height:320px">
+        <?php if (empty($trendsFaults)): ?>
+          <div class="text-center text-muted py-5">No fault events in the last 7 days.</div>
+        <?php else: ?>
+          <canvas id="faultTrendChart"></canvas>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+
+  <!-- Router Health -->
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-transparent border-0 fw-semibold">Router Health <small class="text-muted fw-normal">(latest poll)</small></div>
+      <div class="card-body p-0">
+        <?php if (empty($trendsRouters)): ?>
+          <div class="text-center text-muted py-4">
+            <?php if (!empty($devices)): ?>
+              No router stats yet — apply Phase 2 migration and let the Mikrotik poller run.
+            <?php else: ?>
+              No Mikrotik devices registered.
+            <?php endif; ?>
+          </div>
+        <?php else: ?>
+        <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Hub</th><th>Device</th><th>CPU</th><th>Memory</th><th>PPPoE Sessions</th><th>Sampled</th></tr>
+          </thead>
+          <tbody>
+          <?php foreach ($trendsRouters as $r):
+            $memPct = $r['mem_total_bytes'] > 0 ? round($r['mem_used_bytes'] / $r['mem_total_bytes'] * 100) : 0;
+            $cpuClass = $r['cpu_load'] >= 80 ? 'danger' : ($r['cpu_load'] >= 60 ? 'warning' : 'success');
+            $memClass = $memPct >= 85 ? 'danger' : ($memPct >= 70 ? 'warning' : 'success');
+          ?>
+          <tr>
+            <td class="small"><?= htmlspecialchars($r['hub_name']) ?></td>
+            <td class="small fw-medium"><?= htmlspecialchars($r['device_name']) ?></td>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:6px;min-width:70px">
+                  <div class="progress-bar bg-<?= $cpuClass ?>" style="width:<?= $r['cpu_load'] ?>%"></div>
+                </div>
+                <small class="text-<?= $cpuClass ?> fw-semibold"><?= $r['cpu_load'] ?>%</small>
+              </div>
+            </td>
+            <td>
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:6px;min-width:70px">
+                  <div class="progress-bar bg-<?= $memClass ?>" style="width:<?= $memPct ?>%"></div>
+                </div>
+                <small class="text-<?= $memClass ?> fw-semibold"><?= $memPct ?>%</small>
+              </div>
+              <div class="text-muted" style="font-size:.7rem">
+                <?= round($r['mem_used_bytes']/1048576) ?> / <?= round($r['mem_total_bytes']/1048576) ?> MB
+              </div>
+            </td>
+            <td><span class="fw-semibold"><?= number_format((int)$r['pppoe_sessions']) ?></span></td>
+            <td class="small text-muted"><?= htmlspecialchars(date('d M H:i', strtotime($r['sampled_at']))) ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+        </div>
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+
+<?php if (!empty($hubNames)): ?>
+<script>
+(function() {
+  const STATUS_COLORS = {
+    working:    '#22c55e', offline: '#ef4444', los: '#dc2626',
+    lof: '#f59e0b', dying_gasp: '#f97316', unknown: '#94a3b8'
+  };
+  const hubLabels = <?= json_encode($hubNames) ?>;
+
+  // Chart 1 — stacked bar
+  new Chart(document.getElementById('hubStatusChart'), {
+    type: 'bar',
+    data: {
+      labels: hubLabels,
+      datasets: [
+        <?php foreach ($statusSets as $st => $vals): ?>
+        { label: '<?= $STATUS_LABELS[$st] ?? $st ?>', data: <?= json_encode($vals) ?>,
+          backgroundColor: STATUS_COLORS['<?= $st ?>'] + 'cc' },
+        <?php endforeach; ?>
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+})();
+</script>
+<?php endif; ?>
+
+<?php if (!empty($trendsFaults)): ?>
+<script>
+(function() {
+  const days = <?= json_encode($last7) ?>;
+  new Chart(document.getElementById('faultTrendChart'), {
+    type: 'line',
+    data: {
+      labels: days.map(d => { const dt = new Date(d); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}); }),
+      datasets: <?= json_encode($faultDatasets) ?>
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+})();
+</script>
 <?php endif; ?>
 <?php endif; ?>
 

@@ -5,6 +5,53 @@ if (method() === 'POST') verifyCsrf();
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
+// ── GET: Trends chart data ────────────────────────────────────────────────────
+if (method() === 'GET' && $action === 'chart_data') {
+    requirePermission('noc.view');
+
+    // ONU status counts per hub
+    $byHub = dbFetchAll(
+        "SELECT h.name AS hub_name, o.status, COUNT(*) AS cnt
+         FROM   onu_units o
+         JOIN   network_devices nd ON nd.id = o.olt_device_id
+         JOIN   hubs h             ON h.id  = nd.hub_id
+         GROUP BY h.name, o.status
+         ORDER BY h.name"
+    );
+
+    // Fault events per day — last 7 days
+    $faultsByDay = dbFetchAll(
+        "SELECT DATE(detected_at) AS day, to_status AS status, COUNT(*) AS cnt
+         FROM   onu_status_events
+         WHERE  detected_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+           AND  to_status <> 'working'
+         GROUP BY DATE(detected_at), to_status
+         ORDER BY day"
+    );
+
+    // Latest router stats (Phase 2 table — silently skip if absent)
+    $routerStats = [];
+    try {
+        $routerStats = dbFetchAll(
+            "SELECT hds.cpu_load, hds.mem_used_bytes, hds.mem_total_bytes,
+                    hds.pppoe_sessions, hds.sampled_at,
+                    nd.name AS device_name, h.name AS hub_name
+             FROM   hub_device_stats hds
+             JOIN   network_devices nd ON nd.id = hds.device_id
+             JOIN   hubs h             ON h.id  = hds.hub_id
+             WHERE  hds.sampled_at = (
+                 SELECT MAX(s2.sampled_at) FROM hub_device_stats s2
+                 WHERE s2.device_id = hds.device_id
+             )
+             ORDER BY h.name, nd.name"
+        );
+    } catch (\PDOException $e) {
+        if (($e->errorInfo[1] ?? 0) !== 1146) throw $e;
+    }
+
+    jsonResponse(['byHub' => $byHub, 'faultsByDay' => $faultsByDay, 'routerStats' => $routerStats]);
+}
+
 // ── GET: ONU list for polling status endpoint ─────────────────────────────
 if (method() === 'GET' && $action === 'onu_counts') {
     requirePermission('noc.view');

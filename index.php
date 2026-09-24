@@ -70,6 +70,7 @@ if ($page === 'noc') {
     require __DIR__ . '/pages/noc.php'; exit;
 }
 
+
 $pages = [
     'dashboard'     => 'dashboard',
     'tickets'       => 'tickets',

@@ -1026,6 +1026,7 @@ define('ALL_PERMISSIONS', [
     // ── NOC module ──
     'noc.view'            => 'View NOC dashboard, ONU status board, and device list',
     'noc.devices.manage'  => 'Add / edit / delete network devices (OLTs, routers)',
+    'map.coverage'        => 'Upload / manage KMZ/KML network coverage map layers',
 ]);
 
 // ─── RBAC helpers ─────────────────────────────────────────────────────────────
