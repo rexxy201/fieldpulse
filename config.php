@@ -1014,6 +1014,10 @@ define('ALL_PERMISSIONS', [
     'inventory.requests.approve'  => 'Approve / reject stock requests',
     'inventory.movements.view'    => 'View stock movements',
     'inventory.refill'            => 'Refill / add stock',
+    'inventory.po.view'           => 'View purchase orders',
+    'inventory.po.manage'         => 'Create / edit / cancel purchase orders',
+    'inventory.po.receive'        => 'Receive goods against a purchase order',
+    'inventory.zoho.export'       => 'Export inventory to Zoho CSV format',
     // ── Payment Requests module ──
     'payment_requests.create'      => 'Submit payment requests',
     'payment_requests.view'        => 'View all payment requests (not just own)',

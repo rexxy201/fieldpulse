@@ -57,7 +57,7 @@ if ($page === 'installations') {
 if ($page === 'inventory') {
     $sub = $segments[1] ?? 'dashboard';
     $invPages = ['dashboard','assets','asset-form','items','item-form','cabinets',
-                 'categories','requests','request-new','movements','refill'];
+                 'categories','requests','request-new','movements','refill','purchase-orders'];
     if (in_array($sub, $invPages, true)) {
         $f = __DIR__ . '/pages/inventory/' . $sub . '.php';
         if (file_exists($f)) { require $f; exit; }
