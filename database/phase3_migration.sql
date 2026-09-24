@@ -51,4 +51,16 @@ CREATE TABLE IF NOT EXISTS `inv_po_items` (
   INDEX `idx_poi_item` (`item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ── 3. Add snmp_port to network_devices (OLTs often use non-standard ports) ──
+ALTER TABLE `network_devices`
+  ADD COLUMN IF NOT EXISTS `snmp_port` SMALLINT UNSIGNED NOT NULL DEFAULT 161
+    COMMENT 'SNMP UDP port — 161 is standard; some OLTs use 2161 etc.'
+    AFTER `snmp_version`;
+
+-- Back-fill api_port default from 8728 to 2333 for existing Mikrotik devices
+-- (telnet transport; existing rows keep their value if already set)
+UPDATE `network_devices`
+  SET `api_port` = 2333
+  WHERE `device_type` = 'mikrotik' AND `api_port` = 8728;
+
 SET foreign_key_checks = 1;

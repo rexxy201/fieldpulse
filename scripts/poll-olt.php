@@ -37,8 +37,9 @@ foreach ($olts as $olt) {
     $community = $olt['snmp_community'] ? nocDecrypt($olt['snmp_community']) : 'public';
     $version   = $olt['snmp_version'] ?? '2c';
 
+    $snmpPort = (int)($olt['snmp_port'] ?? 161);
     try {
-        $onuData = fetchHuaweiGponOnuStatus($olt['ip_address'], $community, $version);
+        $onuData = fetchHuaweiGponOnuStatus($olt['ip_address'], $community, $version, $snmpPort);
     } catch (\Throwable $e) {
         $err = 'Poll error: ' . $e->getMessage();
         dbRun("UPDATE network_devices SET poll_error=?, last_polled_at=NOW() WHERE id=?",
@@ -121,15 +122,17 @@ echo "[" . date('H:i:s') . "] Done. Polled=$totalPolled, Faults=$totalFaults, Ti
  *   hwGponOntSn:            1.3.6.1.4.1.2011.6.128.1.1.2.43 (serial number)
  *   hwGponOptRxPower:       1.3.6.1.4.1.2011.6.128.1.1.2.51 (Rx power, × 0.01 dBm)
  */
-function fetchHuaweiGponOnuStatus(string $ip, string $community, string $version): array {
+function fetchHuaweiGponOnuStatus(string $ip, string $community, string $version, int $port = 161): array {
     // ONU run state: 1=initial,2=working,3=dying-gasp,4=auth-failed,5=offline,6=los,7=lof
     $stateOid  = '1.3.6.1.4.1.2011.6.128.1.1.2.46';
     $serialOid = '1.3.6.1.4.1.2011.6.128.1.1.2.43';
     $rxOid     = '1.3.6.1.4.1.2011.6.128.1.1.2.51';
 
-    $states  = snmpWalkOid($ip, $community, $version, $stateOid);
-    $serials = snmpWalkOid($ip, $community, $version, $serialOid);
-    $rxPow   = snmpWalkOid($ip, $community, $version, $rxOid);
+    // PHP snmp functions accept "host:port" when port is non-standard
+    $host = $port !== 161 ? "$ip:$port" : $ip;
+    $states  = snmpWalkOid($host, $community, $version, $stateOid);
+    $serials = snmpWalkOid($host, $community, $version, $serialOid);
+    $rxPow   = snmpWalkOid($host, $community, $version, $rxOid);
 
     $result = [];
     foreach ($states as $oidSuffix => $stateVal) {
