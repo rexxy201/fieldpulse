@@ -794,6 +794,26 @@ function newUuid(): string {
         mt_rand(0,0xffff),mt_rand(0,0xffff),mt_rand(0,0xffff));
 }
 
+// ─── NOC credential encryption ───────────────────────────────────────────────
+// Device credentials (SNMP communities, RouterOS passwords) are AES-256-CBC
+// encrypted at rest. The key lives in secrets.php as NOC_CRED_KEY; falls back
+// to a deterministic local key for development so the app still runs without
+// secrets.php. Encrypted values are base64-encoded for safe DB storage.
+function nocEncrypt(string $plain): string {
+    $key = defined('NOC_CRED_KEY') ? NOC_CRED_KEY : hash('sha256', 'fieldpulse-noc-dev-key', true);
+    $iv  = random_bytes(16);
+    $ct  = openssl_encrypt($plain, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
+    return base64_encode($iv . $ct);
+}
+function nocDecrypt(string $encrypted): string {
+    if (!$encrypted) return '';
+    $key  = defined('NOC_CRED_KEY') ? NOC_CRED_KEY : hash('sha256', 'fieldpulse-noc-dev-key', true);
+    $raw  = base64_decode($encrypted);
+    $iv   = substr($raw, 0, 16);
+    $ct   = substr($raw, 16);
+    return (string)openssl_decrypt($ct, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
+}
+
 // ─── Absolute site base URL (for QR codes & public links) ─────────────────────
 function siteBaseUrl(): string {
     $cfg = getAppConfig();
@@ -1003,6 +1023,9 @@ define('ALL_PERMISSIONS', [
     'payment_requests.finance_recall' => 'Recall finance action — revert disbursed / partially disbursed / finance review back to Approved',
     // ── Finance module ──
     'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
+    // ── NOC module ──
+    'noc.view'            => 'View NOC dashboard, ONU status board, and device list',
+    'noc.devices.manage'  => 'Add / edit / delete network devices (OLTs, routers)',
 ]);
 
 // ─── RBAC helpers ─────────────────────────────────────────────────────────────

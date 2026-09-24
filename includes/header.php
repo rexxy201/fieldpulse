@@ -164,6 +164,13 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   <?php endif; ?>
   <?php endif; ?>
 
+  <?php if (hasPermission('noc.view')): ?>
+  <div class="nav-section">NOC</div>
+  <a href="/noc" class="nav-link <?= str_starts_with($activePath, 'noc') ? 'active' : '' ?>">
+    <i class="bi bi-broadcast"></i> Network Status
+  </a>
+  <?php endif; ?>
+
   <?php if (hasPermission('team.view') || hasPermission('analytics.view') || hasPermission('reports.view')): ?>
   <div class="nav-section">Team</div>
   <?php if (hasPermission('team.view')): ?>
