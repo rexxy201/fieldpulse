@@ -6,6 +6,8 @@ requirePermission('inventory.items.view');
 $canManage  = hasPermission('inventory.items.manage');
 $canRequest = hasPermission('inventory.requests.create');
 $canRefill  = hasPermission('inventory.refill');
+$canPO      = hasPermission('inventory.po.view');
+$canExport  = hasPermission('inventory.zoho.export');
 
 if (method() === 'POST' && isset($_POST['delete_id'])) {
     verifyCsrf();
@@ -42,6 +44,8 @@ require __DIR__ . '/../../includes/header.php';
   <div class="d-flex gap-2 flex-wrap">
     <?php if ($canRequest): ?><a href="/inventory/request-new" class="btn btn-outline-secondary"><i class="bi bi-cart-plus me-1"></i>Request</a><?php endif; ?>
     <?php if ($canRefill): ?><a href="/inventory/refill" class="btn btn-outline-secondary"><i class="bi bi-box-arrow-in-down me-1"></i>Refill</a><?php endif; ?>
+    <?php if ($canPO): ?><a href="/inventory/purchase-orders" class="btn btn-outline-secondary"><i class="bi bi-receipt me-1"></i>Purchase Orders</a><?php endif; ?>
+    <?php if ($canExport): ?><a href="/api/inventory-export?format=zoho" class="btn btn-outline-secondary"><i class="bi bi-download me-1"></i>Export to Zoho</a><?php endif; ?>
     <?php if ($canManage): ?><a href="/inventory/item-form" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Add Item</a><?php endif; ?>
   </div>
 </div>
@@ -63,11 +67,11 @@ require __DIR__ . '/../../includes/header.php';
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
       <thead class="table-light"><tr>
-        <th class="ps-3">Item</th><th>Code</th><th>Category</th><th class="text-center">Qty</th><th class="text-end pe-3">Actions</th>
+        <th class="ps-3">Item</th><th>SKU</th><th>Category</th><th>Unit</th><th>Cost</th><th class="text-center">Qty</th><th class="text-end pe-3">Actions</th>
       </tr></thead>
       <tbody>
         <?php if (!$items): ?>
-        <tr><td colspan="5" class="text-center text-muted py-5"><i class="bi bi-boxes fs-2 d-block mb-2 opacity-25"></i>No stock items found.</td></tr>
+        <tr><td colspan="7" class="text-center text-muted py-5"><i class="bi bi-boxes fs-2 d-block mb-2 opacity-25"></i>No stock items found.</td></tr>
         <?php endif; ?>
         <?php foreach ($items as $it):
           $q = (int)$it['quantity'];
@@ -88,8 +92,10 @@ require __DIR__ . '/../../includes/header.php';
               </div>
             </div>
           </td>
-          <td class="small font-monospace text-muted"><?= htmlspecialchars($it['unique_code'] ?? '—') ?></td>
+          <td class="small font-monospace text-muted"><?= htmlspecialchars($it['sku'] ?? $it['unique_code'] ?? '—') ?></td>
           <td><?= $it['cat_name'] ? '<span class="badge text-bg-light border">'.htmlspecialchars($it['cat_name']).'</span>' : '—' ?></td>
+          <td class="small text-muted"><?= htmlspecialchars($it['unit'] ?? 'Pcs') ?></td>
+          <td class="small"><?= $it['purchase_price'] !== null ? '$'.number_format((float)$it['purchase_price'],2) : '<span class="text-muted">—</span>' ?></td>
           <td class="text-center"><span class="badge <?= $qcls ?>" title="Reorder at <?= $reorderAt ?>"><?= $q ?></span></td>
           <td class="text-end pe-3">
             <div class="d-inline-flex gap-1">

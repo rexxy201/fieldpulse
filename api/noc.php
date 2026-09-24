@@ -76,7 +76,7 @@ if ($action === 'save_device') {
     $ip        = trim($_POST['ip_address'] ?? '');
     $protocol  = $type === 'mikrotik' ? 'routeros_api' : 'snmp';
     $snmpVer   = trim($_POST['snmp_version'] ?? '2c');
-    $apiPort   = (int)($_POST['api_port'] ?? 8728);
+    $apiPort   = (int)($_POST['api_port'] ?? 2333);
     $enabled   = isset($_POST['enabled']) ? 1 : 0;
 
     if (!$hubId || !$name || !$ip) jsonResponse(['error' => 'Hub, name, and IP are required'], 400);
@@ -225,14 +225,13 @@ function testSnmpConnection(string $ip, string $community, string $version): arr
 
 function testMikrotikConnection(string $ip, int $port, string $user, string $pass): array {
     try {
-        $sock = @fsockopen($ip, $port, $errno, $errstr, 3);
-        if (!$sock) return [false, "TCP connect failed ($errno: $errstr)"];
-        // Minimal RouterOS API login to verify credentials
-        $client = new MikrotikApiClient($sock);
-        $resp   = $client->login($user, $pass);
-        fclose($sock);
-        if ($resp) return [true, "RouterOS API authenticated as '$user'"];
-        return [false, 'Authentication failed — check username/password'];
+        $client = new MikrotikTelnetClient($ip, $port, 6);
+        $client->connect();
+        $client->login($user, $pass);
+        $ver = trim($client->command(':put [/system package get system version]'));
+        $client->disconnect();
+        $label = $ver ? "RouterOS $ver" : 'RouterOS';
+        return [true, "Telnet authenticated as '$user' — $label"];
     } catch (\Throwable $e) {
         return [false, $e->getMessage()];
     }

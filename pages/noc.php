@@ -659,8 +659,9 @@ foreach ($faultStatuses as $st) {
             </div>
           </div>
           <div class="mb-3">
-            <label class="form-label fw-semibold">API Port</label>
-            <input type="number" name="api_port" id="fApiPort" class="form-control" value="8728">
+            <label class="form-label fw-semibold">Telnet Port</label>
+            <input type="number" name="api_port" id="fApiPort" class="form-control" value="2333">
+            <div class="form-text">Default: 2333</div>
           </div>
           <div class="form-text mb-3">Credentials stored encrypted. Leave password blank to keep existing on edit.</div>
         </div>
@@ -704,7 +705,7 @@ function editDevice(d) {
   document.getElementById('fSnmpVer').value    = d.snmp_version || '2c';
   document.getElementById('fApiUser').value    = '';
   document.getElementById('fApiPass').value    = '';
-  document.getElementById('fApiPort').value    = d.api_port || 8728;
+  document.getElementById('fApiPort').value    = d.api_port || 2333;
   document.getElementById('fEnabled').checked  = !!+d.enabled;
   document.getElementById('deleteDeviceBtn').classList.remove('d-none');
   document.getElementById('deleteDeviceBtn').onclick = () => deleteDevice(d.id);
