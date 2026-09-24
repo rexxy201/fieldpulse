@@ -25,19 +25,19 @@ if (method() === 'POST') {
 }
 
 // ─── Payment Requests aggregates ────────────────────────────────────────────
-// 4-stage flow: pending -> authorized -> approved -> [finance check] -> disbursed
-// (which may pass through partially_disbursed if paid in installments, like a
-// Zoho Books bill), or returned (sent back to requester for edits) / rejected
-// (terminal, Authorize/Approve stage only).
+// Flow: pending -> authorized -> approved -> finance_review -> pending_disbursement
+// -> disbursed (or partially_disbursed if paid in installments), or returned /
+// rejected at the authorize/approve stages.
 $prByStatus = dbFetch(
     "SELECT SUM(status='pending') AS pending, SUM(status='authorized') AS authorized, SUM(status='approved') AS approved,
+            SUM(status='finance_review') AS finance_review, SUM(status='pending_disbursement') AS pending_disbursement,
             SUM(status='returned') AS returned, SUM(status='partially_disbursed') AS partial, SUM(status='disbursed') AS paid, SUM(status='rejected') AS rejected
      FROM payment_requests"
 );
 $prAmounts = dbFetch(
     "SELECT
         SUM(CASE WHEN status='pending'  THEN amount ELSE 0 END) AS pending_amount,
-        SUM(CASE WHEN status IN ('authorized','approved','partially_disbursed') THEN amount - amount_paid ELSE 0 END) AS approved_amount,
+        SUM(CASE WHEN status IN ('authorized','approved','finance_review','pending_disbursement','partially_disbursed') THEN amount - amount_paid ELSE 0 END) AS approved_amount,
         SUM(amount_paid) AS paid_amount
      FROM payment_requests"
 );
@@ -135,9 +135,9 @@ require __DIR__ . '/../includes/header.php';
         </a>
       </div>
       <div class="col-6 col-md-3">
-        <a href="/payment-requests?status=authorized" class="stat-card py-2 text-center text-decoration-none d-block">
+        <a href="/payment-requests?status=all" class="stat-card py-2 text-center text-decoration-none d-block">
           <div class="fw-bold fs-5" style="color:#3b82f6">₦<?= number_format((float)($prAmounts['approved_amount']??0)) ?></div>
-          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) + (int)($prByStatus['partial']??0) ?> Authorized/Approved (outstanding balance)<?php if (($prByStatus['partial']??0) > 0): ?> · <?= (int)$prByStatus['partial'] ?> Partial<?php endif; ?><?php if (($prByStatus['returned']??0) > 0): ?> · <?= (int)$prByStatus['returned'] ?> Returned<?php endif; ?></div>
+          <div style="font-size:.7rem;color:#64748b"><?= (int)($prByStatus['authorized']??0) + (int)($prByStatus['approved']??0) + (int)($prByStatus['finance_review']??0) + (int)($prByStatus['pending_disbursement']??0) + (int)($prByStatus['partial']??0) ?> In-Progress (outstanding balance)<?php if (($prByStatus['finance_review']??0) > 0): ?> · <?= (int)$prByStatus['finance_review'] ?> Finance Review<?php endif; ?><?php if (($prByStatus['pending_disbursement']??0) > 0): ?> · <?= (int)$prByStatus['pending_disbursement'] ?> Pending Disbursement<?php endif; ?><?php if (($prByStatus['partial']??0) > 0): ?> · <?= (int)$prByStatus['partial'] ?> Partial<?php endif; ?><?php if (($prByStatus['returned']??0) > 0): ?> · <?= (int)$prByStatus['returned'] ?> Returned<?php endif; ?></div>
         </a>
       </div>
       <div class="col-6 col-md-3">
