@@ -300,7 +300,12 @@ require __DIR__ . '/../includes/header.php';
       <td><span class="badge bg-secondary"><?= strtoupper($d['device_type']) ?></span></td>
       <td class="small"><?= htmlspecialchars($d['hub_name'] ?? '—') ?></td>
       <td class="font-monospace small"><?= htmlspecialchars($d['ip_address']) ?></td>
-      <td class="small text-muted"><?= htmlspecialchars($d['protocol']) ?><?= $d['device_type'] === 'mikrotik' ? ':'.$d['api_port'] : '' ?></td>
+      <td class="small text-muted">
+        <?= htmlspecialchars($d['protocol']) ?>
+        <?php if ($d['device_type'] === 'mikrotik'): ?>:<?= (int)$d['api_port'] ?>
+        <?php elseif (!empty($d['snmp_port']) && (int)$d['snmp_port'] !== 161): ?>:<span class="text-warning"><?= (int)$d['snmp_port'] ?></span>
+        <?php endif; ?>
+      </td>
       <td class="small">
         <?php if ((int)$d['onu_count'] > 0): ?>
           <span class="text-success fw-semibold"><?= (int)$d['onu_online'] ?></span>
@@ -636,13 +641,20 @@ foreach ($faultStatuses as $st) {
                    placeholder="public" autocomplete="off">
             <div class="form-text">Stored encrypted. Leave blank to keep existing value on edit.</div>
           </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">SNMP Version</label>
-            <select name="snmp_version" id="fSnmpVer" class="form-select">
-              <option value="2c">SNMPv2c</option>
-              <option value="1">SNMPv1</option>
-              <option value="3">SNMPv3</option>
-            </select>
+          <div class="row g-3">
+            <div class="col-6">
+              <label class="form-label fw-semibold">SNMP Version</label>
+              <select name="snmp_version" id="fSnmpVer" class="form-select">
+                <option value="2c">SNMPv2c</option>
+                <option value="1">SNMPv1</option>
+                <option value="3">SNMPv3</option>
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold">SNMP UDP Port</label>
+              <input type="number" name="snmp_port" id="fSnmpPort" class="form-control" value="161" min="1" max="65535">
+              <div class="form-text">Default: 161 — use 2161 for SmartOLT-style configs</div>
+            </div>
           </div>
         </div>
 
@@ -703,6 +715,7 @@ function editDevice(d) {
   document.getElementById('fIp').value         = d.ip_address;
   document.getElementById('fCommunity').value  = '';  // never pre-fill creds
   document.getElementById('fSnmpVer').value    = d.snmp_version || '2c';
+  document.getElementById('fSnmpPort').value   = d.snmp_port || 161;
   document.getElementById('fApiUser').value    = '';
   document.getElementById('fApiPass').value    = '';
   document.getElementById('fApiPort').value    = d.api_port || 2333;

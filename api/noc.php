@@ -76,6 +76,7 @@ if ($action === 'save_device') {
     $ip        = trim($_POST['ip_address'] ?? '');
     $protocol  = $type === 'mikrotik' ? 'routeros_api' : 'snmp';
     $snmpVer   = trim($_POST['snmp_version'] ?? '2c');
+    $snmpPort  = (int)($_POST['snmp_port'] ?? 161);
     $apiPort   = (int)($_POST['api_port'] ?? 2333);
     $enabled   = isset($_POST['enabled']) ? 1 : 0;
 
@@ -101,12 +102,12 @@ if ($action === 'save_device') {
         if (!$existing) jsonResponse(['error' => 'Device not found'], 404);
         dbRun(
             "UPDATE network_devices SET hub_id=?, name=?, device_type=?, ip_address=?, protocol=?,
-             snmp_version=?, api_port=?, enabled=?, updated_at=NOW()
+             snmp_version=?, snmp_port=?, api_port=?, enabled=?, updated_at=NOW()
              " . ($snmpEnc    !== null ? ", snmp_community=?"     : '') .
              "  " . ($apiCredsEnc !== null ? ", api_credentials=?" : '') .
              " WHERE id=?",
             array_filter(
-                [$hubId, $name, $type, $ip, $protocol, $snmpVer, $apiPort, $enabled,
+                [$hubId, $name, $type, $ip, $protocol, $snmpVer, $snmpPort, $apiPort, $enabled,
                  ...($snmpEnc    !== null ? [$snmpEnc]    : []),
                  ...($apiCredsEnc !== null ? [$apiCredsEnc] : []),
                  $deviceId],
@@ -119,9 +120,9 @@ if ($action === 'save_device') {
         // Create new
         $id = newUuid();
         dbRun(
-            "INSERT INTO network_devices (id,hub_id,name,device_type,ip_address,protocol,snmp_community,snmp_version,api_credentials,api_port,enabled,created_by)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            [$id, $hubId, $name, $type, $ip, $protocol, $snmpEnc, $snmpVer, $apiCredsEnc, $apiPort, $enabled, currentUser()['id']]
+            "INSERT INTO network_devices (id,hub_id,name,device_type,ip_address,protocol,snmp_community,snmp_version,snmp_port,api_credentials,api_port,enabled,created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [$id, $hubId, $name, $type, $ip, $protocol, $snmpEnc, $snmpVer, $snmpPort, $apiCredsEnc, $apiPort, $enabled, currentUser()['id']]
         );
         auditLog('create', 'network_device', $id);
         jsonResponse(['ok' => true, 'id' => $id]);
@@ -159,7 +160,7 @@ if ($action === 'test_device') {
     } else {
         // SNMP — read sysDescr OID
         $community = $d['snmp_community'] ? nocDecrypt($d['snmp_community']) : 'public';
-        [$ok, $msg] = testSnmpConnection($d['ip_address'], $community, $d['snmp_version']);
+        [$ok, $msg] = testSnmpConnection($d['ip_address'], $community, $d['snmp_version'], (int)($d['snmp_port'] ?? 161));
     }
 
     // Update last_seen_at / poll_error regardless
@@ -202,22 +203,23 @@ jsonResponse(['error' => 'Unknown action'], 400);
 // ─── Connection test helpers ──────────────────────────────────────────────────
 require_once __DIR__ . '/../includes/mikrotik-api.php';
 
-function testSnmpConnection(string $ip, string $community, string $version): array {
+function testSnmpConnection(string $ip, string $community, string $version, int $port = 161): array {
     if (!extension_loaded('snmp')) {
         return [false, 'PHP SNMP extension not loaded on this server'];
     }
     $sysDescr = '.1.3.6.1.2.1.1.1.0';
+    $host = $port !== 161 ? "$ip:$port" : $ip;
     try {
         if ($version === '1') {
-            $result = @snmpget($ip, $community, $sysDescr, 3000000, 1);
+            $result = @snmpget($host, $community, $sysDescr, 3000000, 1);
         } else {
-            $result = @snmp2_get($ip, $community, $sysDescr, 3000000, 1);
+            $result = @snmp2_get($host, $community, $sysDescr, 3000000, 1);
         }
         if ($result === false) {
-            return [false, 'SNMP unreachable or community string rejected (timeout 3s)'];
+            return [false, "SNMP unreachable or community string rejected (port $port, timeout 3s)"];
         }
         $desc = preg_replace('/^STRING:\s*/', '', $result);
-        return [true, 'SNMP OK — ' . substr($desc, 0, 80)];
+        return [true, "SNMP OK (port $port) — " . substr($desc, 0, 80)];
     } catch (\Throwable $e) {
         return [false, $e->getMessage()];
     }
