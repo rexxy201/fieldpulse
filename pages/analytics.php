@@ -20,9 +20,58 @@ $prioJson   = json_encode(array_values($byPriority));
 
 $slaRate = ($sla && $sla['total'] > 0) ? round($sla['ok']/$sla['total']*100,1) : 0;
 
+// CSV export — summary snapshot
+if (($_GET['export'] ?? '') === 'csv') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="analytics-' . date('Ymd') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Section', 'Label', 'Value']);
+    fputcsv($out, ['Summary', 'MTTR (avg hrs)', $mttr['avg_hours'] ?? '']);
+    fputcsv($out, ['Summary', 'SLA Compliance %', $slaRate]);
+    fputcsv($out, ['Summary', '30-Day Ticket Count', array_sum(array_column($trend, 'count'))]);
+    fputcsv($out, []);
+    fputcsv($out, ['30-Day Trend', 'Day', 'Count']);
+    foreach ($trend as $r) { fputcsv($out, ['', $r['day'], $r['count']]); }
+    fputcsv($out, []);
+    fputcsv($out, ['By Status', 'Status', 'Count']);
+    foreach ($byStatus as $r) { fputcsv($out, ['', $r['status'], $r['count']]); }
+    fputcsv($out, []);
+    fputcsv($out, ['By Priority', 'Priority', 'Count']);
+    foreach ($byPriority as $r) { fputcsv($out, ['', $r['priority'], $r['count']]); }
+    fputcsv($out, []);
+    fputcsv($out, ['Leaderboard', 'Engineer', 'Resolved']);
+    foreach ($leaderboard as $r) { fputcsv($out, ['', $r['name'], $r['resolved']]); }
+    fclose($out);
+    exit;
+}
+
 $pageTitle = 'Analytics';
 require __DIR__ . '/../includes/header.php';
 ?>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+  <div>
+    <h2 class="fw-bold mb-0">Analytics</h2>
+    <div class="text-muted small">30-day ticket trends, SLA compliance, and team performance.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="?export=csv" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </a>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()">
+      <i class="bi bi-printer me-1"></i>Print / PDF
+    </button>
+  </div>
+</div>
+
+<style>
+@media print {
+  #sidebar, .topbar, .btn { display: none !important; }
+  #main { margin: 0 !important; padding: 0 !important; }
+  .page-content { padding: 0 !important; }
+  canvas { max-width: 100% !important; }
+}
+</style>
 
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-xl-3">

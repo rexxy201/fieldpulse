@@ -999,6 +999,7 @@ define('ALL_PERMISSIONS', [
     'analytics.view'       => 'View analytics',
     'reports.view'          => 'View drill-down reports',
     'admin.access'         => 'Access admin panel',
+    'admin.audit.view'     => 'View system audit log',
     // ── Inventory module ──
     'inventory.view'              => 'View inventory dashboard',
     'inventory.assets.view'       => 'View assets',
