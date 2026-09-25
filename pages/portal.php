@@ -15,7 +15,8 @@ $results    = [];
 $searched   = false;
 $account    = '';
 $cust       = null;
-$raiseSuccess = null; // ticket number on success
+$onus       = [];
+$raiseSuccess = null;
 $raiseError   = '';
 
 $faultTypes = dbFetchAll("SELECT id,name,category FROM fault_types WHERE enabled=1 ORDER BY category,name");
@@ -40,7 +41,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
         $newId = newUuid();
         $_slaExpr = dbNowPlusInterval($hours, 'HOUR');
 
-        // Auto-assign to the appropriate supervisor (if a fault type was chosen)
         $supervisor = $ftId ? getAutoAssignSupervisor($ftId) : null;
         $assignedTo = $supervisor['id'] ?? null;
 
@@ -54,10 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
         auditLog('create', 'ticket', $row['id']);
         $raiseSuccess = $row['ticket_number'];
 
-        // Confirmation email to the customer
         emailCustomerTicketCreated($row, $cust);
 
-        // Email + notify the assigned supervisor
         if ($supervisor) {
             if (!empty($supervisor['email'])) emailTicketAssigned($row, $supervisor);
             notifyUser(
@@ -68,7 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
             );
         }
 
-        // Notify supervisors and admins in-app
         $priorityLabelsN = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         $pLabel = $priorityLabelsN[$priority] ?? $priority;
         notifyRoles(
@@ -79,7 +76,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
         );
     }
 
-    // After raise attempt, reload the ticket list
     $searched = true;
     if ($cust) {
         $results = dbFetchAll(
@@ -87,16 +83,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'rais
              FROM tickets WHERE customer_id = ? ORDER BY created_at DESC",
             [$cust['id']]
         );
+        $onus = dbFetchAll(
+            "SELECT serial_number,description,status,rx_power_dbm,last_online_at
+             FROM onu_units WHERE customer_id = ? ORDER BY status,serial_number",
+            [$cust['id']]
+        );
     }
 }
 
 // ── Handle account lookup ────────────────────────────────────────────────────
-// This is a fully public, unauthenticated page — without a throttle, an
-// account number (a guessable/sequential identifier, e.g. ACC-001234) could
-// be brute-forced to enumerate every customer's name/email/plan/ticket
-// history. 20 lookups per 15 minutes per IP is generous for a real customer
-// checking their own account, but stops a scripted enumeration sweep. Only
-// counted against an actual lookup attempt below, not every page view.
+// Rate-limited to 20 lookups per 15 minutes per IP to prevent enumeration.
 $lookupRateLimited = false;
 $isLookupAttempt = ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup')
     || (isset($_GET['account']) && ($_POST['_action'] ?? '') !== 'raise_ticket');
@@ -104,7 +100,6 @@ if ($isLookupAttempt && !rateLimitCheck('portal_lookup', clientIp(), 20, 15)) {
     $lookupRateLimited = true;
 }
 
-$invoices = [];
 if ($lookupRateLimited) {
     $searched = true;
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup') {
@@ -119,9 +114,9 @@ if ($lookupRateLimited) {
                  FROM tickets WHERE customer_id = ? ORDER BY created_at DESC",
                 [$cust['id']]
             );
-            $invoices = dbFetchAll(
-                "SELECT id,invoice_number,status,issue_date,due_date,total,amount_paid
-                 FROM invoices WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50",
+            $onus = dbFetchAll(
+                "SELECT serial_number,description,status,rx_power_dbm,last_online_at
+                 FROM onu_units WHERE customer_id = ? ORDER BY status,serial_number",
                 [$cust['id']]
             );
         }
@@ -137,17 +132,16 @@ if ($lookupRateLimited) {
                  FROM tickets WHERE customer_id = ? ORDER BY created_at DESC",
                 [$cust['id']]
             );
-            $invoices = dbFetchAll(
-                "SELECT id,invoice_number,status,issue_date,due_date,total,amount_paid
-                 FROM invoices WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50",
+            $onus = dbFetchAll(
+                "SELECT serial_number,description,status,rx_power_dbm,last_online_at
+                 FROM onu_units WHERE customer_id = ? ORDER BY status,serial_number",
                 [$cust['id']]
             );
         }
     }
 }
-$psConfig = paystackConfig();
 
-$statusColors = [
+$ticketStatusColors = [
     'open'                 => 'primary',
     'in_progress'          => 'info',
     'resolved'             => 'success',
@@ -155,6 +149,34 @@ $statusColors = [
     'pending_confirmation' => 'warning',
 ];
 $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
+
+// ONU status display config
+$onuStatusCfg = [
+    'working'     => ['color'=>'success',   'icon'=>'bi-wifi',              'label'=>'Connected'],
+    'offline'     => ['color'=>'danger',    'icon'=>'bi-wifi-off',          'label'=>'Offline'],
+    'los'         => ['color'=>'danger',    'icon'=>'bi-exclamation-circle','label'=>'Loss of Signal'],
+    'dying_gasp'  => ['color'=>'warning',   'icon'=>'bi-battery',           'label'=>'Dying Gasp'],
+    'lof'         => ['color'=>'warning',   'icon'=>'bi-reception-0',       'label'=>'Loss of Frame'],
+    'unknown'     => ['color'=>'secondary', 'icon'=>'bi-question-circle',   'label'=>'Unknown'],
+];
+
+// Derive overall connection status from ONUs
+$overallOnuStatus = 'none'; // no ONU linked
+if ($onus) {
+    // If any ONU is working → connected; else worst status wins
+    $hasWorking = false;
+    $hasDanger  = false;
+    $hasWarning = false;
+    foreach ($onus as $o) {
+        if ($o['status'] === 'working') $hasWorking = true;
+        if (in_array($o['status'], ['offline','los'])) $hasDanger = true;
+        if (in_array($o['status'], ['dying_gasp','lof'])) $hasWarning = true;
+    }
+    if ($hasWorking)       $overallOnuStatus = 'working';
+    elseif ($hasDanger)    $overallOnuStatus = 'down';
+    elseif ($hasWarning)   $overallOnuStatus = 'degraded';
+    else                   $overallOnuStatus = 'unknown';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -174,6 +196,18 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
   --primary-dark: <?= htmlspecialchars(darkenColor($_primaryColor)) ?>;
   --primary-rgb: <?= $_pr ?>, <?= $_pg ?>, <?= $_pb ?>;
 }
+.portal-status-card {
+  border-radius: .75rem;
+  border: 1.5px solid transparent;
+  transition: border-color .2s;
+}
+.portal-status-card.status-working  { border-color: #22c55e; background: #f0fdf4; }
+.portal-status-card.status-down     { border-color: #ef4444; background: #fff1f2; }
+.portal-status-card.status-degraded { border-color: #f59e0b; background: #fffbeb; }
+.portal-status-card.status-unknown  { border-color: #94a3b8; background: #f8fafc; }
+.portal-status-card.status-none     { border-color: #e2e8f0; background: #f8fafc; }
+.onu-row { border-bottom: 1px solid #f1f5f9; }
+.onu-row:last-child { border-bottom: none; }
 </style>
 </head>
 <body style="background:#f1f5f9">
@@ -191,7 +225,7 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
 <div class="container py-5">
   <div class="text-center mb-5">
     <h1 class="fw-bold fs-3">Customer Self-Service Portal</h1>
-    <p class="text-muted mb-0">Look up your account to view or raise service tickets.</p>
+    <p class="text-muted mb-0">Look up your account to check your connection status and manage service tickets.</p>
   </div>
 
   <div class="row justify-content-center">
@@ -244,51 +278,142 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
 
       <?php if ($searched && $cust): ?>
 
-      <!-- Account details -->
+      <!-- ── Subscription Card ─────────────────────────────────────────────── -->
       <div class="card-section mb-4">
         <div class="card-header"><i class="bi bi-person-circle me-1 text-primary"></i>Account Details</div>
         <div class="p-4">
-          <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
-            <div>
+          <div class="row g-3">
+            <div class="col-12">
               <h5 class="fw-bold mb-1"><?= htmlspecialchars($cust['name']) ?></h5>
-              <div class="small text-muted">
-                Account: <strong><?= htmlspecialchars($cust['account_number']) ?></strong>
-                <?php if (!empty($cust['plan'])): ?> &bull; Plan: <strong><?= htmlspecialchars($cust['plan']) ?></strong><?php endif; ?>
+              <div class="text-muted small">Account: <strong class="font-monospace"><?= htmlspecialchars($cust['account_number']) ?></strong>
                 <?php if (!empty($cust['email'])): ?> &bull; <?= htmlspecialchars($cust['email']) ?><?php endif; ?>
               </div>
             </div>
-            <div class="d-flex align-items-center gap-2">
-              <span class="badge <?= $cust['status'] === 'active' ? 'bg-success' : 'bg-secondary' ?>">
-                <?= ucfirst(htmlspecialchars($cust['status'] ?? 'active')) ?>
-              </span>
-              <!-- Raise Ticket button -->
-              <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#raiseModal">
-                <i class="bi bi-plus-lg me-1"></i>Raise a Ticket
-              </button>
+
+            <div class="col-sm-4">
+              <div class="small text-muted fw-semibold text-uppercase mb-1" style="font-size:.7rem;letter-spacing:.05em">Account Status</div>
+              <?php
+              $custStatus = strtolower($cust['status'] ?? 'active');
+              $statusBadge = match($custStatus) {
+                  'active'    => 'success',
+                  'suspended' => 'warning',
+                  'inactive'  => 'secondary',
+                  default     => 'secondary',
+              };
+              ?>
+              <span class="badge bg-<?= $statusBadge ?> fs-6"><?= ucfirst(htmlspecialchars($custStatus)) ?></span>
             </div>
+
+            <?php if (!empty($cust['plan'])): ?>
+            <div class="col-sm-4">
+              <div class="small text-muted fw-semibold text-uppercase mb-1" style="font-size:.7rem;letter-spacing:.05em">Plan</div>
+              <div class="fw-semibold"><?= htmlspecialchars($cust['plan']) ?></div>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!empty($cust['expiration'])): ?>
+            <div class="col-sm-4">
+              <?php
+              $expDate  = strtotime($cust['expiration']);
+              $expPast  = $expDate && $expDate < time();
+              $expSoon  = $expDate && !$expPast && $expDate < strtotime('+7 days');
+              $expColor = $expPast ? 'danger' : ($expSoon ? 'warning' : 'muted');
+              ?>
+              <div class="small text-muted fw-semibold text-uppercase mb-1" style="font-size:.7rem;letter-spacing:.05em">
+                <?= $expPast ? 'Expired' : 'Expires' ?>
+              </div>
+              <div class="fw-semibold text-<?= $expColor ?>">
+                <?php if ($expPast): ?><i class="bi bi-exclamation-circle me-1"></i><?php elseif ($expSoon): ?><i class="bi bi-clock me-1"></i><?php endif; ?>
+                <?= date('d M Y', $expDate) ?>
+              </div>
+            </div>
+            <?php endif; ?>
+          </div>
+
+          <div class="mt-3">
+            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#raiseModal">
+              <i class="bi bi-plus-lg me-1"></i>Raise a Ticket
+            </button>
           </div>
         </div>
       </div>
 
-      <!-- Tabs: Tickets | Invoices -->
-      <ul class="nav nav-tabs mb-3" id="portalTabs">
-        <li class="nav-item">
-          <a class="nav-link active" data-bs-toggle="tab" href="#ptab-tickets">
-            <i class="bi bi-ticket-perforated me-1"></i>Tickets <span class="badge bg-secondary ms-1"><?= count($results) ?></span>
-          </a>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link" data-bs-toggle="tab" href="#ptab-invoices">
-            <i class="bi bi-receipt me-1"></i>Invoices <span class="badge bg-secondary ms-1"><?= count($invoices) ?></span>
-          </a>
-        </li>
-      </ul>
+      <!-- ── Connection Status Card ────────────────────────────────────────── -->
+      <div class="portal-status-card p-4 mb-4 status-<?= htmlspecialchars($overallOnuStatus) ?>">
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <?php
+          $overallIcon  = match($overallOnuStatus) {
+              'working'  => 'bi-wifi text-success',
+              'down'     => 'bi-wifi-off text-danger',
+              'degraded' => 'bi-exclamation-circle text-warning',
+              default    => 'bi-question-circle text-secondary',
+          };
+          $overallLabel = match($overallOnuStatus) {
+              'working'  => 'Connection is Active',
+              'down'     => 'Connection is Down',
+              'degraded' => 'Connection Degraded',
+              'none'     => 'No Equipment Linked',
+              default    => 'Status Unknown',
+          };
+          $overallBadge = match($overallOnuStatus) {
+              'working'  => 'success',
+              'down'     => 'danger',
+              'degraded' => 'warning',
+              default    => 'secondary',
+          };
+          ?>
+          <i class="bi <?= $overallIcon ?> fs-4"></i>
+          <div>
+            <div class="fw-semibold"><?= $overallLabel ?></div>
+            <div class="small text-muted">Network equipment status</div>
+          </div>
+          <span class="badge bg-<?= $overallBadge ?> ms-auto"><?= ucfirst($overallOnuStatus === 'none' ? 'N/A' : $overallOnuStatus) ?></span>
+        </div>
 
-      <div class="tab-content">
+        <?php if ($onus): ?>
+        <div class="rounded overflow-hidden" style="border:1px solid rgba(0,0,0,.08)">
+          <?php foreach ($onus as $onu):
+            $sc = $onuStatusCfg[$onu['status']] ?? $onuStatusCfg['unknown'];
+          ?>
+          <div class="onu-row px-3 py-2 d-flex align-items-center gap-3 bg-white">
+            <i class="bi <?= $sc['icon'] ?> text-<?= $sc['color'] ?> fs-5 flex-shrink-0"></i>
+            <div class="flex-grow-1 min-w-0">
+              <div class="fw-semibold small font-monospace text-truncate"><?= htmlspecialchars($onu['serial_number']) ?></div>
+              <?php if (!empty($onu['description'])): ?>
+              <div class="text-muted" style="font-size:.75rem"><?= htmlspecialchars($onu['description']) ?></div>
+              <?php endif; ?>
+            </div>
+            <div class="text-end flex-shrink-0">
+              <span class="badge bg-<?= $sc['color'] ?> bg-opacity-10 text-<?= $sc['color'] ?> border border-<?= $sc['color'] ?> border-opacity-25 small">
+                <?= $sc['label'] ?>
+              </span>
+              <?php if ($onu['rx_power_dbm'] !== null): ?>
+              <div class="text-muted" style="font-size:.7rem"><?= $onu['rx_power_dbm'] ?> dBm</div>
+              <?php endif; ?>
+              <?php if ($onu['last_online_at'] && $onu['status'] !== 'working'): ?>
+              <div class="text-muted" style="font-size:.7rem">Last seen <?= date('d M, H:i', strtotime($onu['last_online_at'])) ?></div>
+              <?php endif; ?>
+            </div>
+          </div>
+          <?php endforeach; ?>
+        </div>
+        <?php elseif ($overallOnuStatus === 'none'): ?>
+        <p class="text-muted small mb-0"><i class="bi bi-info-circle me-1"></i>No network equipment is currently linked to your account. Contact support if this seems incorrect.</p>
+        <?php endif; ?>
 
-      <!-- Ticket list -->
-      <div class="tab-pane fade show active" id="ptab-tickets">
-      <div class="card-section">
+        <?php if ($overallOnuStatus === 'down' || $overallOnuStatus === 'degraded'): ?>
+        <div class="mt-3 p-3 rounded" style="background:rgba(0,0,0,.04);border:1px solid rgba(0,0,0,.08)">
+          <div class="small fw-semibold mb-1">Experiencing issues?</div>
+          <p class="small text-muted mb-2">Our NOC may already be aware. You can also raise a ticket and a technician will follow up.</p>
+          <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#raiseModal">
+            <i class="bi bi-plus-lg me-1"></i>Raise a Ticket
+          </button>
+        </div>
+        <?php endif; ?>
+      </div>
+
+      <!-- ── Tickets ───────────────────────────────────────────────────────── -->
+      <div class="card-section mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span><i class="bi bi-ticket-perforated me-1 text-primary"></i>Your Tickets (<?= count($results) ?>)</span>
           <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#raiseModal">
@@ -319,7 +444,7 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
                 <small class="text-muted">· <?= $priorityLabels[$t['priority']] ?? ucfirst($t['priority']) ?></small>
               </div>
             </div>
-            <span class="badge bg-<?= $statusColors[$t['status']] ?? 'secondary' ?> text-nowrap flex-shrink-0">
+            <span class="badge bg-<?= $ticketStatusColors[$t['status']] ?? 'secondary' ?> text-nowrap flex-shrink-0">
               <?= str_replace('_', ' ', ucfirst($t['status'])) ?>
             </span>
           </div>
@@ -329,55 +454,6 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         </div>
         <?php endforeach; ?>
       </div>
-      </div><!-- /ptab-tickets -->
-
-      <!-- Invoice list -->
-      <div class="tab-pane fade" id="ptab-invoices">
-      <div class="card-section">
-        <div class="card-header"><i class="bi bi-receipt me-1 text-primary"></i>Your Invoices</div>
-        <?php
-        $invStatusColor = ['draft'=>'secondary','sent'=>'primary','paid'=>'success','partial'=>'warning',
-                           'overdue'=>'danger','void'=>'secondary','cancelled'=>'secondary'];
-        ?>
-        <?php if (!$invoices): ?>
-        <div class="p-4 text-center text-muted"><i class="bi bi-receipt fs-2 d-block mb-2"></i>No invoices on this account yet.</div>
-        <?php endif; ?>
-        <?php foreach ($invoices as $inv): ?>
-        <?php $balance = (float)$inv['total'] - (float)$inv['amount_paid']; ?>
-        <div class="p-3 border-bottom">
-          <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
-            <div>
-              <div class="fw-semibold font-monospace small"><?= htmlspecialchars($inv['invoice_number']) ?></div>
-              <div class="small text-muted">
-                Issued <?= $inv['issue_date'] ? date('d M Y', strtotime($inv['issue_date'])) : '—' ?>
-                <?php if ($inv['due_date']): ?> &bull; Due <?= date('d M Y', strtotime($inv['due_date'])) ?><?php endif; ?>
-              </div>
-            </div>
-            <div class="text-end">
-              <span class="badge bg-<?= $invStatusColor[$inv['status']] ?? 'secondary' ?> mb-1"><?= ucfirst($inv['status']) ?></span>
-              <div class="fw-bold"><?= number_format((float)$inv['total'], 2) ?></div>
-              <?php if ($balance > 0): ?><div class="small text-danger">Balance: <?= number_format($balance, 2) ?></div><?php endif; ?>
-            </div>
-          </div>
-          <div class="d-flex gap-2 mt-2 flex-wrap">
-            <a href="/billing/invoice-print?id=<?= urlencode($inv['id']) ?>" target="_blank"
-               class="btn btn-sm btn-outline-secondary py-0"><i class="bi bi-printer me-1"></i>View / Print</a>
-            <?php if ($psConfig['enabled'] && $balance > 0 && in_array($inv['status'], ['sent','partial','overdue'])): ?>
-            <button class="btn btn-sm btn-success py-0"
-              onclick="payInvoice('<?= htmlspecialchars($inv['id'], ENT_QUOTES) ?>',
-                                  '<?= htmlspecialchars($inv['invoice_number'], ENT_QUOTES) ?>',
-                                  <?= $balance ?>,
-                                  '<?= htmlspecialchars($cust['email'] ?? '', ENT_QUOTES) ?>')">
-              <i class="bi bi-credit-card me-1"></i>Pay Online
-            </button>
-            <?php endif; ?>
-          </div>
-        </div>
-        <?php endforeach; ?>
-      </div>
-      </div><!-- /ptab-invoices -->
-
-      </div><!-- /tab-content -->
 
       <?php if (aiEnabled()): ?>
       <!-- Chat assistant -->
@@ -552,29 +628,6 @@ function useChatDraft() {
   if (ftField && pendingDraft.faultTypeId) ftField.value = pendingDraft.faultTypeId;
   bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
-
-<?php if ($psConfig['enabled'] && $psConfig['public_key']): ?>
-function payInvoice(invoiceId, invoiceNumber, amount, email) {
-  const handler = PaystackPop.setup({
-    key: '<?= htmlspecialchars($psConfig['public_key'], ENT_QUOTES) ?>',
-    email: email || 'customer@portal.local',
-    amount: Math.round(amount * 100), // kobo
-    currency: '<?= htmlspecialchars($psConfig['currency'], ENT_QUOTES) ?>',
-    ref: 'FP-' + invoiceId.substring(0,8) + '-' + Date.now(),
-    metadata: { invoice_id: invoiceId, invoice_number: invoiceNumber },
-    onClose: function() {},
-    callback: function(response) {
-      // Verify server-side via webhook; show optimistic confirmation
-      alert('Payment submitted! Reference: ' + response.reference + '\nYour invoice will update shortly.');
-      location.reload();
-    }
-  });
-  handler.openIframe();
-}
-<?php endif; ?>
 </script>
-<?php if ($psConfig['enabled'] && $psConfig['public_key']): ?>
-<script src="https://js.paystack.co/v1/inline.js"></script>
-<?php endif; ?>
 </body>
 </html>
