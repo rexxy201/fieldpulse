@@ -19,7 +19,7 @@ $PERMISSION_GROUPS = [
     // Who may raise a payment request, and who signs one off at each stage.
     'Payment Requests' => ['payment_requests.create','payment_requests.view','payment_requests.authorize','payment_requests.approve','payment_requests.finance_check','payment_requests.finance_recall'],
     'Finance'          => ['finance.view','installations.financial'],
-    'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill'],
+    'Inventory'     => ['inventory.view','inventory.assets.view','inventory.assets.manage','inventory.items.view','inventory.items.manage','inventory.cabinets.view','inventory.cabinets.manage','inventory.categories.view','inventory.categories.manage','inventory.requests.create','inventory.requests.view','inventory.requests.approve','inventory.movements.view','inventory.refill','inventory.po.view','inventory.po.manage','inventory.po.receive','inventory.zoho.export','inventory.serials.view','inventory.serials.manage'],
     'System'        => ['admin.access'],
 ];
 
