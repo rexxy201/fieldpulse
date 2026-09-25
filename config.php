@@ -3633,3 +3633,140 @@ try {
 } catch (\Throwable $e) {
     error_log('App version tracking error: ' . $e->getMessage());
 }
+
+// ─── SMS / WhatsApp helper ────────────────────────────────────────────────────
+/**
+ * Send an SMS or WhatsApp message via the configured provider.
+ * Providers supported: africas_talking, twilio
+ * Returns ['ok'=>bool, 'ref'=>string|null, 'error'=>string|null]
+ */
+function sendSms(string $phone, string $message, string $channel = 'sms'): array {
+    $cfg      = getAppConfig();
+    $enabled  = ($cfg['smsEnabled'] ?? '0') === '1';
+    $provider = $cfg['smsProvider'] ?? '';
+
+    if (!$enabled || !$provider || !$phone) {
+        return ['ok' => false, 'ref' => null, 'error' => 'SMS not configured or disabled'];
+    }
+
+    // Normalise to international format — prepend country code if starts with 0
+    $phone = preg_replace('/\s+/', '', $phone);
+    if (str_starts_with($phone, '0')) {
+        $cc    = $cfg['smsCountryCode'] ?? '234'; // default Nigeria
+        $phone = '+' . ltrim($cc, '+') . substr($phone, 1);
+    }
+
+    $ref = null; $error = null; $ok = false;
+
+    try {
+        if ($provider === 'africas_talking') {
+            $apiKey   = $cfg['smsApiKey']    ?? '';
+            $username = $cfg['smsUsername']  ?? 'sandbox';
+            $sender   = $cfg['smsSenderId']  ?? '';
+            $url = $channel === 'whatsapp'
+                ? 'https://voice.africastalking.com/chat/send'
+                : 'https://api.africastalking.com/version1/messaging';
+
+            if ($channel === 'whatsapp') {
+                $body = json_encode(['username' => $username, 'productName' => $sender ?: 'default',
+                                     'channel'  => 'Whatsapp', 'to' => $phone, 'message' => $message]);
+                $ct = 'application/json';
+            } else {
+                $body = http_build_query(array_filter([
+                    'username' => $username, 'to' => $phone,
+                    'message'  => $message,  'from' => $sender ?: null,
+                ]));
+                $ct = 'application/x-www-form-urlencoded';
+            }
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS     => $body, CURLOPT_TIMEOUT => 10,
+                CURLOPT_HTTPHEADER     => ["apiKey: $apiKey", "Accept: application/json", "Content-Type: $ct"],
+            ]);
+            $resp  = curl_exec($ch);
+            $errno = curl_errno($ch);
+            curl_close($ch);
+            if (!$errno) {
+                $data = json_decode($resp, true);
+                $recipient = $data['SMSMessageData']['Recipients'][0] ?? $data['data'] ?? [];
+                $status    = is_array($recipient) ? ($recipient['status'] ?? '') : '';
+                $ok  = in_array($status, ['Success', 'MessageSent'], true) || ($data['status'] ?? '') === '200';
+                $ref = is_array($recipient) ? ($recipient['messageId'] ?? null) : null;
+                if (!$ok) $error = $resp;
+            } else {
+                $error = curl_strerror($errno);
+            }
+
+        } elseif ($provider === 'twilio') {
+            $sid    = $cfg['smsApiKey']    ?? '';
+            $token  = $cfg['smsApiSecret'] ?? '';
+            $from   = $cfg['smsSenderId']  ?? '';
+            $url    = "https://api.twilio.com/2010-04-01/Accounts/$sid/Messages.json";
+            $body   = http_build_query(['To' => $phone, 'From' => $from, 'Body' => $message]);
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $body,    CURLOPT_TIMEOUT => 10,
+                CURLOPT_USERPWD    => "$sid:$token",
+                CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+            ]);
+            $resp  = curl_exec($ch);
+            $errno = curl_errno($ch);
+            curl_close($ch);
+            if (!$errno) {
+                $data = json_decode($resp, true);
+                $ok   = isset($data['sid']);
+                $ref  = $data['sid'] ?? null;
+                if (!$ok) $error = $data['message'] ?? $resp;
+            } else {
+                $error = curl_strerror($errno);
+            }
+        }
+    } catch (\Throwable $e) {
+        $error = $e->getMessage();
+    }
+
+    // Log every attempt
+    try {
+        dbRun("INSERT INTO sms_log (id,recipient,message,channel,provider,status,provider_ref,error)
+               VALUES (?,?,?,?,?,?,?,?)",
+              [newUuid(), $phone, $message, $channel, $provider,
+               $ok ? 'sent' : 'failed', $ref, $error]);
+    } catch (\Throwable $e) { /* table may not exist yet on first boot */ }
+
+    return ['ok' => $ok, 'ref' => $ref, 'error' => $error];
+}
+
+// ─── Paystack helpers ─────────────────────────────────────────────────────────
+function paystackConfig(): array {
+    $cfg = getAppConfig();
+    return [
+        'enabled'    => ($cfg['paystackEnabled']   ?? '0') === '1',
+        'public_key' => $cfg['paystackPublicKey']  ?? '',
+        'secret_key' => $cfg['paystackSecretKey']  ?? '',
+        'currency'   => strtoupper($cfg['paystackCurrency'] ?? 'NGN'),
+    ];
+}
+
+function paystackVerify(string $reference): array {
+    $pk = paystackConfig();
+    if (!$pk['secret_key']) return ['ok' => false, 'error' => 'Paystack not configured'];
+
+    $ch = curl_init("https://api.paystack.co/transaction/verify/" . urlencode($reference));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15,
+        CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $pk['secret_key']],
+    ]);
+    $resp  = curl_exec($ch);
+    $errno = curl_errno($ch);
+    curl_close($ch);
+    if ($errno) return ['ok' => false, 'error' => curl_strerror($errno)];
+    $data = json_decode($resp, true);
+    if (!($data['status'] ?? false) || ($data['data']['status'] ?? '') !== 'success') {
+        return ['ok' => false, 'error' => $data['message'] ?? 'Verification failed'];
+    }
+    return ['ok' => true, 'data' => $data['data']];
+}

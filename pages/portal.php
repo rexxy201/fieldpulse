@@ -104,6 +104,7 @@ if ($isLookupAttempt && !rateLimitCheck('portal_lookup', clientIp(), 20, 15)) {
     $lookupRateLimited = true;
 }
 
+$invoices = [];
 if ($lookupRateLimited) {
     $searched = true;
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'lookup') {
@@ -116,6 +117,11 @@ if ($lookupRateLimited) {
             $results = dbFetchAll(
                 "SELECT id,ticket_number,description,status,priority,created_at,resolved_at
                  FROM tickets WHERE customer_id = ? ORDER BY created_at DESC",
+                [$cust['id']]
+            );
+            $invoices = dbFetchAll(
+                "SELECT id,invoice_number,status,issue_date,due_date,total,amount_paid
+                 FROM invoices WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50",
                 [$cust['id']]
             );
         }
@@ -131,9 +137,15 @@ if ($lookupRateLimited) {
                  FROM tickets WHERE customer_id = ? ORDER BY created_at DESC",
                 [$cust['id']]
             );
+            $invoices = dbFetchAll(
+                "SELECT id,invoice_number,status,issue_date,due_date,total,amount_paid
+                 FROM invoices WHERE customer_id = ? ORDER BY created_at DESC LIMIT 50",
+                [$cust['id']]
+            );
         }
     }
 }
+$psConfig = paystackConfig();
 
 $statusColors = [
     'open'                 => 'primary',
@@ -258,7 +270,24 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         </div>
       </div>
 
+      <!-- Tabs: Tickets | Invoices -->
+      <ul class="nav nav-tabs mb-3" id="portalTabs">
+        <li class="nav-item">
+          <a class="nav-link active" data-bs-toggle="tab" href="#ptab-tickets">
+            <i class="bi bi-ticket-perforated me-1"></i>Tickets <span class="badge bg-secondary ms-1"><?= count($results) ?></span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" data-bs-toggle="tab" href="#ptab-invoices">
+            <i class="bi bi-receipt me-1"></i>Invoices <span class="badge bg-secondary ms-1"><?= count($invoices) ?></span>
+          </a>
+        </li>
+      </ul>
+
+      <div class="tab-content">
+
       <!-- Ticket list -->
+      <div class="tab-pane fade show active" id="ptab-tickets">
       <div class="card-section">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span><i class="bi bi-ticket-perforated me-1 text-primary"></i>Your Tickets (<?= count($results) ?>)</span>
@@ -300,6 +329,55 @@ $priorityLabels = ['p1'=>'Critical','p2'=>'High','p3'=>'Medium','p4'=>'Low'];
         </div>
         <?php endforeach; ?>
       </div>
+      </div><!-- /ptab-tickets -->
+
+      <!-- Invoice list -->
+      <div class="tab-pane fade" id="ptab-invoices">
+      <div class="card-section">
+        <div class="card-header"><i class="bi bi-receipt me-1 text-primary"></i>Your Invoices</div>
+        <?php
+        $invStatusColor = ['draft'=>'secondary','sent'=>'primary','paid'=>'success','partial'=>'warning',
+                           'overdue'=>'danger','void'=>'secondary','cancelled'=>'secondary'];
+        ?>
+        <?php if (!$invoices): ?>
+        <div class="p-4 text-center text-muted"><i class="bi bi-receipt fs-2 d-block mb-2"></i>No invoices on this account yet.</div>
+        <?php endif; ?>
+        <?php foreach ($invoices as $inv): ?>
+        <?php $balance = (float)$inv['total'] - (float)$inv['amount_paid']; ?>
+        <div class="p-3 border-bottom">
+          <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+            <div>
+              <div class="fw-semibold font-monospace small"><?= htmlspecialchars($inv['invoice_number']) ?></div>
+              <div class="small text-muted">
+                Issued <?= $inv['issue_date'] ? date('d M Y', strtotime($inv['issue_date'])) : '—' ?>
+                <?php if ($inv['due_date']): ?> &bull; Due <?= date('d M Y', strtotime($inv['due_date'])) ?><?php endif; ?>
+              </div>
+            </div>
+            <div class="text-end">
+              <span class="badge bg-<?= $invStatusColor[$inv['status']] ?? 'secondary' ?> mb-1"><?= ucfirst($inv['status']) ?></span>
+              <div class="fw-bold"><?= number_format((float)$inv['total'], 2) ?></div>
+              <?php if ($balance > 0): ?><div class="small text-danger">Balance: <?= number_format($balance, 2) ?></div><?php endif; ?>
+            </div>
+          </div>
+          <div class="d-flex gap-2 mt-2 flex-wrap">
+            <a href="/billing/invoice-print?id=<?= urlencode($inv['id']) ?>" target="_blank"
+               class="btn btn-sm btn-outline-secondary py-0"><i class="bi bi-printer me-1"></i>View / Print</a>
+            <?php if ($psConfig['enabled'] && $balance > 0 && in_array($inv['status'], ['sent','partial','overdue'])): ?>
+            <button class="btn btn-sm btn-success py-0"
+              onclick="payInvoice('<?= htmlspecialchars($inv['id'], ENT_QUOTES) ?>',
+                                  '<?= htmlspecialchars($inv['invoice_number'], ENT_QUOTES) ?>',
+                                  <?= $balance ?>,
+                                  '<?= htmlspecialchars($cust['email'] ?? '', ENT_QUOTES) ?>')">
+              <i class="bi bi-credit-card me-1"></i>Pay Online
+            </button>
+            <?php endif; ?>
+          </div>
+        </div>
+        <?php endforeach; ?>
+      </div>
+      </div><!-- /ptab-invoices -->
+
+      </div><!-- /tab-content -->
 
       <?php if (aiEnabled()): ?>
       <!-- Chat assistant -->
@@ -474,6 +552,29 @@ function useChatDraft() {
   if (ftField && pendingDraft.faultTypeId) ftField.value = pendingDraft.faultTypeId;
   bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
+
+<?php if ($psConfig['enabled'] && $psConfig['public_key']): ?>
+function payInvoice(invoiceId, invoiceNumber, amount, email) {
+  const handler = PaystackPop.setup({
+    key: '<?= htmlspecialchars($psConfig['public_key'], ENT_QUOTES) ?>',
+    email: email || 'customer@portal.local',
+    amount: Math.round(amount * 100), // kobo
+    currency: '<?= htmlspecialchars($psConfig['currency'], ENT_QUOTES) ?>',
+    ref: 'FP-' + invoiceId.substring(0,8) + '-' + Date.now(),
+    metadata: { invoice_id: invoiceId, invoice_number: invoiceNumber },
+    onClose: function() {},
+    callback: function(response) {
+      // Verify server-side via webhook; show optimistic confirmation
+      alert('Payment submitted! Reference: ' + response.reference + '\nYour invoice will update shortly.');
+      location.reload();
+    }
+  });
+  handler.openIframe();
+}
+<?php endif; ?>
 </script>
+<?php if ($psConfig['enabled'] && $psConfig['public_key']): ?>
+<script src="https://js.paystack.co/v1/inline.js"></script>
+<?php endif; ?>
 </body>
 </html>
