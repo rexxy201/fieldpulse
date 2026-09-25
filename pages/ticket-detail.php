@@ -178,6 +178,15 @@ if (method() === 'POST') {
     header("Location: /ticket/$ticketId"); exit;
 }
 
+$canCheckin  = hasPermission('tickets.checkin');
+$activeCheckin = $canCheckin
+    ? dbFetch("SELECT * FROM ticket_checkins WHERE ticket_id=? AND user_id=? AND checked_out_at IS NULL",
+              [$ticketId, $user['id']])
+    : null;
+$checkinHistory = $canCheckin
+    ? dbFetchAll("SELECT * FROM ticket_checkins WHERE ticket_id=? ORDER BY checked_in_at DESC LIMIT 20", [$ticketId])
+    : [];
+
 $slaBreach  = $ticket['sla_breach_at'] ? new DateTime($ticket['sla_breach_at']) : null;
 $isBreached = $slaBreach && $slaBreach < new DateTime();
 $statusBg   = ['open'=>'primary','in_progress'=>'info','resolved'=>'success','closed'=>'secondary','pending_confirmation'=>'warning'];
@@ -512,6 +521,55 @@ require __DIR__ . '/../includes/header.php';
     </div>
     <?php endif; ?>
 
+    <?php if ($canCheckin && !in_array($ticket['status'], ['resolved','closed'])): ?>
+    <div class="card-section mt-3" id="checkinCard">
+      <div class="card-header"><i class="bi bi-geo-alt-fill me-1 text-success"></i>GPS Check-In</div>
+      <div class="p-3">
+        <?php if ($activeCheckin): ?>
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="badge bg-success"><i class="bi bi-record-circle me-1"></i>Checked in</span>
+          <span class="small text-muted"><?= date('d M H:i', strtotime($activeCheckin['checked_in_at'])) ?></span>
+        </div>
+        <div class="small text-muted mb-3">
+          <i class="bi bi-crosshair me-1"></i>
+          <?= number_format((float)$activeCheckin['latitude'], 6) ?>, <?= number_format((float)$activeCheckin['longitude'], 6) ?>
+          <?php if ($activeCheckin['accuracy']): ?>
+          <span class="ms-1">(±<?= round($activeCheckin['accuracy']) ?>m)</span>
+          <?php endif; ?>
+        </div>
+        <button class="btn btn-sm btn-outline-danger w-100" onclick="doCheckout()">
+          <i class="bi bi-box-arrow-right me-1"></i>Check Out
+        </button>
+        <?php else: ?>
+        <p class="small text-muted mb-3">Tap to record your GPS location on arrival at the job site.</p>
+        <button class="btn btn-sm btn-success w-100" id="checkinBtn" onclick="doCheckin()">
+          <i class="bi bi-geo-alt me-1"></i>Check In
+        </button>
+        <?php endif; ?>
+        <div id="checkinMsg" class="mt-2 small"></div>
+        <?php if ($checkinHistory): ?>
+        <div class="mt-3 border-top pt-2">
+          <div class="small fw-semibold mb-1 text-muted">History</div>
+          <?php foreach ($checkinHistory as $ci): ?>
+          <div class="small d-flex gap-2 align-items-start mb-1">
+            <i class="bi bi-person-circle text-muted mt-1" style="font-size:.8rem"></i>
+            <div>
+              <span class="fw-semibold"><?= htmlspecialchars($ci['user_name']) ?></span>
+              <span class="text-muted ms-1"><?= date('d M H:i', strtotime($ci['checked_in_at'])) ?></span>
+              <?php if ($ci['checked_out_at']): ?>
+              <span class="text-muted">→ <?= date('H:i', strtotime($ci['checked_out_at'])) ?></span>
+              <?php else: ?>
+              <span class="badge bg-success ms-1" style="font-size:.65rem">active</span>
+              <?php endif; ?>
+            </div>
+          </div>
+          <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+
     <?php if (($canEdit || $canAssign) && empty($ticket['escalated_at']) && !in_array($ticket['status'], ['resolved','closed'])): ?>
     <div class="card-section mt-3">
       <div class="card-header text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Escalation</div>
@@ -672,6 +730,107 @@ function submitWithRca() {
 
   bootstrap.Modal.getInstance(document.getElementById('rcaModal')).hide();
   document.getElementById('updateForm').submit();
+}
+
+// ── GPS check-in / check-out ─────────────────────────────────────────────
+function checkinMsg(text, type) {
+  const el = document.getElementById('checkinMsg');
+  if (!el) return;
+  el.innerHTML = `<span class="text-${type}">${text}</span>`;
+}
+
+function doCheckin() {
+  const btn = document.getElementById('checkinBtn');
+  if (!navigator.geolocation) {
+    checkinMsg('<i class="bi bi-exclamation-triangle me-1"></i>Geolocation not supported by this browser.', 'danger');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Locating…'; }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      fetch('/api/tickets/<?= $ticketId ?>/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latitude:  pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy:  pos.coords.accuracy
+        })
+      })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) { checkinMsg(d.error || 'Check-in failed.', 'danger'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-geo-alt me-1"></i>Check In'; } return; }
+        location.reload();
+      })
+      .catch(() => { checkinMsg('Request failed — check your connection.', 'danger'); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-geo-alt me-1"></i>Check In'; } });
+    },
+    err => {
+      const msgs = { 1: 'Location permission denied.', 2: 'Location unavailable.', 3: 'Location timed out.' };
+      checkinMsg('<i class="bi bi-exclamation-triangle me-1"></i>' + (msgs[err.code] || 'Could not get location.'), 'danger');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-geo-alt me-1"></i>Check In'; }
+    },
+    { enableHighAccuracy: true, timeout: 15000 }
+  );
+}
+
+function doCheckout() {
+  fetch('/api/tickets/<?= $ticketId ?>/checkin', { method: 'DELETE' })
+    .then(r => r.json().then(d => ({ ok: r.ok, d })))
+    .then(({ ok, d }) => {
+      if (!ok) { checkinMsg(d.error || 'Check-out failed.', 'danger'); return; }
+      location.reload();
+    })
+    .catch(() => checkinMsg('Request failed — check your connection.', 'danger'));
+}
+</script>
+
+<!-- ── Mobile floating comment button (hidden on desktop) ──────────────── -->
+<button class="d-lg-none btn btn-primary rounded-circle shadow-lg"
+        style="position:fixed;bottom:1.5rem;right:1.25rem;width:52px;height:52px;font-size:1.3rem;z-index:1040"
+        onclick="bootstrap.Modal.getOrCreateInstance(document.getElementById('quickCommentModal')).show()"
+        title="Add comment">
+  <i class="bi bi-chat-left-text"></i>
+</button>
+
+<!-- Quick-comment modal (mobile) -->
+<div class="modal fade" id="quickCommentModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title mb-0"><i class="bi bi-chat-left-text me-1"></i>Add Comment</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body pb-2">
+        <textarea id="quickCommentText" class="form-control" rows="4" placeholder="Type your comment…"></textarea>
+        <div id="quickCommentErr" class="small text-danger mt-1 d-none"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="submitQuickComment()">
+          <i class="bi bi-send me-1"></i>Post
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+function submitQuickComment() {
+  const text = document.getElementById('quickCommentText').value.trim();
+  const err  = document.getElementById('quickCommentErr');
+  if (!text) { err.textContent = 'Comment cannot be empty.'; err.classList.remove('d-none'); return; }
+  err.classList.add('d-none');
+  fetch('/api/tickets/<?= $ticketId ?>/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text })
+  })
+  .then(r => r.json().then(d => ({ ok: r.ok, d })))
+  .then(({ ok, d }) => {
+    if (!ok) { err.textContent = d.error || 'Failed to post comment.'; err.classList.remove('d-none'); return; }
+    bootstrap.Modal.getInstance(document.getElementById('quickCommentModal')).hide();
+    location.reload();
+  })
+  .catch(() => { err.textContent = 'Request failed — check your connection.'; err.classList.remove('d-none'); });
 }
 </script>
 

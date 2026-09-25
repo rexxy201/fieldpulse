@@ -8,6 +8,37 @@ $role = $user['role'];
 $id   = $segments[2] ?? null;
 $sub  = $segments[3] ?? null;
 
+// ─── GPS Check-in / check-out sub-resource
+if ($id && $sub === 'checkin') {
+    $ticketForCi = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
+    if (!$ticketForCi || !canAccessTicket($ticketForCi)) jsonResponse(['error' => 'Forbidden'], 403);
+    if (!hasPermission('tickets.checkin')) jsonResponse(['error' => 'Forbidden — missing tickets.checkin'], 403);
+
+    if (method() === 'POST') {
+        $b = getBody();
+        $lat = isset($b['latitude'])  ? (float)$b['latitude']  : null;
+        $lng = isset($b['longitude']) ? (float)$b['longitude'] : null;
+        if ($lat === null || $lng === null) jsonResponse(['error' => 'latitude and longitude required'], 400);
+        if ($lat < -90 || $lat > 90 || $lng < -180 || $lng > 180) jsonResponse(['error' => 'Invalid coordinates'], 400);
+        // Auto-checkout any open check-in for this user on this ticket first
+        dbRun("UPDATE ticket_checkins SET checked_out_at=NOW() WHERE ticket_id=? AND user_id=? AND checked_out_at IS NULL",
+              [$id, $user['id']]);
+        $ciId = newUuid();
+        dbRun("INSERT INTO ticket_checkins (id,ticket_id,user_id,user_name,latitude,longitude,accuracy) VALUES (?,?,?,?,?,?,?)",
+              [$ciId, $id, $user['id'], $user['name'], $lat, $lng, isset($b['accuracy']) ? (float)$b['accuracy'] : null]);
+        auditLog('checkin', 'ticket', $id, "GPS: $lat,$lng");
+        jsonResponse(dbFetch("SELECT * FROM ticket_checkins WHERE id = ?", [$ciId]), 201);
+    }
+
+    if (method() === 'DELETE') {
+        $rows = dbRun("UPDATE ticket_checkins SET checked_out_at=NOW() WHERE ticket_id=? AND user_id=? AND checked_out_at IS NULL",
+                      [$id, $user['id']]);
+        if ($rows->rowCount() === 0) jsonResponse(['error' => 'No active check-in found'], 404);
+        auditLog('checkout', 'ticket', $id);
+        jsonResponse(['ok' => true]);
+    }
+}
+
 // ─── Comments sub-resource
 if ($id && $sub === 'comments') {
     $ticketForAccess = dbFetch("SELECT * FROM tickets WHERE id = ?", [$id]);
