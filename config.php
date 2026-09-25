@@ -987,6 +987,8 @@ define('ALL_PERMISSIONS', [
     'customers.create'     => 'Create customers',
     'customers.update'     => 'Edit customers',
     'customers.delete'     => 'Delete customers',
+    'customers.bulk'       => 'Bulk status change / mass SMS customers',
+    'customers.export'     => 'Export customers to CSV',
     'installations.view'   => 'View installations',
     'installations.create' => 'Create installation profiles',
     'installations.update' => 'Update installations',
