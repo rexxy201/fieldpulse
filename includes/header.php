@@ -206,6 +206,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <i class="bi bi-gear"></i> Admin
   </a>
   <?php endif; ?>
+  <?php if (hasPermission('admin.audit.view')): ?>
+  <a href="/audit-log" class="nav-link <?= str_starts_with($activePath, 'audit-log') ? 'active' : '' ?>">
+    <i class="bi bi-journal-text"></i> Audit Log
+  </a>
+  <?php endif; ?>
 
   <!-- Logout as last nav item — visible only on mobile (desktop uses the icon in user-panel) -->
   <a href="/logout" class="nav-link d-lg-none" style="margin-top:.25rem;color:#ef4444 !important">

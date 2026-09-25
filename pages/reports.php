@@ -152,10 +152,60 @@ $reportTabs = [
 ];
 if (!isset($reportTabs[$type])) { $type = 'department'; }
 
+// ── CSV export — output before any HTML ──────────────────────────────────────
+if (($_GET['export'] ?? '') === 'csv') {
+    $csvHeaders = match ($type) {
+        'department' => ['Department', 'Total', 'Resolved', 'Avg Resolution (hrs)'],
+        'engineer'   => ['Engineer', 'Role', 'Total', 'Resolved', 'Avg Resolution (hrs)'],
+        'olt'        => ['OLT / Equipment', 'Total', 'Resolved', 'Avg Resolution (hrs)'],
+        'vendor'     => ['Vendor', 'Total', 'Resolved', 'Avg Resolution (hrs)'],
+        'issue'      => ['Issue Type', 'Category', 'Total', 'Resolved', 'Avg Resolution (hrs)'],
+        'recurring'  => ['Customer', 'Issue', 'Occurrences', 'Last Reported'],
+        'resolution' => ['Ticket', 'Customer', 'Escalated?', 'Escalated/Created', 'Resolved', 'Hours to Resolve'],
+        default      => ['Data'],
+    };
+    $csvRows = array_map(function ($r) use ($type, $deptLabels) {
+        return match ($type) {
+            'department' => [$deptLabels[$r['dept']] ?? ucfirst($r['dept']), $r['total'], $r['resolved'], $r['avg_hours'] ?? ''],
+            'engineer'   => [$r['name'], $r['role'], $r['total'], $r['resolved'], $r['avg_hours'] ?? ''],
+            'olt'        => [$r['olt'], $r['total'], $r['resolved'], $r['avg_hours'] ?? ''],
+            'vendor'     => [$r['name'], $r['total'], $r['resolved'], $r['avg_hours'] ?? ''],
+            'issue'      => [$r['name'], $r['category'], $r['total'], $r['resolved'], $r['avg_hours'] ?? ''],
+            'recurring'  => [$r['customer_name'], $r['issue_name'], $r['occurrences'], $r['last_reported']],
+            'resolution' => [$r['ticket_number'], $r['customer_name'] ?? '', !empty($r['escalated_at']) ? 'Yes' : 'No',
+                             date('d M Y H:i', strtotime($r['escalated_at'] ?? $r['created_at'])),
+                             date('d M Y H:i', strtotime($r['resolved_at'])),
+                             $r['hours_to_resolve']],
+            default      => [],
+        };
+    }, $rows);
+
+    $fname = 'report-' . $type . ($from ? '-' . $from : '') . ($to ? '-to-' . $to : '') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $fname . '"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, $csvHeaders);
+    foreach ($csvRows as $cr) { fputcsv($out, $cr); }
+    fclose($out);
+    exit;
+}
+
 $subscriptions = dbFetchAll("SELECT * FROM report_subscriptions ORDER BY created_at DESC");
 
 $pageTitle = 'Reports';
 require __DIR__ . '/../includes/header.php';
+?>
+<style>
+@media print {
+  #sidebar, .topbar, .btn, .nav-tabs, .card-section:has(form), #subscriptions,
+  #subscribeModal, .modal, script { display: none !important; }
+  #main { margin: 0 !important; padding: 0 !important; }
+  .page-content { padding: 0 !important; }
+  .table { font-size: .8rem; }
+  a[href]::after { content: none !important; }
+}
+</style>
+<?php // Re-open PHP after header include — the style block above is HTML
 
 function rqs(array $extra = []) {
     global $type, $from, $to;
@@ -168,9 +218,17 @@ function rqs(array $extra = []) {
     <h2 class="fw-bold mb-0">Reports</h2>
     <div class="text-muted small">Drill down into ticket volume, resolution time, and recurring issues.</div>
   </div>
-  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#subscribeModal">
-    <i class="bi bi-envelope-paper me-1"></i>Subscribe to this report
-  </button>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="<?= htmlspecialchars(rqs(['export' => 'csv'])) ?>" class="btn btn-sm btn-outline-secondary">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </a>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()">
+      <i class="bi bi-printer me-1"></i>Print / PDF
+    </button>
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#subscribeModal">
+      <i class="bi bi-envelope-paper me-1"></i>Subscribe
+    </button>
+  </div>
 </div>
 
 <!-- Tabs -->

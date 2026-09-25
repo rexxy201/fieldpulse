@@ -83,6 +83,7 @@ $pages = [
     'analytics'     => 'analytics',
     'reports'       => 'reports',
     'admin'         => 'admin',
+    'audit-log'     => 'audit-log',
     'payment-requests' => 'payment-requests',
     'payment-request-template' => 'payment-request-template',
     'payment-request-print' => 'payment-request-print',
