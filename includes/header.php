@@ -115,19 +115,6 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <i class="bi bi-cash-coin"></i> Payment Requests
   </a>
   <?php endif; ?>
-  <?php if (hasPermission('billing.invoices.view') || hasPermission('billing.invoices.manage')): ?>
-  <?php if (!hasPermission('finance.view')): ?>
-  <div class="nav-section">Billing</div>
-  <?php endif; ?>
-  <a href="/billing/invoices" class="nav-link <?= $activePath === 'billing/invoices' ? 'active' : '' ?>">
-    <i class="bi bi-receipt"></i> Invoices
-  </a>
-  <?php if (hasPermission('billing.invoices.manage')): ?>
-  <a href="/billing/plans" class="nav-link <?= $activePath === 'billing/plans' ? 'active' : '' ?>">
-    <i class="bi bi-calendar-check"></i> Billing Plans
-  </a>
-  <?php endif; ?>
-  <?php endif; ?>
 
   <?php
   $_invAny = hasPermission('inventory.view') || hasPermission('inventory.assets.view')

@@ -170,14 +170,7 @@ if (method() === 'POST') {
         $msg = 'SMS / WhatsApp settings saved.';
         $_anchor = '#tab-notifications';
     }
-    if ($action === 'save_paystack') {
-        foreach (['paystackPublicKey','paystackSecretKey','paystackCurrency'] as $k) {
-            dbUpsertConfig($k, $b[$k] ?? '');
-        }
-        dbUpsertConfig('paystackEnabled', !empty($b['paystackEnabled']) ? '1' : '0');
-        $msg = 'Paystack settings saved.';
-        $_anchor = '#tab-integrations';
-    }
+
     if ($action === 'save_installation_sla') {
         dbUpsertConfig('installationSlaWorkingDays', (string)max(1, (int)($b['installationSlaWorkingDays'] ?? 10)));
         $msg = 'Installation SLA saved.';
@@ -445,13 +438,7 @@ $smsCfg = [
     'smsSenderId'     => $cfg['smsSenderId']    ?? '',
     'smsCountryCode'  => $cfg['smsCountryCode'] ?? '234',
 ];
-// Paystack
-$psCfg = [
-    'paystackEnabled'   => $cfg['paystackEnabled']   ?? '0',
-    'paystackPublicKey' => $cfg['paystackPublicKey']  ?? '',
-    'paystackSecretKey' => $cfg['paystackSecretKey']  ?? '',
-    'paystackCurrency'  => $cfg['paystackCurrency']   ?? 'NGN',
-];
+
 
 // AI Assistant — API key is intentionally never echoed back into the form
 $aiCfg = [
@@ -1611,42 +1598,6 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
       </div>
     </div>
 
-    <!-- Paystack -->
-    <div class="card-section mt-4">
-      <div class="card-header">
-        <i class="bi bi-credit-card me-1 text-primary"></i>Paystack Payment Gateway
-      </div>
-      <div class="p-4">
-        <p class="text-muted small mb-4">Enables the <strong>Pay Online</strong> button on the customer portal. Webhook URL to set in your Paystack dashboard: <code><?= 'https://' . ($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') . '/api/paystack-webhook' ?></code></p>
-        <form method="POST">
-          <input type="hidden" name="_action" value="save_paystack">
-          <?= csrfField() ?>
-          <div class="form-check form-switch mb-3">
-            <input class="form-check-input" type="checkbox" name="paystackEnabled" id="psEnabled" value="1" <?= $psCfg['paystackEnabled']==='1'?'checked':'' ?>>
-            <label class="form-check-label fw-semibold" for="psEnabled">Enable Paystack</label>
-          </div>
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Public Key</label>
-              <input type="text" name="paystackPublicKey" class="form-control font-monospace" value="<?= htmlspecialchars($psCfg['paystackPublicKey']) ?>" placeholder="pk_live_…">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Secret Key</label>
-              <input type="password" name="paystackSecretKey" class="form-control font-monospace" autocomplete="new-password" value="<?= htmlspecialchars($psCfg['paystackSecretKey']) ?>" placeholder="sk_live_…">
-            </div>
-          </div>
-          <div class="mb-3" style="max-width:180px">
-            <label class="form-label fw-semibold">Currency</label>
-            <select name="paystackCurrency" class="form-select">
-              <?php foreach (['NGN'=>'NGN — Naira','GHS'=>'GHS — Cedi','KES'=>'KES — Shilling','ZAR'=>'ZAR — Rand','USD'=>'USD — Dollar'] as $c => $l): ?>
-              <option value="<?=$c?>" <?= $psCfg['paystackCurrency']===$c?'selected':'' ?>><?=$l?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Save Paystack Settings</button>
-        </form>
-      </div>
-    </div>
   </div>
 
 </div>

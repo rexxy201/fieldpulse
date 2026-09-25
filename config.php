@@ -1029,10 +1029,6 @@ define('ALL_PERMISSIONS', [
     'payment_requests.finance_recall' => 'Recall finance action — revert disbursed / partially disbursed / finance review back to Approved',
     // ── Finance module ──
     'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
-    // ── Billing module ──
-    'billing.invoices.view'           => 'View customer invoices',
-    'billing.invoices.manage'         => 'Create / edit / void invoices',
-    'billing.invoices.record_payment' => 'Record payments against invoices',
     // ── NOC module ──
     'noc.view'            => 'View NOC dashboard, ONU status board, and device list',
     'noc.devices.manage'  => 'Add / edit / delete network devices (OLTs, routers)',
@@ -1573,10 +1569,10 @@ if (!$_rbacDone) {
             'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view','payment_requests.create'],
             'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','payment_requests.create'],
             'vendor'           => ['installations.view','payment_requests.create'],
-            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
-            'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
-            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view','billing.invoices.view'],
-            'coo_manager'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
+            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view'],
+            'coo_manager'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
@@ -3742,33 +3738,3 @@ function sendSms(string $phone, string $message, string $channel = 'sms'): array
     return ['ok' => $ok, 'ref' => $ref, 'error' => $error];
 }
 
-// ─── Paystack helpers ─────────────────────────────────────────────────────────
-function paystackConfig(): array {
-    $cfg = getAppConfig();
-    return [
-        'enabled'    => ($cfg['paystackEnabled']   ?? '0') === '1',
-        'public_key' => $cfg['paystackPublicKey']  ?? '',
-        'secret_key' => $cfg['paystackSecretKey']  ?? '',
-        'currency'   => strtoupper($cfg['paystackCurrency'] ?? 'NGN'),
-    ];
-}
-
-function paystackVerify(string $reference): array {
-    $pk = paystackConfig();
-    if (!$pk['secret_key']) return ['ok' => false, 'error' => 'Paystack not configured'];
-
-    $ch = curl_init("https://api.paystack.co/transaction/verify/" . urlencode($reference));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15,
-        CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $pk['secret_key']],
-    ]);
-    $resp  = curl_exec($ch);
-    $errno = curl_errno($ch);
-    curl_close($ch);
-    if ($errno) return ['ok' => false, 'error' => curl_strerror($errno)];
-    $data = json_decode($resp, true);
-    if (!($data['status'] ?? false) || ($data['data']['status'] ?? '') !== 'success') {
-        return ['ok' => false, 'error' => $data['message'] ?? 'Verification failed'];
-    }
-    return ['ok' => true, 'data' => $data['data']];
-}
