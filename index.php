@@ -70,6 +70,17 @@ if ($page === 'noc') {
     require __DIR__ . '/pages/noc.php'; exit;
 }
 
+// ── Billing module dispatch ──────────────────────────────────────────────────
+if ($page === 'billing') {
+    $sub = $segments[1] ?? 'invoices';
+    $billingPages = ['invoices','invoice-form','invoice-print'];
+    if (in_array($sub, $billingPages, true)) {
+        $f = __DIR__ . '/pages/billing/' . $sub . '.php';
+        if (file_exists($f)) { require $f; exit; }
+    }
+    header('Location: /billing/invoices'); exit;
+}
+
 
 $pages = [
     'dashboard'     => 'dashboard',

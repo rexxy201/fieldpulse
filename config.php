@@ -1027,6 +1027,10 @@ define('ALL_PERMISSIONS', [
     'payment_requests.finance_recall' => 'Recall finance action — revert disbursed / partially disbursed / finance review back to Approved',
     // ── Finance module ──
     'finance.view' => 'Access the Finance dashboard (aggregates + AI reports)',
+    // ── Billing module ──
+    'billing.invoices.view'           => 'View customer invoices',
+    'billing.invoices.manage'         => 'Create / edit / void invoices',
+    'billing.invoices.record_payment' => 'Record payments against invoices',
     // ── NOC module ──
     'noc.view'            => 'View NOC dashboard, ONU status board, and device list',
     'noc.devices.manage'  => 'Add / edit / delete network devices (OLTs, routers)',
@@ -1567,10 +1571,10 @@ if (!$_rbacDone) {
             'engineer'         => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','installations.view','payment_requests.create'],
             'noc_engineer'     => ['tickets.update','tickets.resolve','tickets.close','schedule.view','map.view','payment_requests.create'],
             'vendor'           => ['installations.view','payment_requests.create'],
-            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
-            'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
-            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view'],
-            'coo_manager'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view'],
+            'accountant'          => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
+            'accounts_receivable' => ['installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
+            'accounts_payable'    => ['payment_requests.create','payment_requests.view','payment_requests.finance_check','reports.view','analytics.view','finance.view','billing.invoices.view'],
+            'coo_manager'          => ['payment_requests.create','payment_requests.view','payment_requests.approve','installations.view','installations.financial','customers.view','reports.view','analytics.view','finance.view','billing.invoices.view','billing.invoices.manage','billing.invoices.record_payment'],
         ];
         foreach ($_defaults as $_r => $_perms) {
             foreach ($_perms as $_p) {
