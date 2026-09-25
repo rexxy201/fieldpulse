@@ -540,7 +540,7 @@ function applyColFilters() {
       badge = document.createElement('span');
       badge.id = 'colFilterBadge';
       badge.className = 'badge bg-primary ms-2';
-      document.querySelector('#customersTable thead tr:first-child th:nth-child(<?= $custCanBulk?3:2 ?>)').appendChild(badge);
+      document.querySelector('#customersTable thead tr:first-child th:nth-child(<?= $custCanBulk?2:1 ?>)').appendChild(badge);
     }
     badge.textContent = visible + ' match' + (visible !== 1 ? 'es' : '');
   } else if (badge) {
@@ -659,20 +659,20 @@ function updateSmsCount(val) {
 
 function exportSelected() {
   const rows  = [...document.querySelectorAll('.row-check:checked')].map(cb => cb.closest('tr'));
-  const lines = ['Account #,Name,Phone,Email,City,Plan,Status,Expiration'];
+  const lines = ['Account #,Name,Phone,Email,City,Plan,Expiration,Status'];
   rows.forEach(row => {
-    const cells = row.querySelectorAll('td');
-    const off   = 1; // skip checkbox cell
-    const esc   = v => '"' + (v||'').replace(/"/g,'""') + '"';
+    const cells = [...row.querySelectorAll('td')];
+    // cells[0]=checkbox [1]=name [2]=acct [3]=phone [4]=email [5]=city [6]=plan [7]=exp [8]=status
+    const esc = v => '"' + (v||'').replace(/"/g,'""') + '"';
     lines.push([
-      esc(cells[off+1]?.textContent.trim()),  // account
-      esc(cells[off]?.textContent.trim()),    // name
-      esc(cells[off+2]?.textContent.trim()),  // phone
-      esc(cells[off+3]?.textContent.trim()),  // email
-      esc(cells[off+4]?.textContent.trim()),  // city
-      esc(cells[off+5]?.textContent.trim()),  // plan
-      esc(cells[off+7]?.textContent.trim()),  // status
-      esc(cells[off+6]?.textContent.trim()),  // expiration
+      esc(cells[2]?.textContent.trim()),  // account #
+      esc(cells[1]?.textContent.trim()),  // name
+      esc(cells[3]?.textContent.trim()),  // phone
+      esc(cells[4]?.textContent.trim()),  // email
+      esc(cells[5]?.textContent.trim()),  // city
+      esc(cells[6]?.textContent.trim()),  // plan
+      esc(cells[7]?.textContent.trim()),  // expiration
+      esc(cells[8]?.textContent.trim()),  // status
     ].join(','));
   });
   const blob = new Blob([lines.join('\n')], {type:'text/csv'});
