@@ -70,8 +70,13 @@ if ($page === 'noc') {
     require __DIR__ . '/pages/noc.php'; exit;
 }
 
+// ── Ticket job-sheet sub-route: /ticket/{id}/job-sheet ────────────────────
+if ($page === 'ticket' && ($segments[2] ?? '') === 'job-sheet') {
+    require __DIR__ . '/pages/ticket-job-sheet.php'; exit;
+}
 
 $pages = [
+    'my-jobs'       => 'my-jobs',
     'dashboard'     => 'dashboard',
     'tickets'       => 'tickets',
     'ticket'        => 'ticket-detail',

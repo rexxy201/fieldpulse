@@ -1,0 +1,3 @@
+-- Phase 8d: My Jobs + printable job sheet
+-- No schema changes required; uses existing tables (tickets, ticket_checkins, ticket_photos).
+-- Ensure phase8c_migration.sql has been run first (ticket_checkins table).

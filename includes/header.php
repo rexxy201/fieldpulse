@@ -93,6 +93,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <i class="bi bi-map"></i> Field Map
   </a>
   <?php endif; ?>
+  <?php if (hasPermission('tickets.checkin')): ?>
+  <a href="/my-jobs" class="nav-link <?= $activePath === 'my-jobs' ? 'active' : '' ?>">
+    <i class="bi bi-briefcase"></i> My Jobs
+  </a>
+  <?php endif; ?>
   <?php endif; ?>
 
   <?php if (hasPermission('installations.view')): ?>
