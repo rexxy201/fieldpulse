@@ -180,6 +180,11 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <i class="bi bi-receipt"></i> Purchase Orders
   </a>
   <?php endif; ?>
+  <?php if (hasPermission('inventory.serials.view')): ?>
+  <a href="/inventory/serials" class="nav-link <?= $_invSub==='serials'?'active':'' ?>">
+    <i class="bi bi-upc-scan"></i> Serial Numbers
+  </a>
+  <?php endif; ?>
   <?php endif; ?>
 
   <?php if (hasPermission('noc.view')): ?>

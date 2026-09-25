@@ -1018,6 +1018,8 @@ define('ALL_PERMISSIONS', [
     'inventory.po.manage'         => 'Create / edit / cancel purchase orders',
     'inventory.po.receive'        => 'Receive goods against a purchase order',
     'inventory.zoho.export'       => 'Export inventory to Zoho CSV format',
+    'inventory.serials.view'      => 'View serial numbers',
+    'inventory.serials.manage'    => 'Add / dispatch / retire serial numbers',
     // ── Payment Requests module ──
     'payment_requests.create'      => 'Submit payment requests',
     'payment_requests.view'        => 'View all payment requests (not just own)',
