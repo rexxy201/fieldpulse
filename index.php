@@ -73,7 +73,7 @@ if ($page === 'noc') {
 // ── Billing module dispatch ──────────────────────────────────────────────────
 if ($page === 'billing') {
     $sub = $segments[1] ?? 'invoices';
-    $billingPages = ['invoices','invoice-form','invoice-print'];
+    $billingPages = ['invoices','invoice-form','invoice-print','plans'];
     if (in_array($sub, $billingPages, true)) {
         $f = __DIR__ . '/pages/billing/' . $sub . '.php';
         if (file_exists($f)) { require $f; exit; }

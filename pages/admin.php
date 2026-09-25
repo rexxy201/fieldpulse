@@ -162,6 +162,22 @@ if (method() === 'POST') {
         }
         $msg = 'Email settings saved.';
     }
+    if ($action === 'save_sms') {
+        foreach (['smsProvider','smsApiKey','smsApiSecret','smsUsername','smsSenderId','smsCountryCode'] as $k) {
+            dbUpsertConfig($k, $b[$k] ?? '');
+        }
+        dbUpsertConfig('smsEnabled', !empty($b['smsEnabled']) ? '1' : '0');
+        $msg = 'SMS / WhatsApp settings saved.';
+        $_anchor = '#tab-notifications';
+    }
+    if ($action === 'save_paystack') {
+        foreach (['paystackPublicKey','paystackSecretKey','paystackCurrency'] as $k) {
+            dbUpsertConfig($k, $b[$k] ?? '');
+        }
+        dbUpsertConfig('paystackEnabled', !empty($b['paystackEnabled']) ? '1' : '0');
+        $msg = 'Paystack settings saved.';
+        $_anchor = '#tab-integrations';
+    }
     if ($action === 'save_installation_sla') {
         dbUpsertConfig('installationSlaWorkingDays', (string)max(1, (int)($b['installationSlaWorkingDays'] ?? 10)));
         $msg = 'Installation SLA saved.';
@@ -419,6 +435,24 @@ $smtp = [
     'smtpFromName'   => $cfg['smtpFromName'] ?? '',
 ];
 
+// SMS / WhatsApp
+$smsCfg = [
+    'smsEnabled'      => $cfg['smsEnabled']     ?? '0',
+    'smsProvider'     => $cfg['smsProvider']    ?? '',
+    'smsApiKey'       => $cfg['smsApiKey']      ?? '',
+    'smsApiSecret'    => $cfg['smsApiSecret']   ?? '',
+    'smsUsername'     => $cfg['smsUsername']    ?? '',
+    'smsSenderId'     => $cfg['smsSenderId']    ?? '',
+    'smsCountryCode'  => $cfg['smsCountryCode'] ?? '234',
+];
+// Paystack
+$psCfg = [
+    'paystackEnabled'   => $cfg['paystackEnabled']   ?? '0',
+    'paystackPublicKey' => $cfg['paystackPublicKey']  ?? '',
+    'paystackSecretKey' => $cfg['paystackSecretKey']  ?? '',
+    'paystackCurrency'  => $cfg['paystackCurrency']   ?? 'NGN',
+];
+
 // AI Assistant — API key is intentionally never echoed back into the form
 $aiCfg = [
     'aiAssistantEnabled' => $cfg['aiAssistantEnabled'] ?? '1',
@@ -460,6 +494,8 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
     <i class="bi bi-palette me-1"></i>Branding</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-notifications">
     <i class="bi bi-bell me-1"></i>Notifications</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-sms">
+    <i class="bi bi-chat-dots me-1"></i>SMS / WA</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-ai">
     <i class="bi bi-stars me-1"></i>AI Assistant</a></li>
   <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-permissions">
@@ -1028,6 +1064,60 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
 
   </div>
 
+  <!-- ── SMS / WhatsApp ────────────────────────────────────────────────── -->
+  <div class="tab-pane fade" id="tab-sms">
+    <div class="card-section">
+      <div class="card-header">
+        <i class="bi bi-chat-dots me-1 text-primary"></i>SMS &amp; WhatsApp Notifications
+      </div>
+      <div class="p-4">
+        <p class="text-muted small mb-4">Sends SMS/WhatsApp on invoice created, payment received, and ticket updates. Credentials are stored in Settings — never hard-coded.</p>
+        <form method="POST">
+          <input type="hidden" name="_action" value="save_sms">
+          <?= csrfField() ?>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" name="smsEnabled" id="smsEnabled" value="1" <?= $smsCfg['smsEnabled']==='1'?'checked':'' ?>>
+            <label class="form-check-label fw-semibold" for="smsEnabled">Enable SMS / WhatsApp</label>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Provider</label>
+            <select name="smsProvider" id="smsProvider" class="form-select" style="max-width:340px" onchange="toggleSmsFields()">
+              <option value="" <?= !$smsCfg['smsProvider']?'selected':'' ?>>— Select provider —</option>
+              <option value="africas_talking" <?= $smsCfg['smsProvider']==='africas_talking'?'selected':'' ?>>Africa's Talking</option>
+              <option value="twilio" <?= $smsCfg['smsProvider']==='twilio'?'selected':'' ?>>Twilio</option>
+            </select>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6 sms-at-field">
+              <label class="form-label fw-semibold">AT Username</label>
+              <input type="text" name="smsUsername" class="form-control" value="<?= htmlspecialchars($smsCfg['smsUsername']) ?>" placeholder="sandbox or your AT username">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">API Key</label>
+              <input type="password" name="smsApiKey" class="form-control" autocomplete="new-password" value="<?= htmlspecialchars($smsCfg['smsApiKey']) ?>" placeholder="••••••••">
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6 sms-twilio-field">
+              <label class="form-label fw-semibold">Auth Token <span class="text-muted small">(Twilio only)</span></label>
+              <input type="password" name="smsApiSecret" class="form-control" autocomplete="new-password" value="<?= htmlspecialchars($smsCfg['smsApiSecret']) ?>" placeholder="••••••••">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Sender ID / From Number</label>
+              <input type="text" name="smsSenderId" class="form-control" value="<?= htmlspecialchars($smsCfg['smsSenderId']) ?>" placeholder="e.g. FIELDPULSE or +2349012345678">
+            </div>
+          </div>
+          <div class="mb-3" style="max-width:200px">
+            <label class="form-label fw-semibold">Default Country Code</label>
+            <input type="text" name="smsCountryCode" class="form-control" value="<?= htmlspecialchars($smsCfg['smsCountryCode']) ?>" placeholder="234">
+            <div class="form-text">Used to prefix 0XX numbers. Nigeria = 234.</div>
+          </div>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Save SMS Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!-- ── AI Assistant ──────────────────────────────────────────────────── -->
   <div class="tab-pane fade" id="tab-ai">
     <div class="card-section">
@@ -1520,6 +1610,43 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </table>
       </div>
     </div>
+
+    <!-- Paystack -->
+    <div class="card-section mt-4">
+      <div class="card-header">
+        <i class="bi bi-credit-card me-1 text-primary"></i>Paystack Payment Gateway
+      </div>
+      <div class="p-4">
+        <p class="text-muted small mb-4">Enables the <strong>Pay Online</strong> button on the customer portal. Webhook URL to set in your Paystack dashboard: <code><?= 'https://' . ($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') . '/api/paystack-webhook' ?></code></p>
+        <form method="POST">
+          <input type="hidden" name="_action" value="save_paystack">
+          <?= csrfField() ?>
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" name="paystackEnabled" id="psEnabled" value="1" <?= $psCfg['paystackEnabled']==='1'?'checked':'' ?>>
+            <label class="form-check-label fw-semibold" for="psEnabled">Enable Paystack</label>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Public Key</label>
+              <input type="text" name="paystackPublicKey" class="form-control font-monospace" value="<?= htmlspecialchars($psCfg['paystackPublicKey']) ?>" placeholder="pk_live_…">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Secret Key</label>
+              <input type="password" name="paystackSecretKey" class="form-control font-monospace" autocomplete="new-password" value="<?= htmlspecialchars($psCfg['paystackSecretKey']) ?>" placeholder="sk_live_…">
+            </div>
+          </div>
+          <div class="mb-3" style="max-width:180px">
+            <label class="form-label fw-semibold">Currency</label>
+            <select name="paystackCurrency" class="form-select">
+              <?php foreach (['NGN'=>'NGN — Naira','GHS'=>'GHS — Cedi','KES'=>'KES — Shilling','ZAR'=>'ZAR — Rand','USD'=>'USD — Dollar'] as $c => $l): ?>
+              <option value="<?=$c?>" <?= $psCfg['paystackCurrency']===$c?'selected':'' ?>><?=$l?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Save Paystack Settings</button>
+        </form>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -1978,6 +2105,20 @@ async function sendTestEmail() {
     btn.innerHTML = '<i class="bi bi-send me-1"></i>Send Test Email';
     btn.disabled = false;
   }
+}
+
+function toggleSmsFields() {
+  const p = document.getElementById('smsProvider')?.value;
+  document.querySelectorAll('.sms-twilio-field').forEach(el => el.style.display = p === 'twilio' ? '' : 'none');
+  document.querySelectorAll('.sms-at-field').forEach(el => el.style.display = p === 'africas_talking' ? '' : 'none');
+}
+document.addEventListener('DOMContentLoaded', toggleSmsFields);
+
+// Auto-open tab from anchor in URL (e.g. after save redirect)
+const _tabHash = window.location.hash;
+if (_tabHash) {
+  const _tabEl = document.querySelector('[href="' + _tabHash + '"]');
+  if (_tabEl && bootstrap.Tab) new bootstrap.Tab(_tabEl).show();
 }
 </script>
 

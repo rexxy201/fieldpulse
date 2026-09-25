@@ -129,6 +129,19 @@ if ($action === 'update_status') {
     $extra = $newStatus === 'sent' ? ", issue_date = COALESCE(issue_date, CURDATE())" : '';
     dbRun("UPDATE invoices SET status=? $extra WHERE id=?", [$newStatus, $id]);
     auditLog('update', 'invoice', $id, "status→$newStatus");
+
+    // SMS on send
+    if ($newStatus === 'sent') {
+        $inv2 = dbFetch("SELECT * FROM invoices WHERE id = ?", [$id]);
+        if (!empty($inv2['customer_phone'])) {
+            $cfg2 = getAppConfig();
+            $co2  = $cfg2['companyName'] ?? 'FieldPulse';
+            $due  = $inv2['due_date'] ? ' due ' . date('d M Y', strtotime($inv2['due_date'])) : '';
+            sendSms($inv2['customer_phone'],
+                "Invoice {$inv2['invoice_number']} for " . number_format((float)$inv2['total'], 2) .
+                "$due has been sent to you. — $co2");
+        }
+    }
     jsonResponse(['ok' => true]);
 }
 
@@ -178,6 +191,16 @@ if ($action === 'record_payment') {
     );
 
     auditLog('create', 'invoice_payment', $id, "amount=$amount method=$method");
+
+    // SMS receipt
+    if (!empty($inv['customer_phone'])) {
+        $cfg3 = getAppConfig();
+        $co3  = $cfg3['companyName'] ?? 'FieldPulse';
+        sendSms($inv['customer_phone'],
+            "Payment of " . number_format($amount, 2) . " received for invoice {$inv['invoice_number']}. " .
+            ($newStatus === 'paid' ? 'Invoice fully settled. ' : "Balance: " . number_format((float)$inv['total'] - $totalPaid, 2) . ". ") .
+            "Thank you! — $co3");
+    }
     jsonResponse(['ok' => true, 'new_status' => $newStatus, 'amount_paid' => $totalPaid]);
 }
 
