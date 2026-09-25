@@ -12,7 +12,7 @@ $msg = ''; $msgType = 'success';
 // shown in this matrix) is left alone rather than being silently wiped on
 // every save.
 $PERMISSION_GROUPS = [
-    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete'],
+    'Tickets'       => ['tickets.view_all','tickets.view_department','tickets.create','tickets.update','tickets.assign','tickets.resolve','tickets.close','tickets.delete','tickets.checkin'],
     'Customers'     => ['customers.view','customers.create','customers.update','customers.delete','customers.bulk','customers.export'],
     'Installations' => ['installations.view','installations.create','installations.update','installations.delete'],
     'Field & Team'  => ['schedule.view','map.view','team.view','team.manage','analytics.view','reports.view'],
