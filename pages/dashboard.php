@@ -227,8 +227,8 @@ require __DIR__ . '/../includes/header.php';
           </td>
           <td><?= htmlspecialchars($t['customer_name']??'—') ?></td>
           <td><span class="badge text-bg-secondary"><?= htmlspecialchars($t['type']??'') ?></span></td>
-          <td><span class="badge badge-<?= $t['status'] ?>"><?= str_replace('_',' ',ucfirst($t['status']??'')) ?></span></td>
-          <td><span class="badge badge-<?= $t['priority'] ?>"><?= strtoupper($t['priority']??'') ?></span></td>
+          <td><span class="badge badge-<?= htmlspecialchars($t['status'] ?? '') ?>"><?= htmlspecialchars(str_replace('_',' ',ucfirst($t['status']??''))) ?></span></td>
+          <td><span class="badge badge-<?= htmlspecialchars($t['priority'] ?? '') ?>"><?= htmlspecialchars(strtoupper($t['priority']??'')) ?></span></td>
           <td class="small text-muted"><?= date('d M H:i', strtotime($t['created_at'])) ?></td>
         </tr>
         <?php endforeach; ?>

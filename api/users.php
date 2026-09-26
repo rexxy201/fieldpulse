@@ -34,12 +34,19 @@ if (method() === 'POST') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $newId = newUuid();
+    // Same rule as the Team page: the password is temporary (must be changed
+    // at first sign-in, expires after TEMP_PASSWORD_HOURS). If none is given a
+    // random one is generated and returned once — never the old fixed "admin123".
+    $tempPassword = ($b['password'] ?? '') !== '' ? (string)$b['password'] : generateTempPassword();
     dbRun(
         "INSERT INTO users (id,username,name,email,phone,role,password,hub_id,team_id,vendor_id,status) VALUES (?,?,?,?,?,?,?,?,?,?,'active')",
         [$newId,$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
-         hashPassword($b['password']??'admin123'),$b['hubId']??null,$b['teamId']??null,$b['vendorId']??null]
+         hashPassword($tempPassword),$b['hubId']??null,$b['teamId']??null,$b['vendorId']??null]
     );
-    jsonResponse(dbFetch("SELECT id,username,name,email,role,status FROM users WHERE id=?",[$newId]),201);
+    setTemporaryPassword($newId, $tempPassword);
+    $out = dbFetch("SELECT id,username,name,email,role,status FROM users WHERE id=?",[$newId]);
+    if (($b['password'] ?? '') === '') $out['temporaryPassword'] = $tempPassword;
+    jsonResponse($out, 201);
 }
 
 if ($id && method() === 'DELETE') {

@@ -61,6 +61,8 @@ if ($id === 'bulk-update' && method() === 'POST') {
     $b = getBody();
     $ids = array_values(array_filter(array_map('strval', $b['ids'] ?? [])));
     if (empty($ids)) jsonResponse(['error' => 'No IDs'], 400);
+    $_fieldErr = ticketFieldError(array_filter(array_intersect_key($b, array_flip(['status','priority']))));
+    if ($_fieldErr) jsonResponse(['error' => $_fieldErr], 400);
     // Resolve/close are separately permissioned — block a bulk status change to
     // either if the caller doesn't hold the specific permission for it.
     if (($b['status'] ?? '') === 'resolved' && !hasPermission('tickets.resolve')) jsonResponse(['error' => 'Forbidden — missing tickets.resolve'], 403);
@@ -170,6 +172,7 @@ if ($id && method() === 'PATCH') {
     // — mirrors the web form, which just doesn't offer the field rather than
     // rejecting the whole request over it.
     if (!$_canAssignApi) unset($b['assigned_to']);
+    if ($_fieldErr = ticketFieldError($b)) jsonResponse(['error' => $_fieldErr], 400);
     $allowed = ['status','priority','assigned_to','description','olt','roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'];
     $sets = []; $vals = [];
     foreach ($allowed as $col) {
@@ -245,6 +248,7 @@ if (method() === 'POST') {
     $type  = str_contains($cat,'install') ? 'installation' : (str_contains($cat,'maintenance') ? 'maintenance' : 'fault');
 
     // Scope-based subject resolution
+    if (isset($b['priority']) && ($_fieldErr = ticketFieldError(['priority' => $b['priority']]))) jsonResponse(['error' => $_fieldErr], 400);
     $scope      = $b['scope'] ?? 'customer';
     $hubId      = $b['hubId'] ?? null;
     $customerId = null;

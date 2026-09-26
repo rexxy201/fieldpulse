@@ -97,6 +97,9 @@ if (method() === 'POST') {
         // Server-side enforcement of the resolve/close split — the status dropdown
         // only offers options the user is permitted to set, but a direct POST must
         // not be able to bypass that, so re-check here regardless of what was hidden.
+        // Unknown values are dropped rather than saved (stored-XSS guard).
+        if (isset($b['status'])   && !in_array($b['status'], TICKET_STATUSES, true))     unset($b['status']);
+        if (isset($b['priority']) && !in_array($b['priority'], TICKET_PRIORITIES, true)) unset($b['priority']);
         if (($b['status'] ?? null) === 'resolved' && !$canResolve) unset($b['status']);
         if (($b['status'] ?? null) === 'closed'   && !$canClose)   unset($b['status']);
 

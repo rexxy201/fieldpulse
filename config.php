@@ -200,6 +200,27 @@ function generateTempPassword(int $length = 12): string {
     return $out;
 }
 
+// ─── Ticket field values ─────────────────────────────────────────────────────
+// Every value the UI offers. Anything else is rejected on write: status and
+// priority are rendered unescaped in several templates (badge classes etc.),
+// so an arbitrary string here was a stored-XSS vector.
+const TICKET_STATUSES   = ['new', 'open', 'assigned', 'in_progress', 'pending_confirmation', 'resolved', 'closed'];
+const TICKET_PRIORITIES = ['p1', 'p2', 'p3', 'p4'];
+
+/**
+ * Validates status/priority in a ticket write payload. Keys that are absent
+ * are fine; present ones must be a known value. Returns an error or null.
+ */
+function ticketFieldError(array $b): ?string {
+    if (array_key_exists('status', $b) && !in_array($b['status'], TICKET_STATUSES, true)) {
+        return 'Invalid status. Allowed: ' . implode(', ', TICKET_STATUSES);
+    }
+    if (array_key_exists('priority', $b) && !in_array($b['priority'], TICKET_PRIORITIES, true)) {
+        return 'Invalid priority. Allowed: ' . implode(', ', TICKET_PRIORITIES);
+    }
+    return null;
+}
+
 /** How long an admin-issued temporary password can be used to sign in. */
 define('TEMP_PASSWORD_HOURS', 72);
 
@@ -256,6 +277,9 @@ function attemptLogin(string $username, string $password): array {
     if ($user && verifyPassword($password, $user['password'])) {
         // Checked only after the password verifies, so it reveals nothing to
         // someone guessing. Not counted as a failed attempt.
+        if (!isActiveUserRow($user)) {
+            return ['ok' => false, 'user' => null, 'error' => 'This account has been deactivated. Contact an admin.'];
+        }
         if (!empty($user['must_change_password']) && !empty($user['temp_password_expires_at'])
             && strtotime($user['temp_password_expires_at']) < time()) {
             return ['ok' => false, 'user' => null, 'error' => 'Your temporary password has expired. Ask an admin to reset it.'];
@@ -281,8 +305,37 @@ function attemptLogin(string $username, string $password): array {
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function isLoggedIn(): bool { return !empty($_SESSION['user_id']); }
 
+/**
+ * Whether a users row may sign in / keep a session. Only an explicit
+ * non-"active" status blocks (e.g. "inactive" from the Team page); an empty
+ * status is treated as active so rows from before the column had a value
+ * aren't locked out.
+ */
+function isActiveUserRow(array $user): bool {
+    $status = strtolower(trim((string)($user['status'] ?? '')));
+    return $status === '' || $status === 'active';
+}
+
+/**
+ * Re-reads the signed-in user from the database so the session reflects the
+ * account as it is now, not as it was at sign-in: a deleted or deactivated
+ * user is signed out on their next request, and a role change (e.g. an admin
+ * demoted) takes effect immediately instead of when the session expires.
+ * Returns false if the session was ended.
+ */
+function refreshSessionUser(): bool {
+    $row = dbFetch("SELECT * FROM users WHERE id = ?", [$_SESSION['user_id']]);
+    if (!$row || !isActiveUserRow($row)) {
+        $_SESSION = [];
+        session_destroy();
+        return false;
+    }
+    $_SESSION['user'] = sanitizeUser($row);
+    return true;
+}
+
 function requireAuth(): void {
-    if (!isLoggedIn()) {
+    if (!isLoggedIn() || !refreshSessionUser()) {
         if (str_contains($_SERVER['REQUEST_URI'] ?? '', '/api/')) {
             jsonResponse(['error' => 'Not authenticated'], 401);
         }

@@ -19,6 +19,12 @@ require_once __DIR__ . '/../config.php';
 
 if (method() !== 'POST') jsonResponse(['error' => 'Method not allowed'], 405);
 if (!aiEnabled()) jsonResponse(['error' => 'Chat assistant is not available right now'], 503);
+// Public and unauthenticated: without a limit this is both an unlimited
+// account-number existence check (404 vs 200) and an unbounded source of paid
+// AI calls. 30 messages per 15 minutes per IP is plenty for a real chat.
+if (!rateLimitCheck('portal_chat', clientIp(), 30, 15)) {
+    jsonResponse(['error' => 'Too many messages. Please wait a few minutes and try again.'], 429);
+}
 
 $b       = getBody();
 $account = trim($b['account'] ?? '');
