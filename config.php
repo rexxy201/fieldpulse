@@ -124,7 +124,10 @@ if (!headers_sent()) {
     header('X-Content-Type-Options: nosniff');
     header('X-XSS-Protection: 1; mode=block');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
+    // geolocation=(self), not (): GPS check-in (my-jobs, ticket-detail) calls
+    // navigator.geolocation on our own origin. An empty allowlist disables it
+    // everywhere, including for us, so every check-in failed.
+    header('Permissions-Policy: geolocation=(self), microphone=(), camera=()');
     // Allow CDN resources (Bootstrap, Chart.js, Leaflet, Google Fonts)
     header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net unpkg.com; style-src 'self' 'unsafe-inline' cdn.jsdelivr.net unpkg.com fonts.googleapis.com; font-src 'self' fonts.gstatic.com cdn.jsdelivr.net; img-src 'self' data: *.tile.openstreetmap.org; connect-src 'self'");
     // Tell browsers to always use HTTPS for this host going forward (only sent over an actual HTTPS request)

@@ -49,10 +49,10 @@ CREATE TABLE IF NOT EXISTS `users` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Default admin user — password: admin123
+-- Default admin user — password: admin123 (change it immediately after first login)
 INSERT IGNORE INTO `users` (`id`, `username`, `password`, `name`, `role`, `status`) VALUES
   ('00000000-0000-0000-0000-000000000001', 'admin',
-   '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+   '$2y$10$JOnXTSKEa4xqwLpp4wUpHeKVR3egyKK.LCBr/KNzOXUw17EX2OpzG',
    'Administrator', 'admin', 'active');
 
 -- ─────────────────────────────────────────
