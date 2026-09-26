@@ -186,6 +186,34 @@ function hashPassword(string $plain): string {
     return password_hash($plain, PASSWORD_BCRYPT);
 }
 
+/**
+ * Random one-time password for a new member or an admin reset. Shown once to
+ * the admin; the member must replace it at first sign-in (must_change_password).
+ * Replaces the old fixed "admin123", which let anyone who knew a new member's
+ * username sign in as them. Ambiguous characters (0/O, 1/l/I) are left out
+ * so it can be read aloud or copied by hand.
+ */
+function generateTempPassword(int $length = 12): string {
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    $out = '';
+    for ($i = 0; $i < $length; $i++) $out .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+    return $out;
+}
+
+/**
+ * Self-service password change (My Account). Returns null on success or a
+ * user-facing error message. Clears must_change_password on success.
+ */
+function changeOwnPassword(string $userId, string $current, string $new, string $confirm): ?string {
+    $u = dbFetch("SELECT password FROM users WHERE id = ?", [$userId]);
+    if (!$u || !verifyPassword($current, $u['password'] ?? '')) return 'Your current password is incorrect.';
+    if (strlen($new) < 8) return 'Your new password must be at least 8 characters.';
+    if ($new !== $confirm) return 'The new passwords do not match.';
+    if ($new === $current) return 'Your new password must be different from the current one.';
+    dbRun("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", [hashPassword($new), $userId]);
+    return null;
+}
+
 function verifyPassword(string $plain, string $stored): bool {
     // Bcrypt hashes start with $2y$ — this is the only format ever written by
     // hashPassword(). Anything else (empty, corrupted, legacy) fails closed:
@@ -240,6 +268,17 @@ function requireAuth(): void {
             jsonResponse(['error' => 'Not authenticated'], 401);
         }
         header('Location: /login'); exit;
+    }
+    // Signed in with a temporary password: everything except My Account (where
+    // it gets changed) and logout is blocked until it's replaced.
+    if (!empty($_SESSION['user']['must_change_password'])) {
+        $path = trim(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH), '/');
+        if ($path !== 'account' && $path !== 'logout') {
+            if (str_starts_with($path, 'api/')) {
+                jsonResponse(['error' => 'Password change required'], 403);
+            }
+            header('Location: /account'); exit;
+        }
     }
 }
 
@@ -2704,7 +2743,7 @@ function findUserByResetToken(string $token): ?array {
 
 /** Sets a new password and invalidates the token — single use. */
 function completePasswordReset(string $userId, string $newPassword): void {
-    dbRun("UPDATE users SET password=?, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
+    dbRun("UPDATE users SET password=?, must_change_password=0, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
         [hashPassword($newPassword), $userId]);
 }
 
@@ -3342,6 +3381,23 @@ if (!$_sv45) {
         dbUpsertConfig('schema_v45_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v45 migration error: ' . $e->getMessage());
+    }
+}
+
+// schema_v46: must_change_password on users. Set when an admin creates a member
+// or sets their password (both now issue a random temporary password); cleared
+// when the member changes it on My Account or via a reset link. requireAuth()
+// blocks everything else while it's set. SMALLINT (not TINYINT) so the same
+// statement also works on PostgreSQL.
+$_k = dbKey();
+$_sv46 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v46_migrated'");
+if (!$_sv46) {
+    try {
+        try { db()->exec("ALTER TABLE `users` ADD COLUMN `must_change_password` SMALLINT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE users ADD COLUMN must_change_password SMALLINT NOT NULL DEFAULT 0"); } catch (\Throwable $e) {}
+        dbUpsertConfig('schema_v46_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v46 migration error: ' . $e->getMessage());
     }
 }
 

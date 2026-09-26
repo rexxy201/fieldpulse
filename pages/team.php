@@ -24,11 +24,13 @@ if (method() === 'POST') {
         // "{id1,id2}" string this used to write, which fails that constraint.
         $hubIds = $hubIdsArr ? json_encode($hubIdsArr) : null;
         $primaryHub = $hubIdsArr[0] ?? null;
-        dbRun("INSERT INTO users (id,username,name,email,phone,role,password,hub_id,hub_ids,team_id,vendor_id,status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+        $tempPassword = generateTempPassword();
+        dbRun("INSERT INTO users (id,username,name,email,phone,role,password,must_change_password,hub_id,hub_ids,team_id,vendor_id,status)
+               VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'active')",
             [newUuid(),$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
-             hashPassword('admin123'),$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
-        $msg = 'Member added. Default password: admin123';
+             hashPassword($tempPassword),$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
+        $msg = 'Member added. Temporary password: ' . $tempPassword
+             . ' (shown only once). Share it privately; they must change it at first sign-in.';
     }
     if ($action === 'edit_user' && !empty($b['id'])) {
         $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
@@ -43,7 +45,11 @@ if (method() === 'POST') {
             [$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
              $b['status']??'active',$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null,$b['id']]);
         if (!empty($b['new_password'])) {
-            dbRun("UPDATE users SET password=? WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
+            // An admin-chosen password is known to the admin, so treat it as
+            // temporary too: the member must replace it at next sign-in
+            // (unless the admin is setting their own).
+            $mustChange = $b['id'] === (currentUser()['id'] ?? null) ? 0 : 1;
+            dbRun("UPDATE users SET password=?, must_change_password=? WHERE id=?", [hashPassword($b['new_password']), $mustChange, $b['id']]);
         }
         $msg = 'Member updated.';
     }
@@ -78,8 +84,12 @@ if (method() === 'POST') {
         $msg = 'Team created.';
     }
 
+    // Carry the message across the redirect: without this it was always lost,
+    // and the one-time temporary password in it must reach the admin.
+    if ($msg !== '') $_SESSION['team_flash'] = $msg;
     header('Location: /team'); exit;
 }
+if (isset($_SESSION['team_flash'])) { $msg = $_SESSION['team_flash']; unset($_SESSION['team_flash']); }
 
 $users   = dbFetchAll("SELECT * FROM users ORDER BY name");
 $vendors = dbFetchAll("SELECT * FROM vendors ORDER BY name");
@@ -418,7 +428,7 @@ require __DIR__ . '/../includes/header.php';
           </div>
         </div>
         <div class="alert alert-info py-2 mt-3 small mb-0">
-          <i class="bi bi-info-circle me-1"></i>Default password will be set to <strong>admin123</strong>. Ask the member to change it after first login.
+          <i class="bi bi-info-circle me-1"></i>A random temporary password is generated and shown once after you add the member. They must change it at first sign-in.
         </div>
       </div>
       <div class="modal-footer">

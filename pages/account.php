@@ -44,6 +44,17 @@ if (method() === 'POST') {
             $msg = 'Two-factor sign-in is now off.';
             $fresh['twofa_enabled'] = 0;
         }
+    } elseif ($action === 'change_password') {
+        $err = changeOwnPassword($fresh['id'], $_POST['current_password'] ?? '', $_POST['new_password'] ?? '', $_POST['confirm_password'] ?? '');
+        if ($err !== null) {
+            $msg = $err; $msgType = 'danger';
+        } else {
+            session_regenerate_id(true);
+            $_SESSION['user']['must_change_password'] = 0;
+            $fresh['must_change_password'] = 0;
+            auditLog('change_password', 'user', $fresh['id']);
+            $msg = 'Your password has been changed.';
+        }
     } elseif ($action === 'save_signature') {
         $sig = trim($_POST['signature_data'] ?? '');
         if ($sig && str_starts_with($sig, 'data:image/')) {
@@ -70,6 +81,10 @@ require __DIR__ . '/../includes/header.php';
   <div class="text-muted small">Your sign-in details and security settings.</div>
 </div>
 
+<?php if (!empty($fresh['must_change_password'])): ?>
+<div class="alert alert-warning py-2"><i class="bi bi-key me-1"></i>You signed in with a temporary password. Choose a new password below to continue.</div>
+<?php endif; ?>
+
 <?php if ($msg): ?>
 <div class="alert alert-<?= $msgType === 'danger' ? 'danger' : 'success' ?> py-2"><i class="bi bi-<?= $msgType==='danger'?'exclamation-circle':'check-circle' ?> me-1"></i><?= $msg ?></div>
 <?php endif; ?>
@@ -85,8 +100,29 @@ require __DIR__ . '/../includes/header.php';
           <dt class="col-4 text-muted">Email</dt><dd class="col-8"><?= htmlspecialchars($fresh['email'] ?: '—') ?></dd>
           <dt class="col-4 text-muted">Role</dt><dd class="col-8"><?= htmlspecialchars($fresh['role'] ?? '') ?></dd>
         </dl>
-        <div class="form-text mt-2">To change your name, email, or password, contact an admin — or use <a href="/forgot-password">Forgot Password</a> to reset it yourself.</div>
+        <div class="form-text mt-2">To change your name or email, contact an admin.</div>
       </div>
+    </div>
+
+    <div class="card-section mt-3" id="change-password">
+      <div class="card-header"><i class="bi bi-key me-1 text-primary"></i>Change Password</div>
+      <form method="post" class="p-3">
+        <?= csrfField() ?>
+        <input type="hidden" name="_action" value="change_password">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1" for="current_password">Current password</label>
+          <input type="password" id="current_password" name="current_password" class="form-control" required autocomplete="current-password">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1" for="new_password">New password</label>
+          <input type="password" id="new_password" name="new_password" class="form-control" required minlength="8" autocomplete="new-password" placeholder="At least 8 characters">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold mb-1" for="confirm_password">Confirm new password</label>
+          <input type="password" id="confirm_password" name="confirm_password" class="form-control" required minlength="8" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Change password</button>
+      </form>
     </div>
   </div>
 
