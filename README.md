@@ -25,5 +25,7 @@
   php -S 0.0.0.0:5000 index.php
   ```
 
-  Default login: `admin` / `admin123`
+  Default login: `admin` / `admin123` — change it immediately after first login.
+  (Installs created from `database/schema.sql` before this fix were seeded with
+  `admin` / `password` instead; change that password if it still works.)
   

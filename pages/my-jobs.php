@@ -182,7 +182,12 @@ foreach ($sections as $sec):
 </div>
 
 <script>
-const _gpsModal = new bootstrap.Modal(document.getElementById('gpsModal'));
+// Resolved lazily: this inline script runs before footer.php loads the
+// Bootstrap bundle, so `bootstrap` is not defined yet at parse time.
+const _gpsModal = {
+    show: () => bootstrap.Modal.getOrCreateInstance(document.getElementById('gpsModal')).show(),
+    hide: () => bootstrap.Modal.getOrCreateInstance(document.getElementById('gpsModal')).hide(),
+};
 
 function doCheckin(ticketId) {
     if (!navigator.geolocation) { alert('Geolocation not supported on this device.'); return; }
