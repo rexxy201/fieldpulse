@@ -52,7 +52,7 @@ foreach ($approaching as $t) {
     $tn   = $t['ticket_number'] ?? '?';
     $desc = htmlspecialchars(substr($t['description'] ?? '', 0, 120));
     $due  = date('d M Y H:i', strtotime($t['sla_breach_at']));
-    $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $t['id'];
+    $link = siteBaseUrl() . '/ticket/' . $t['id'];
     $subj = "⚠ SLA Warning — {$tn} due {$due}";
     $body = "<p style='color:#d97706;font-weight:700'>⚠ SLA Warning</p>
              <p>Ticket <strong>{$tn}</strong> is approaching its SLA deadline.</p>
@@ -103,7 +103,7 @@ foreach ($newlyBreached as $t) {
     $tn   = $t['ticket_number'] ?? '?';
     $desc = htmlspecialchars(substr($t['description'] ?? '', 0, 120));
     $due  = date('d M Y H:i', strtotime($t['sla_breach_at']));
-    $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $t['id'];
+    $link = siteBaseUrl() . '/ticket/' . $t['id'];
     $subj = "🚨 SLA BREACHED — {$tn}";
     $body = "<p style='color:#dc2626;font-weight:700'>🚨 SLA Breached</p>
              <p>Ticket <strong>{$tn}</strong> has exceeded its SLA deadline and requires immediate attention.</p>
