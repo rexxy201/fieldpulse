@@ -1877,12 +1877,40 @@ function openRole(r) {
 </div>
 
 <script>
-// ── Hash-based tab activation (after POST redirect) ───────────────────────
+// ── Tab switching: Bootstrap-first, vanilla JS fallback ───────────────────
+// If Bootstrap JS fails to load from CDN, tabs would be completely dead.
+// Attach our own click handler first; if Bootstrap is present it handles
+// the event itself (event delegation on document), so we just let it.
+// If Bootstrap is absent we do the switch ourselves.
 document.addEventListener('DOMContentLoaded', function () {
+  // Vanilla fallback — only activates when Bootstrap JS didn't load
+  document.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(link) {
+    link.addEventListener('click', function(e) {
+      if (typeof bootstrap !== 'undefined') return; // Bootstrap will handle it
+      e.preventDefault();
+      const targetId = this.getAttribute('href') || this.dataset.bsTarget;
+      const target = targetId ? document.querySelector(targetId) : null;
+      if (!target) return;
+      const tabList = this.closest('.nav');
+      const tabContent = target.closest('.tab-content');
+      if (tabList)    tabList.querySelectorAll('[data-bs-toggle="tab"]').forEach(function(t) { t.classList.remove('active'); });
+      if (tabContent) tabContent.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('show', 'active'); });
+      this.classList.add('active');
+      target.classList.add('show', 'active');
+    });
+  });
+
+  // Hash-based tab activation (after POST redirect to /admin#tab-xxx)
   const hash = window.location.hash;
   if (hash) {
     const tab = document.querySelector('[data-bs-toggle="tab"][href="' + hash + '"]');
-    if (tab) new bootstrap.Tab(tab).show();
+    if (tab) {
+      if (typeof bootstrap !== 'undefined') {
+        bootstrap.Tab.getOrCreateInstance(tab).show();
+      } else {
+        tab.click();
+      }
+    }
   }
 });
 
@@ -2065,14 +2093,5 @@ function toggleSmsFields() {
 }
 document.addEventListener('DOMContentLoaded', toggleSmsFields);
 
-// Auto-open tab from anchor in URL (e.g. after save redirect)
-// Must run after Bootstrap loads (end of footer.php), so use DOMContentLoaded.
-document.addEventListener('DOMContentLoaded', function() {
-  const _tabHash = window.location.hash;
-  if (_tabHash) {
-    const _tabEl = document.querySelector('[data-bs-toggle="tab"][href="' + _tabHash + '"]');
-    if (_tabEl) bootstrap.Tab.getOrCreateInstance(_tabEl).show();
-  }
-});
 </script>
 
