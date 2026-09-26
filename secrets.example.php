@@ -15,6 +15,11 @@ define('DB_PASS_FROM_SECRETS', 'YOUR_DATABASE_PASSWORD');
 // secrets.php needs the same line.
 define('NOC_CRED_KEY', base64_decode('PASTE_THE_GENERATED_VALUE_HERE'));
 
+// Optional — the site's public address, used for every link in emails
+// (password resets, ticket notifications, CSAT surveys) and QR codes. Defaults
+// to https://fieldpulse.mangonetonline.com; staging must set its own.
+// define('SITE_URL', 'https://fieldpulse-staging.mangonetonline.com');
+
 // Optional — only needed on staging (or any environment whose database isn't
 // the production mangonetcom_fieldpulse one). Leave these out on production;
 // config.php falls back to the production DB_NAME/DB_USER when undefined.

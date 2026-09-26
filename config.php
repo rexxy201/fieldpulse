@@ -789,7 +789,7 @@ function notifyPermissionHolders(string $permission, string $title, string $inAp
 
 /** Shared HTML body for Payment Request stage-change emails/notifications. */
 function paymentRequestEmailBody(array $pr, string $headline, string $extraNote = ''): string {
-    $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/payment-requests?status=' . urlencode($pr['status'] ?? 'all');
+    $link = siteBaseUrl() . '/payment-requests?status=' . urlencode($pr['status'] ?? 'all');
     $amt  = number_format((float)($pr['amount'] ?? 0), 2);
     $desc = htmlspecialchars(substr($pr['description'] ?? '', 0, 200));
     $req  = htmlspecialchars($pr['requester_name'] ?? '—');
@@ -1004,14 +1004,23 @@ function nocReencryptLegacyCredentials(?string $key = null): int {
     return $count;
 }
 
-// ─── Absolute site base URL (for QR codes & public links) ─────────────────────
+// ─── Absolute site base URL (emailed links, QR codes, public links) ───────────
+// Never built from the request: the Host header is client-controlled, so a
+// password-reset email built from it could carry a link to an attacker's
+// domain with a valid reset token in it (reset-link poisoning). Cron-called
+// endpoints also have no meaningful Host. Order: SITE_URL from secrets.php
+// (e.g. staging), then an app_config 'siteUrl', then the production URL —
+// the same "production is the default" convention as DB_NAME above.
+const SITE_URL_DEFAULT = 'https://fieldpulse.mangonetonline.com';
+
 function siteBaseUrl(): string {
-    $cfg = getAppConfig();
-    if (!empty($cfg['siteUrl'])) return rtrim($cfg['siteUrl'], '/');
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-           || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https' ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    return $scheme . '://' . $host;
+    $candidates = [defined('SITE_URL') ? SITE_URL : null, getAppConfig()['siteUrl'] ?? null];
+    foreach ($candidates as $url) {
+        if (is_string($url) && preg_match('#^https?://[a-z0-9.-]+(:\d+)?/?$#i', trim($url))) {
+            return rtrim(trim($url), '/');
+        }
+    }
+    return SITE_URL_DEFAULT;
 }
 
 // ─── Inventory upload paths ───────────────────────────────────────────────────
@@ -1531,7 +1540,7 @@ function emailTicketAssigned(array $ticket, array $assignee): void {
         $tn  = htmlspecialchars($ticket['ticket_number'] ?? '');
         $desc = htmlspecialchars(substr($ticket['description'] ?? '', 0, 200));
         $prio = strtoupper($ticket['priority'] ?? '');
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $ticket['id'];
+        $link = siteBaseUrl() . '/ticket/' . $ticket['id'];
         sendEmail(
             $assignee['email'], $assignee['name'],
             "Ticket Assigned to You — {$tn}",
@@ -1551,7 +1560,7 @@ function emailTicketUpdated(array $ticket, array $creator, string $changedBy, st
         if (empty($creator['email'])) return;
         $tn   = htmlspecialchars($ticket['ticket_number'] ?? '');
         $statusLabel = str_replace('_', ' ', ucfirst($newStatus));
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/ticket/' . $ticket['id'];
+        $link = siteBaseUrl() . '/ticket/' . $ticket['id'];
         sendEmail(
             $creator['email'], $creator['name'],
             "Ticket {$tn} Updated",
@@ -1611,7 +1620,7 @@ function emailCustomerTicketResolved(array $ticket, array $customer): void {
             $csatToken = bin2hex(random_bytes(16));
             try { dbRun("UPDATE tickets SET csat_token = ? WHERE id = ?", [$csatToken, $ticket['id']]); } catch (\Throwable $e) {}
         }
-        $base = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . "/csat?ticket={$ticket['id']}&token={$csatToken}&score=";
+        $base = siteBaseUrl() . "/csat?ticket={$ticket['id']}&token={$csatToken}&score=";
         $stars = '';
         for ($i = 1; $i <= 5; $i++) {
             $stars .= "<a href='{$base}{$i}' style='display:inline-block;width:38px;height:38px;line-height:38px;text-align:center;margin-right:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;color:#0ea5e9;font-weight:700;text-decoration:none'>{$i}</a>";
@@ -1645,7 +1654,7 @@ function emailVendorInstallationAssigned(array $profile, array $vendor, bool $is
         $addr = htmlspecialchars($profile['address'] ?? '—');
         $plan = htmlspecialchars($profile['plan'] ?? '—');
         $due  = !empty($profile['sla_due_at']) ? date('d M Y', strtotime($profile['sla_due_at'])) : null;
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        $link = siteBaseUrl() . '/installations?detail=' . $profile['id'];
         $verb = $isReassignment ? 'reassigned to you' : 'assigned to you';
         sendEmail(
             $vendor['email'], $vendor['name'] ?? 'Vendor',
@@ -1671,7 +1680,7 @@ function emailVendorInstallationSlaWarning(array $profile, array $vendor): void 
         if (empty($vendor['email'])) return;
         $name = htmlspecialchars($profile['name'] ?? '');
         $due  = date('d M Y', strtotime($profile['sla_due_at']));
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        $link = siteBaseUrl() . '/installations?detail=' . $profile['id'];
         sendEmail(
             $vendor['email'], $vendor['name'] ?? 'Vendor',
             "⚠ Installation SLA Due Soon — {$name}",
@@ -1690,7 +1699,7 @@ function emailVendorInstallationSlaBreached(array $profile, array $vendor): void
         if (empty($vendor['email'])) return;
         $name = htmlspecialchars($profile['name'] ?? '');
         $due  = date('d M Y', strtotime($profile['sla_due_at']));
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/installations?detail=' . $profile['id'];
+        $link = siteBaseUrl() . '/installations?detail=' . $profile['id'];
         sendEmail(
             $vendor['email'], $vendor['name'] ?? 'Vendor',
             "🚨 Installation SLA Breached — {$name}",
@@ -2864,7 +2873,7 @@ function issuePasswordReset(string $email): void {
         $hash  = hash('sha256', $token);
         $expires = date('Y-m-d H:i:s', time() + PASSWORD_RESET_MINUTES * 60);
         dbRun("UPDATE users SET reset_token_hash=?, reset_token_expires_at=? WHERE id=?", [$hash, $expires, $u['id']]);
-        $link = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . '/reset-password?token=' . $token;
+        $link = siteBaseUrl() . '/reset-password?token=' . $token;
         sendEmail(
             $u['email'], $u['name'],
             'Reset your FieldPulse password',
@@ -3631,7 +3640,7 @@ function notifyVendorTeamTicketAssigned(array $ticket, string $vendorId): void {
         $desc = htmlspecialchars(substr($ticket['description'] ?? '', 0, 200));
         $prio = strtoupper($ticket['priority'] ?? '');
         $link = '/ticket/' . $ticket['id'];
-        $fullLink = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $link;
+        $fullLink = siteBaseUrl() . $link;
         foreach ($members as $m) {
             // Same rule as ticketScopeSql(): a hub-restricted maintenance-vendor
             // team member only gets notified for their own hub's tickets — the

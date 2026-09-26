@@ -632,7 +632,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </div>
         <?php endif; ?>
         <?php
-        $_host = $_SERVER['HTTP_HOST'] ?? 'yourdomain.com';
+        $_host = parse_url(siteBaseUrl(), PHP_URL_HOST) ?: 'yourdomain.com';
         $_slaSet = !empty($cfg['slaCheckToken']);
         $_syncSet = !empty($cfg['installSyncToken']);
         ?>
@@ -1191,7 +1191,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </form>
         <div class="alert alert-light border mt-3 mb-0 small">
           <i class="bi bi-info-circle me-1"></i>Add a cPanel Cron Job (weekly is typical) hitting:
-          <code>https://<?= htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') ?>/api/ops-digest</code>
+          <code><?= htmlspecialchars(siteBaseUrl()) ?>/api/ops-digest</code>
         </div>
       </div>
     </div>
@@ -1226,7 +1226,7 @@ $_deployedAt = dbFetch("SELECT value FROM app_config WHERE " . dbKey() . " = 'ap
         </form>
         <div class="alert alert-light border mt-3 mb-0 small">
           <i class="bi bi-info-circle me-1"></i>Add a cPanel Cron Job (weekly is typical) hitting:
-          <code>https://<?= htmlspecialchars($_SERVER['HTTP_HOST'] ?? 'yourdomain.com') ?>/api/finance-digest</code>
+          <code><?= htmlspecialchars(siteBaseUrl()) ?>/api/finance-digest</code>
         </div>
       </div>
     </div>
