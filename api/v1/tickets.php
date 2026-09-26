@@ -71,6 +71,7 @@ if (method() === 'PATCH') {
     if (!$existing) jsonResponse(['error' => 'Not found'], 404);
 
     $b = getBody();
+    if ($_fieldErr = ticketFieldError($b)) jsonResponse(['error' => $_fieldErr], 400);
     $newStatus   = $b['status'] ?? $existing['status'];
     $isResolving = in_array($newStatus, ['resolved', 'closed'], true) && !in_array($existing['status'], ['resolved', 'closed'], true);
     // Same RCA rule as every other write path (web UI, internal API) — the

@@ -43,6 +43,7 @@ if (method() === 'POST') {
             default                           => 'fault',
         };
 
+        if (!in_array($b['priority'] ?? 'p3', TICKET_PRIORITIES, true)) $b['priority'] = 'p3';
         $sla   = dbFetch("SELECT resolution_time_hours FROM sla_configs WHERE priority = ?", [$b['priority'] ?? 'p3']);
         $hours = $sla ? (int)$sla['resolution_time_hours'] : 24;
 

@@ -22,17 +22,24 @@ $raiseError   = '';
 $faultTypes = dbFetchAll("SELECT id,name,category FROM fault_types WHERE enabled=1 ORDER BY category,name");
 
 // ── Handle ticket submission ─────────────────────────────────────────────────
+// Shares the lookup rate limit below: raising a ticket also looks the account
+// up and shows its tickets and ONUs, so without it this path was an unlimited
+// way around the lookup throttle for enumerating account numbers.
+$raiseRateLimited = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['_action'] ?? '') === 'raise_ticket') {
     verifyCsrf();
+    $raiseRateLimited = !rateLimitCheck('portal_lookup', clientIp(), 20, 15);
     $account = trim($_POST['account'] ?? '');
-    $cust    = $account ? dbFetch("SELECT * FROM customers WHERE account_number = ?", [$account]) : null;
+    $cust    = ($account && !$raiseRateLimited) ? dbFetch("SELECT * FROM customers WHERE account_number = ?", [$account]) : null;
 
-    if (!$cust) {
+    if ($raiseRateLimited) {
+        $raiseError = 'Too many requests. Please wait a few minutes and try again.';
+    } elseif (!$cust) {
         $raiseError = 'Account not found. Please look up your account first.';
     } elseif (empty(trim($_POST['description'] ?? ''))) {
         $raiseError = 'Please describe your issue.';
     } else {
-        $priority = $_POST['priority'] ?? 'p3';
+        $priority = in_array($_POST['priority'] ?? '', TICKET_PRIORITIES, true) ? $_POST['priority'] : 'p3';
         $sla      = dbFetch("SELECT resolution_time_hours FROM sla_configs WHERE priority = ?", [$priority]);
         $hours    = $sla ? (int)$sla['resolution_time_hours'] : 24;
         $ftId     = !empty($_POST['fault_type_id']) ? trim($_POST['fault_type_id']) : null;
