@@ -909,23 +909,99 @@ function newUuid(): string {
 }
 
 // ─── NOC credential encryption ───────────────────────────────────────────────
-// Device credentials (SNMP communities, RouterOS passwords) are AES-256-CBC
-// encrypted at rest. The key lives in secrets.php as NOC_CRED_KEY; falls back
-// to a deterministic local key for development so the app still runs without
-// secrets.php. Encrypted values are base64-encoded for safe DB storage.
-function nocEncrypt(string $plain): string {
-    $key = defined('NOC_CRED_KEY') ? NOC_CRED_KEY : hash('sha256', 'fieldpulse-noc-dev-key', true);
-    $iv  = random_bytes(16);
-    $ct  = openssl_encrypt($plain, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
-    return base64_encode($iv . $ct);
+// Device credentials (SNMP communities, RouterOS passwords) are encrypted at
+// rest with NOC_CRED_KEY from secrets.php (at least 32 bytes; see
+// secrets.example.php). There is deliberately no fallback key for new values:
+// the old code silently used a key hard-coded in this public repo whenever
+// NOC_CRED_KEY was missing, which made the encryption meaningless.
+//
+// Format "v2:" + base64(iv|tag|ciphertext), AES-256-GCM (authenticated) with
+// a key derived from NOC_CRED_KEY. Values without the prefix are the old
+// AES-256-CBC format; they still decrypt (with NOC_CRED_KEY as-is, then the
+// old repo key) and are re-encrypted by nocReencryptLegacyCredentials().
+const NOC_LEGACY_DEV_KEY_SEED = 'fieldpulse-noc-dev-key';
+
+/** NOC_CRED_KEY if it is set and long enough to use, else null. */
+function nocCredKey(): ?string {
+    return (defined('NOC_CRED_KEY') && is_string(NOC_CRED_KEY) && strlen(NOC_CRED_KEY) >= 32) ? NOC_CRED_KEY : null;
 }
-function nocDecrypt(string $encrypted): string {
-    if (!$encrypted) return '';
-    $key  = defined('NOC_CRED_KEY') ? NOC_CRED_KEY : hash('sha256', 'fieldpulse-noc-dev-key', true);
-    $raw  = base64_decode($encrypted);
-    $iv   = substr($raw, 0, 16);
-    $ct   = substr($raw, 16);
-    return (string)openssl_decrypt($ct, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
+
+/** @throws RuntimeException when no usable key is configured. */
+function nocEncrypt(string $plain, ?string $key = null): string {
+    $key ??= nocCredKey();
+    if ($key === null) {
+        throw new RuntimeException('NOC_CRED_KEY is not configured in secrets.php (see secrets.example.php).');
+    }
+    $encKey = hash_hkdf('sha256', $key, 32, 'fieldpulse-noc-v2');
+    $iv  = random_bytes(12);
+    $tag = '';
+    $ct  = openssl_encrypt($plain, 'aes-256-gcm', $encKey, OPENSSL_RAW_DATA, $iv, $tag);
+    return 'v2:' . base64_encode($iv . $tag . $ct);
+}
+
+/** Returns '' when the value is empty or can't be decrypted. */
+function nocDecrypt(string $encrypted, ?string $key = null): string {
+    if ($encrypted === '') return '';
+    $key ??= nocCredKey();
+    if (str_starts_with($encrypted, 'v2:')) {
+        if ($key === null) return '';
+        $raw = base64_decode(substr($encrypted, 3), true);
+        if ($raw === false || strlen($raw) < 28) return '';
+        $pt = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', hash_hkdf('sha256', $key, 32, 'fieldpulse-noc-v2'),
+            OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+        return $pt === false ? '' : $pt;
+    }
+    // Old CBC format: unauthenticated, so a wrong key usually fails the
+    // padding check but can occasionally "succeed" with garbage. Only accept
+    // output that looks like a credential (valid UTF-8, no control chars).
+    $raw = base64_decode($encrypted, true);
+    if ($raw === false || strlen($raw) < 32) return '';
+    $candidates = [];
+    if (defined('NOC_CRED_KEY') && is_string(NOC_CRED_KEY) && NOC_CRED_KEY !== '') $candidates[] = NOC_CRED_KEY;
+    if ($key !== null) $candidates[] = $key;
+    $candidates[] = hash('sha256', NOC_LEGACY_DEV_KEY_SEED, true);
+    foreach (array_unique($candidates) as $k) {
+        $pt = openssl_decrypt(substr($raw, 16), 'AES-256-CBC', $k, OPENSSL_RAW_DATA, substr($raw, 0, 16));
+        if ($pt !== false && mb_check_encoding($pt, 'UTF-8') && !preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $pt)) {
+            return $pt;
+        }
+    }
+    return '';
+}
+
+/**
+ * Re-encrypts every old-format device credential with the configured key.
+ * Runs once per key (tracked in app_config by a fingerprint of the key).
+ * Values that can't be decrypted are left untouched and logged. Returns the
+ * number of values re-encrypted.
+ */
+function nocReencryptLegacyCredentials(?string $key = null): int {
+    $key ??= nocCredKey();
+    if ($key === null) return 0;
+    $flag = 'noc_creds_v2_' . substr(hash('sha256', $key), 0, 12);
+    $k = dbKey();
+    if (dbFetch("SELECT value FROM app_config WHERE $k = ?", [$flag])) return 0;
+    try {
+        $devices = dbFetchAll("SELECT id, snmp_community, api_credentials FROM network_devices");
+    } catch (\Throwable $e) {
+        // NOC tables not installed: nothing stored in the old format. Record
+        // the run so this isn't retried (and logged) on every request.
+        dbUpsertConfig($flag, 'true');
+        return 0;
+    }
+    $count = 0;
+    foreach ($devices as $d) {
+        foreach (['snmp_community', 'api_credentials'] as $col) {
+            $v = (string)($d[$col] ?? '');
+            if ($v === '' || str_starts_with($v, 'v2:')) continue;
+            $pt = nocDecrypt($v, $key);
+            if ($pt === '') { error_log("NOC credential re-encryption: could not decrypt $col for device {$d['id']}"); continue; }
+            dbRun("UPDATE network_devices SET $col = ? WHERE id = ?", [nocEncrypt($pt, $key), $d['id']]);
+            $count++;
+        }
+    }
+    dbUpsertConfig($flag, 'true');
+    return $count;
 }
 
 // ─── Absolute site base URL (for QR codes & public links) ─────────────────────
@@ -3490,6 +3566,11 @@ if (!$_sv47) {
         error_log('Schema v47 migration error: ' . $e->getMessage());
     }
 }
+
+// Once NOC_CRED_KEY is set, move stored device credentials off the old format
+// (and the old public repo key). A no-op after the first run for each key.
+try { nocReencryptLegacyCredentials(); }
+catch (\Throwable $e) { error_log('NOC credential re-encryption error: ' . $e->getMessage()); }
 
 
 /**
