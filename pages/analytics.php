@@ -20,28 +20,85 @@ $prioJson   = json_encode(array_values($byPriority));
 
 $slaRate = ($sla && $sla['total'] > 0) ? round($sla['ok']/$sla['total']*100,1) : 0;
 
+// ── Technician performance data ────────────────────────────────────────────
+$_tsDiff2   = dbSecondsDiff('t.created_at', 't.resolved_at');
+$techStats  = dbFetchAll(
+    "SELECT
+       u.id,
+       u.name,
+       u.role,
+       COUNT(DISTINCT t.id)                                                          AS assigned_total,
+       COUNT(DISTINCT CASE WHEN t.status IN ('resolved','closed') THEN t.id END)    AS resolved_total,
+       COUNT(DISTINCT CASE WHEN t.status NOT IN ('resolved','closed') AND t.created_at >= {$_iv30} THEN t.id END) AS open_30d,
+       COUNT(DISTINCT CASE WHEN t.status IN ('resolved','closed') AND t.created_at >= {$_iv30} THEN t.id END)     AS resolved_30d,
+       ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL THEN {$_tsDiff2}/3600.0 END), 1) AS avg_hrs,
+       COUNT(DISTINCT CASE WHEN t.sla_breach_at IS NOT NULL AND
+             (t.resolved_at < t.sla_breach_at OR (t.status NOT IN ('resolved','closed') AND t.sla_breach_at > NOW()))
+             THEN t.id END)                                                          AS sla_ok,
+       COUNT(DISTINCT CASE WHEN t.sla_breach_at IS NOT NULL THEN t.id END)           AS sla_total
+     FROM users u
+     LEFT JOIN tickets t ON t.assigned_to = u.id
+     WHERE u.role IN ('engineer','noc_engineer','vendor')
+     GROUP BY u.id, u.name, u.role
+     ORDER BY resolved_total DESC"
+);
+
+// Check-in metrics per user (join separately for clarity)
+$_iv30ci = dbNowMinusInterval(30, 'DAY');
+$ciStats = dbFetchAll(
+    "SELECT
+       ci.user_id,
+       COUNT(*)                                                                             AS checkin_count,
+       ROUND(AVG(CASE WHEN ci.checked_out_at IS NOT NULL
+                 THEN TIMESTAMPDIFF(MINUTE, ci.checked_in_at, ci.checked_out_at) END), 0)  AS avg_onsite_min,
+       COUNT(DISTINCT ci.ticket_id)                                                        AS unique_tickets_visited
+     FROM ticket_checkins ci
+     WHERE ci.checked_in_at >= {$_iv30ci}
+     GROUP BY ci.user_id"
+);
+$ciMap = [];
+foreach ($ciStats as $c) { $ciMap[$c['user_id']] = $c; }
+
 // CSV export — summary snapshot
+$_tab = $_GET['tab'] ?? 'overview';
 if (($_GET['export'] ?? '') === 'csv') {
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="analytics-' . date('Ymd') . '.csv"');
-    $out = fopen('php://output', 'w');
-    fputcsv($out, ['Section', 'Label', 'Value']);
-    fputcsv($out, ['Summary', 'MTTR (avg hrs)', $mttr['avg_hours'] ?? '']);
-    fputcsv($out, ['Summary', 'SLA Compliance %', $slaRate]);
-    fputcsv($out, ['Summary', '30-Day Ticket Count', array_sum(array_column($trend, 'count'))]);
-    fputcsv($out, []);
-    fputcsv($out, ['30-Day Trend', 'Day', 'Count']);
-    foreach ($trend as $r) { fputcsv($out, ['', $r['day'], $r['count']]); }
-    fputcsv($out, []);
-    fputcsv($out, ['By Status', 'Status', 'Count']);
-    foreach ($byStatus as $r) { fputcsv($out, ['', $r['status'], $r['count']]); }
-    fputcsv($out, []);
-    fputcsv($out, ['By Priority', 'Priority', 'Count']);
-    foreach ($byPriority as $r) { fputcsv($out, ['', $r['priority'], $r['count']]); }
-    fputcsv($out, []);
-    fputcsv($out, ['Leaderboard', 'Engineer', 'Resolved']);
-    foreach ($leaderboard as $r) { fputcsv($out, ['', $r['name'], $r['resolved']]); }
-    fclose($out);
+    if ($_tab === 'technicians') {
+        header('Content-Disposition: attachment; filename="technician-performance-' . date('Ymd') . '.csv"');
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['Technician','Role','Assigned (total)','Resolved (total)','Resolved (30d)','Open (30d)',
+                       'Avg Resolution Hrs','SLA Compliance %','Check-ins (30d)','Unique Tickets Visited (30d)','Avg On-site Min (30d)']);
+        foreach ($techStats as $r) {
+            $ci = $ciMap[$r['id']] ?? [];
+            $slaR = ($r['sla_total'] > 0) ? round($r['sla_ok']/$r['sla_total']*100,1) : '—';
+            fputcsv($out, [
+                $r['name'], $r['role'], $r['assigned_total'], $r['resolved_total'], $r['resolved_30d'], $r['open_30d'],
+                $r['avg_hrs'] ?? '—', $slaR,
+                $ci['checkin_count'] ?? 0, $ci['unique_tickets_visited'] ?? 0, $ci['avg_onsite_min'] ?? '—',
+            ]);
+        }
+        fclose($out);
+    } else {
+        header('Content-Disposition: attachment; filename="analytics-' . date('Ymd') . '.csv"');
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['Section', 'Label', 'Value']);
+        fputcsv($out, ['Summary', 'MTTR (avg hrs)', $mttr['avg_hours'] ?? '']);
+        fputcsv($out, ['Summary', 'SLA Compliance %', $slaRate]);
+        fputcsv($out, ['Summary', '30-Day Ticket Count', array_sum(array_column($trend, 'count'))]);
+        fputcsv($out, []);
+        fputcsv($out, ['30-Day Trend', 'Day', 'Count']);
+        foreach ($trend as $r) { fputcsv($out, ['', $r['day'], $r['count']]); }
+        fputcsv($out, []);
+        fputcsv($out, ['By Status', 'Status', 'Count']);
+        foreach ($byStatus as $r) { fputcsv($out, ['', $r['status'], $r['count']]); }
+        fputcsv($out, []);
+        fputcsv($out, ['By Priority', 'Priority', 'Count']);
+        foreach ($byPriority as $r) { fputcsv($out, ['', $r['priority'], $r['count']]); }
+        fputcsv($out, []);
+        fputcsv($out, ['Leaderboard', 'Engineer', 'Resolved']);
+        foreach ($leaderboard as $r) { fputcsv($out, ['', $r['name'], $r['resolved']]); }
+        fclose($out);
+    }
     exit;
 }
 
@@ -55,7 +112,7 @@ require __DIR__ . '/../includes/header.php';
     <div class="text-muted small">30-day ticket trends, SLA compliance, and team performance.</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a href="?export=csv" class="btn btn-sm btn-outline-secondary">
+    <a href="?tab=<?= htmlspecialchars($_tab) ?>&export=csv" class="btn btn-sm btn-outline-secondary">
       <i class="bi bi-download me-1"></i>Export CSV
     </a>
     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()">
@@ -64,14 +121,129 @@ require __DIR__ . '/../includes/header.php';
   </div>
 </div>
 
+<!-- Tabs -->
+<ul class="nav nav-tabs mb-4" id="analyticsTab" role="tablist">
+  <li class="nav-item" role="presentation">
+    <a class="nav-link <?= $_tab !== 'technicians' ? 'active' : '' ?>" href="?tab=overview" role="tab">
+      <i class="bi bi-graph-up me-1"></i>Overview
+    </a>
+  </li>
+  <li class="nav-item" role="presentation">
+    <a class="nav-link <?= $_tab === 'technicians' ? 'active' : '' ?>" href="?tab=technicians" role="tab">
+      <i class="bi bi-person-gear me-1"></i>Technician Performance
+    </a>
+  </li>
+</ul>
+
 <style>
 @media print {
-  #sidebar, .topbar, .btn { display: none !important; }
+  #sidebar, .topbar, .btn, .nav-tabs { display: none !important; }
   #main { margin: 0 !important; padding: 0 !important; }
   .page-content { padding: 0 !important; }
   canvas { max-width: 100% !important; }
 }
+.perf-bar { height:6px; border-radius:3px; background:#e2e8f0; overflow:hidden; min-width:60px; display:inline-block; vertical-align:middle; }
+.perf-bar-fill { height:100%; border-radius:3px; }
 </style>
+
+<?php if ($_tab === 'technicians'): ?>
+
+<?php
+// Summary KPIs for tech tab header row
+$totalTechs  = count($techStats);
+$totalResolved30 = array_sum(array_column($techStats, 'resolved_30d'));
+$totalCheckins30 = array_sum(array_column($ciStats, 'checkin_count'));
+$maxResolved = max(array_column($techStats, 'resolved_total') ?: [1]);
+?>
+
+<div class="row g-3 mb-4">
+  <div class="col-sm-4">
+    <div class="stat-card">
+      <div class="stat-label">Field Staff</div>
+      <div class="stat-value"><?= $totalTechs ?></div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card">
+      <div class="stat-label">Resolved (30d, team)</div>
+      <div class="stat-value"><?= $totalResolved30 ?></div>
+    </div>
+  </div>
+  <div class="col-sm-4">
+    <div class="stat-card">
+      <div class="stat-label">GPS Check-ins (30d)</div>
+      <div class="stat-value"><?= $totalCheckins30 ?></div>
+    </div>
+  </div>
+</div>
+
+<div class="card-section">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-person-gear me-1 text-primary"></i>Technician Performance — 30-Day Window</span>
+    <span class="text-muted" style="font-size:.75rem">Check-in stats cover last 30 days; ticket totals are all-time</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>Technician</th>
+          <th>Role</th>
+          <th title="Total resolved all-time">Resolved</th>
+          <th title="Resolved in last 30 days">Resolved (30d)</th>
+          <th title="Currently open tickets">Open</th>
+          <th title="Average hours from created to resolved">Avg Resolution</th>
+          <th title="% of SLA-tracked tickets resolved on time">SLA</th>
+          <th title="GPS check-ins in last 30 days">Check-ins (30d)</th>
+          <th title="Average minutes on-site per check-in (30d)">Avg On-site</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($techStats as $tech):
+            $ci = $ciMap[$tech['id']] ?? [];
+            $slaR = ($tech['sla_total'] > 0) ? round($tech['sla_ok']/$tech['sla_total']*100,1) : null;
+            $slaClass = $slaR === null ? '' : ($slaR >= 90 ? 'text-success' : ($slaR >= 70 ? 'text-warning' : 'text-danger'));
+            $barPct = $maxResolved > 0 ? round($tech['resolved_total']/$maxResolved*100) : 0;
+            $avgOnsite = isset($ci['avg_onsite_min']) && $ci['avg_onsite_min'] !== null
+                ? (($ci['avg_onsite_min'] >= 60)
+                    ? round($ci['avg_onsite_min']/60,1) . ' hr'
+                    : $ci['avg_onsite_min'] . ' min')
+                : '—';
+        ?>
+        <tr>
+          <td class="fw-semibold">
+            <?= htmlspecialchars($tech['name']) ?>
+            <div class="perf-bar ms-2" style="width:<?= max(40,$barPct) ?>px">
+              <div class="perf-bar-fill bg-primary" style="width:<?= $barPct ?>%"></div>
+            </div>
+          </td>
+          <td><span class="badge bg-light text-dark border" style="font-size:.7rem"><?= htmlspecialchars($tech['role']) ?></span></td>
+          <td><?= (int)$tech['resolved_total'] ?></td>
+          <td><strong><?= (int)$tech['resolved_30d'] ?></strong></td>
+          <td><?= (int)$tech['open_30d'] ?></td>
+          <td><?= $tech['avg_hrs'] !== null ? $tech['avg_hrs'] . ' hrs' : '—' ?></td>
+          <td class="<?= $slaClass ?> fw-semibold"><?= $slaR !== null ? $slaR . '%' : '—' ?></td>
+          <td>
+            <?php if (!empty($ci['checkin_count'])): ?>
+            <span class="badge bg-success"><?= (int)$ci['checkin_count'] ?></span>
+            <?php if (!empty($ci['unique_tickets_visited'])): ?>
+            <span class="text-muted" style="font-size:.72rem"> / <?= (int)$ci['unique_tickets_visited'] ?> tickets</span>
+            <?php endif; ?>
+            <?php else: ?>
+            <span class="text-muted">—</span>
+            <?php endif; ?>
+          </td>
+          <td><?= htmlspecialchars($avgOnsite) ?></td>
+        </tr>
+        <?php endforeach; ?>
+        <?php if (!$techStats): ?>
+        <tr><td colspan="9" class="text-center text-muted py-3">No field staff found.</td></tr>
+        <?php endif; ?>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<?php else: ?>
 
 <div class="row g-3 mb-4">
   <div class="col-sm-6 col-xl-3">
@@ -177,5 +349,7 @@ new Chart(document.getElementById('prioChart'),{
   options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
 });
 </script>
+
+<?php endif; ?>
 
 <?php require __DIR__ . '/../includes/footer.php'; ?>
