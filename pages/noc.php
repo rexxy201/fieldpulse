@@ -137,6 +137,14 @@ require __DIR__ . '/../includes/header.php';
   <?php endif; ?>
 </div>
 
+<?php if (hasPermission('noc.devices.manage') && nocCredKey() === null): ?>
+<div class="alert alert-warning py-2 small">
+  <i class="bi bi-shield-exclamation me-1"></i>
+  <strong>Device credentials can't be saved yet.</strong> Set <code>NOC_CRED_KEY</code> in <code>secrets.php</code> on the server
+  (instructions in <code>secrets.example.php</code>). Existing devices keep working in the meantime.
+</div>
+<?php endif; ?>
+
 <!-- Stat tiles -->
 <div class="row g-3 mb-3">
   <?php

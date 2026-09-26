@@ -85,6 +85,12 @@ if ($action === 'save_device') {
 
     // Encrypt credentials only if provided (blank = keep existing on edit)
     $snmpEnc = null; $apiCredsEnc = null;
+    $hasNewCreds = $type !== 'mikrotik'
+        ? trim($_POST['snmp_community'] ?? '') !== ''
+        : (trim($_POST['api_user'] ?? '') !== '' || ($_POST['api_pass'] ?? '') !== '');
+    if ($hasNewCreds && nocCredKey() === null) {
+        jsonResponse(['error' => 'Device credentials cannot be saved until NOC_CRED_KEY is set in secrets.php on the server (see secrets.example.php).'], 500);
+    }
     if ($type !== 'mikrotik') {
         $community = trim($_POST['snmp_community'] ?? '');
         if ($community) $snmpEnc = nocEncrypt($community);
