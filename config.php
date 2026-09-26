@@ -200,6 +200,19 @@ function generateTempPassword(int $length = 12): string {
     return $out;
 }
 
+/** How long an admin-issued temporary password can be used to sign in. */
+define('TEMP_PASSWORD_HOURS', 72);
+
+/**
+ * Sets an admin-issued temporary password: the member must replace it at next
+ * sign-in, and it stops working after TEMP_PASSWORD_HOURS so one that was
+ * never passed on (or was intercepted) doesn't stay valid indefinitely.
+ */
+function setTemporaryPassword(string $userId, string $plain): void {
+    dbRun("UPDATE users SET password = ?, must_change_password = 1, temp_password_expires_at = ? WHERE id = ?",
+        [hashPassword($plain), date('Y-m-d H:i:s', time() + TEMP_PASSWORD_HOURS * 3600), $userId]);
+}
+
 /**
  * Self-service password change (My Account). Returns null on success or a
  * user-facing error message. Clears must_change_password on success.
@@ -210,7 +223,7 @@ function changeOwnPassword(string $userId, string $current, string $new, string 
     if (strlen($new) < 8) return 'Your new password must be at least 8 characters.';
     if ($new !== $confirm) return 'The new passwords do not match.';
     if ($new === $current) return 'Your new password must be different from the current one.';
-    dbRun("UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?", [hashPassword($new), $userId]);
+    dbRun("UPDATE users SET password = ?, must_change_password = 0, temp_password_expires_at = NULL WHERE id = ?", [hashPassword($new), $userId]);
     return null;
 }
 
@@ -241,6 +254,12 @@ function attemptLogin(string $username, string $password): array {
     }
 
     if ($user && verifyPassword($password, $user['password'])) {
+        // Checked only after the password verifies, so it reveals nothing to
+        // someone guessing. Not counted as a failed attempt.
+        if (!empty($user['must_change_password']) && !empty($user['temp_password_expires_at'])
+            && strtotime($user['temp_password_expires_at']) < time()) {
+            return ['ok' => false, 'user' => null, 'error' => 'Your temporary password has expired. Ask an admin to reset it.'];
+        }
         if ((int)($user['failed_login_attempts'] ?? 0) !== 0 || !empty($user['locked_until'])) {
             dbRun("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", [$user['id']]);
         }
@@ -2743,7 +2762,7 @@ function findUserByResetToken(string $token): ?array {
 
 /** Sets a new password and invalidates the token — single use. */
 function completePasswordReset(string $userId, string $newPassword): void {
-    dbRun("UPDATE users SET password=?, must_change_password=0, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
+    dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
         [hashPassword($newPassword), $userId]);
 }
 
@@ -3398,6 +3417,24 @@ if (!$_sv46) {
         dbUpsertConfig('schema_v46_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v46 migration error: ' . $e->getMessage());
+    }
+}
+
+// schema_v47: temp_password_expires_at on users (see setTemporaryPassword()).
+// Members already waiting on a temporary password get the full window from now
+// rather than being cut off by the deploy. The unquoted variant uses TIMESTAMP
+// because PostgreSQL has no DATETIME.
+$_k = dbKey();
+$_sv47 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v47_migrated'");
+if (!$_sv47) {
+    try {
+        try { db()->exec("ALTER TABLE `users` ADD COLUMN `temp_password_expires_at` DATETIME DEFAULT NULL"); } catch (\Throwable $e) {}
+        try { db()->exec("ALTER TABLE users ADD COLUMN temp_password_expires_at TIMESTAMP NULL DEFAULT NULL"); } catch (\Throwable $e) {}
+        dbRun("UPDATE users SET temp_password_expires_at = ? WHERE must_change_password = 1 AND temp_password_expires_at IS NULL",
+            [date('Y-m-d H:i:s', time() + TEMP_PASSWORD_HOURS * 3600)]);
+        dbUpsertConfig('schema_v47_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v47 migration error: ' . $e->getMessage());
     }
 }
 

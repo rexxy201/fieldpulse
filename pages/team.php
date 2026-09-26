@@ -25,12 +25,15 @@ if (method() === 'POST') {
         $hubIds = $hubIdsArr ? json_encode($hubIdsArr) : null;
         $primaryHub = $hubIdsArr[0] ?? null;
         $tempPassword = generateTempPassword();
-        dbRun("INSERT INTO users (id,username,name,email,phone,role,password,must_change_password,hub_id,hub_ids,team_id,vendor_id,status)
-               VALUES (?,?,?,?,?,?,?,1,?,?,?,?,'active')",
-            [newUuid(),$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
+        $newId = newUuid();
+        dbRun("INSERT INTO users (id,username,name,email,phone,role,password,hub_id,hub_ids,team_id,vendor_id,status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,'active')",
+            [$newId,$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
              hashPassword($tempPassword),$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
+        setTemporaryPassword($newId, $tempPassword);
         $msg = 'Member added. Temporary password: ' . $tempPassword
-             . ' (shown only once). Share it privately; they must change it at first sign-in.';
+             . ' (shown only once). Share it privately; it expires in ' . TEMP_PASSWORD_HOURS
+             . ' hours and must be changed at first sign-in.';
     }
     if ($action === 'edit_user' && !empty($b['id'])) {
         $hubIdsArr = array_values(array_filter(array_map('trim', (array)($b['hub_ids'] ?? []))));
@@ -48,8 +51,11 @@ if (method() === 'POST') {
             // An admin-chosen password is known to the admin, so treat it as
             // temporary too: the member must replace it at next sign-in
             // (unless the admin is setting their own).
-            $mustChange = $b['id'] === (currentUser()['id'] ?? null) ? 0 : 1;
-            dbRun("UPDATE users SET password=?, must_change_password=? WHERE id=?", [hashPassword($b['new_password']), $mustChange, $b['id']]);
+            if ($b['id'] === (currentUser()['id'] ?? null)) {
+                dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
+            } else {
+                setTemporaryPassword($b['id'], $b['new_password']);
+            }
         }
         $msg = 'Member updated.';
     }
@@ -428,7 +434,7 @@ require __DIR__ . '/../includes/header.php';
           </div>
         </div>
         <div class="alert alert-info py-2 mt-3 small mb-0">
-          <i class="bi bi-info-circle me-1"></i>A random temporary password is generated and shown once after you add the member. They must change it at first sign-in.
+          <i class="bi bi-info-circle me-1"></i>A random temporary password is generated and shown once after you add the member. It expires after <?= TEMP_PASSWORD_HOURS ?> hours and must be changed at first sign-in.
         </div>
       </div>
       <div class="modal-footer">

@@ -42,4 +42,49 @@ final class TempPasswordTest extends TestCase
         $row = dbFetch("SELECT must_change_password FROM users WHERE id = ?", [$u['id']]);
         $this->assertSame(0, (int)$row['must_change_password']);
     }
+
+    public function testSetTemporaryPasswordFlagsUserAndSetsExpiry(): void
+    {
+        $u = $this->makeUser();
+        setTemporaryPassword($u['id'], 'TempPassw0rd');
+        $row = dbFetch("SELECT password, must_change_password, temp_password_expires_at FROM users WHERE id = ?", [$u['id']]);
+        $this->assertTrue(verifyPassword('TempPassw0rd', $row['password']));
+        $this->assertSame(1, (int)$row['must_change_password']);
+        $expiresIn = strtotime($row['temp_password_expires_at']) - time();
+        $this->assertEqualsWithDelta(TEMP_PASSWORD_HOURS * 3600, $expiresIn, 120);
+    }
+
+    public function testUnexpiredTemporaryPasswordCanSignIn(): void
+    {
+        $u = $this->makeUser();
+        setTemporaryPassword($u['id'], 'TempPassw0rd');
+        $this->assertTrue(attemptLogin($u['username'], 'TempPassw0rd')['ok']);
+    }
+
+    public function testExpiredTemporaryPasswordIsRejectedWithoutCountingAsFailure(): void
+    {
+        $u = $this->makeUser();
+        setTemporaryPassword($u['id'], 'TempPassw0rd');
+        dbRun("UPDATE users SET temp_password_expires_at = ? WHERE id = ?", [date('Y-m-d H:i:s', time() - 60), $u['id']]);
+
+        $result = attemptLogin($u['username'], 'TempPassw0rd');
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('expired', $result['error']);
+        $row = dbFetch("SELECT failed_login_attempts FROM users WHERE id = ?", [$u['id']]);
+        $this->assertSame(0, (int)$row['failed_login_attempts']);
+
+        // A wrong password still gets the generic message: expiry is only
+        // revealed once the password itself is correct.
+        $this->assertSame('Invalid username or password.', attemptLogin($u['username'], 'wrong')['error']);
+    }
+
+    public function testExpiryDoesNotApplyOnceThePasswordHasBeenChanged(): void
+    {
+        $u = $this->makeUser();
+        setTemporaryPassword($u['id'], 'TempPassw0rd');
+        $this->assertNull(changeOwnPassword($u['id'], 'TempPassw0rd', 'MyOwnPassw0rd', 'MyOwnPassw0rd'));
+        $row = dbFetch("SELECT temp_password_expires_at FROM users WHERE id = ?", [$u['id']]);
+        $this->assertNull($row['temp_password_expires_at']);
+        $this->assertTrue(attemptLogin($u['username'], 'MyOwnPassw0rd')['ok']);
+    }
 }
