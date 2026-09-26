@@ -2066,10 +2066,13 @@ function toggleSmsFields() {
 document.addEventListener('DOMContentLoaded', toggleSmsFields);
 
 // Auto-open tab from anchor in URL (e.g. after save redirect)
-const _tabHash = window.location.hash;
-if (_tabHash) {
-  const _tabEl = document.querySelector('[href="' + _tabHash + '"]');
-  if (_tabEl && bootstrap.Tab) new bootstrap.Tab(_tabEl).show();
-}
+// Must run after Bootstrap loads (end of footer.php), so use DOMContentLoaded.
+document.addEventListener('DOMContentLoaded', function() {
+  const _tabHash = window.location.hash;
+  if (_tabHash) {
+    const _tabEl = document.querySelector('[data-bs-toggle="tab"][href="' + _tabHash + '"]');
+    if (_tabEl) bootstrap.Tab.getOrCreateInstance(_tabEl).show();
+  }
+});
 </script>
 
