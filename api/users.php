@@ -10,7 +10,7 @@ if ($id && $sub === 'password' && method() === 'PATCH') {
     $b = getBody();
     $u = dbFetch("SELECT password FROM users WHERE id=?",[$id]);
     if (!$u || !verifyPassword($b['currentPassword']??'',$u['password'])) jsonResponse(['error'=>'Current password incorrect'],400);
-    dbRun("UPDATE users SET password=?, must_change_password=0 WHERE id=?", [hashPassword($b['newPassword']??''),$id]);
+    dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['newPassword']??''),$id]);
     jsonResponse(['ok'=>true]);
 }
 
