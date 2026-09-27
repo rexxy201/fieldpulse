@@ -28,7 +28,11 @@ if ($id && method() === 'PATCH') {
 }
 
 if (method() === 'GET') {
-    jsonResponse(dbFetchAll("SELECT id,username,name,email,phone,role,hub_id,team_id,vendor_id,status FROM users ORDER BY name"));
+    // Staff contact details (email, phone) and account fields are limited to
+    // the people who can already see them on the Team page. Everyone else
+    // signed in gets the directory basics (who exists and their role), which
+    // is what picking an assignee needs.
+    jsonResponse(dbFetchAll(usersListColumns() . " FROM users ORDER BY name"));
 }
 
 if (method() === 'POST') {
