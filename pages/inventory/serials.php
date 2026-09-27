@@ -271,18 +271,20 @@ async function loadSerials() {
       <td class="small">${sn.customer_name ? esc(sn.customer_name) + (sn.account_number ? '<br><span class="text-muted">' + esc(sn.account_number) + '</span>' : '') : '<span class="text-muted">—</span>'}</td>
       <td class="small text-muted">${sn.dispatched_at ? sn.dispatched_at.slice(0,10) + (sn.dispatched_by_name ? '<br>' + esc(sn.dispatched_by_name) : '') : '—'}</td>
       ${canManage ? `<td class="text-end">
-        ${sn.status === 'in_stock' ? `<button class="btn btn-xs btn-outline-success py-0 me-1" onclick="openDispatch('${esc(sn.id)}','${esc(sn.serial)}')"><i class="bi bi-box-arrow-up"></i></button>` : ''}
-        ${sn.status === 'deployed' ? `<button class="btn btn-xs btn-outline-secondary py-0 me-1" onclick="doReturn('${esc(sn.id)}')" title="Return to stock"><i class="bi bi-arrow-return-left"></i></button>` : ''}
-        ${sn.status !== 'retired' ? `<button class="btn btn-xs btn-outline-warning py-0 me-1" onclick="doRetire('${esc(sn.id)}')" title="Retire"><i class="bi bi-x-circle"></i></button>` : ''}
-        ${sn.status === 'in_stock' ? `<button class="btn btn-xs btn-outline-danger py-0" onclick="doDelete('${esc(sn.id)}', '${esc(sn.serial)}')" title="Delete"><i class="bi bi-trash"></i></button>` : ''}
+        ${sn.status === 'in_stock' ? `<button class="btn btn-xs btn-outline-success py-0 me-1" data-id="${esc(sn.id)}" data-serial="${esc(sn.serial)}" onclick="openDispatch(this.dataset.id, this.dataset.serial)"><i class="bi bi-box-arrow-up"></i></button>` : ''}
+        ${sn.status === 'deployed' ? `<button class="btn btn-xs btn-outline-secondary py-0 me-1" data-id="${esc(sn.id)}" onclick="doReturn(this.dataset.id)" title="Return to stock"><i class="bi bi-arrow-return-left"></i></button>` : ''}
+        ${sn.status !== 'retired' ? `<button class="btn btn-xs btn-outline-warning py-0 me-1" data-id="${esc(sn.id)}" onclick="doRetire(this.dataset.id)" title="Retire"><i class="bi bi-x-circle"></i></button>` : ''}
+        ${sn.status === 'in_stock' ? `<button class="btn btn-xs btn-outline-danger py-0" data-id="${esc(sn.id)}" data-serial="${esc(sn.serial)}" onclick="doDelete(this.dataset.id, this.dataset.serial)" title="Delete"><i class="bi bi-trash"></i></button>` : ''}
       </td>` : ''}
     </tr>`).join('');
 }
 
+// HTML-escapes text for element content and quoted attributes. Values that
+// end up in handlers go through data-* attributes, never inside inline JS
+// strings: HTML-escaping can't make a value safe there, because the browser
+// decodes it back before the JS runs.
 function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = String(s ?? '');
-  return d.innerHTML;
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // ── Global search ──────────────────────────────────────────────────────────────
