@@ -87,4 +87,30 @@ final class TempPasswordTest extends TestCase
         $this->assertNull($row['temp_password_expires_at']);
         $this->assertTrue(attemptLogin($u['username'], 'MyOwnPassw0rd')['ok']);
     }
+
+    public function testSigningInWithADefaultPasswordForcesAChange(): void
+    {
+        $u = $this->makeUser(['password' => hashPassword('admin123')]);
+        $res = attemptLogin($u['username'], 'admin123');
+        $this->assertTrue($res['ok'], 'still allowed in, so they can change it');
+        $row = dbFetch("SELECT must_change_password, temp_password_expires_at FROM users WHERE id = ?", [$u['id']]);
+        $this->assertSame(1, (int)$row['must_change_password']);
+        $this->assertNull($row['temp_password_expires_at'], 'no expiry: they must not be locked out');
+        // A second sign-in still works and keeps the flag.
+        $this->assertTrue(attemptLogin($u['username'], 'admin123')['ok']);
+    }
+
+    public function testAStrongPasswordDoesNotSetTheFlag(): void
+    {
+        $u = $this->makeUser();
+        $this->assertTrue(attemptLogin($u['username'], 'TestPassw0rd!')['ok']);
+        $this->assertSame(0, (int)dbFetch("SELECT must_change_password FROM users WHERE id = ?", [$u['id']])['must_change_password']);
+    }
+
+    public function testDefaultPasswordsCannotBeChosenAgain(): void
+    {
+        $u = $this->makeUser();
+        $this->assertNotNull(changeOwnPassword($u['id'], 'TestPassw0rd!', 'admin123', 'admin123'));
+        $this->assertNotNull(changeOwnPassword($u['id'], 'TestPassw0rd!', 'Password', 'Password'));
+    }
 }

@@ -11,6 +11,7 @@ if ($id && $sub === 'password' && method() === 'PATCH') {
     $u = dbFetch("SELECT password FROM users WHERE id=?",[$id]);
     if (!$u || !verifyPassword($b['currentPassword']??'',$u['password'])) jsonResponse(['error'=>'Current password incorrect'],400);
     if (strlen((string)($b['newPassword'] ?? '')) < 8) jsonResponse(['error'=>'New password must be at least 8 characters'],400);
+    if (isWeakDefaultPassword((string)($b['newPassword'] ?? ''))) jsonResponse(['error'=>'That password is a well-known default. Choose a different one.'],400);
     dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['newPassword']??''),$id]);
     keepSessionAfterPasswordChange($id);
     jsonResponse(['ok'=>true]);
