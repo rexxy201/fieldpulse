@@ -12,12 +12,8 @@ require_once __DIR__ . '/../config.php';
 // Token guard — required. No slaCheckToken configured means this endpoint
 // refuses every request rather than silently allowing unauthenticated
 // access; set it via Admin -> Automation & Cron Tokens before wiring the cron.
-$cfg        = getAppConfig();
-$guardToken = trim($cfg['slaCheckToken'] ?? '');
-if ($guardToken === '' || ($_GET['token'] ?? '') !== $guardToken) {
-    http_response_code(403);
-    exit('Forbidden');
-}
+requireCronToken('slaCheckToken');
+$cfg = getAppConfig();
 
 $warnHours = max(1, (int)($cfg['slaWarnHours'] ?? 2));
 $warned    = 0;

@@ -13,12 +13,7 @@ require_once __DIR__ . '/../config.php';
 
 // Token guard — required. No slaCheckToken configured means this endpoint
 // refuses every request; set it via Admin -> Automation & Cron Tokens.
-$cfg        = getAppConfig();
-$guardToken = trim($cfg['slaCheckToken'] ?? '');
-if ($guardToken === '' || ($_GET['token'] ?? '') !== $guardToken) {
-    http_response_code(403);
-    exit('Forbidden');
-}
+requireCronToken('slaCheckToken');
 
 $results = retryFailedWebhooks();
 jsonResponse(['ok' => true] + $results);

@@ -149,7 +149,10 @@ if (session_status() === PHP_SESSION_NONE) {
         'path'     => '/',
         'secure'   => $isSecure,
         'httponly' => true,
-        'samesite' => $isSecure ? 'None' : 'Lax',
+        // Lax: sent on normal top-level navigation (links in emails still
+        // open signed in) but not on cross-site POSTs or embedded requests.
+        // Framing by other sites is already blocked by X-Frame-Options.
+        'samesite' => 'Lax',
     ]);
     session_start();
 
@@ -424,6 +427,30 @@ function currentUser(): ?array { return $_SESSION['user'] ?? null; }
 function hasRole(string ...$roles): bool {
     $u = currentUser();
     return $u && in_array($u['role'], $roles);
+}
+
+/**
+ * URL for a file under /assets with its modification time appended, so a
+ * deploy that changes the file makes browsers fetch it again instead of
+ * reusing a stale cached copy (e.g. new sidebar markup with old CSS).
+ */
+function assetUrl(string $path): string {
+    $mtime = @filemtime(__DIR__ . $path);
+    return $path . ($mtime ? '?v=' . $mtime : '');
+}
+
+/**
+ * Guards the cron-called endpoints. The token comes from the X-Cron-Token
+ * header or, for existing cron commands, ?token=. Compared in constant time;
+ * an unset token refuses everything rather than allowing anonymous calls.
+ */
+function requireCronToken(string $configKey): void {
+    $expected = trim((string)(getAppConfig()[$configKey] ?? ''));
+    $given    = $_SERVER['HTTP_X_CRON_TOKEN'] ?? ($_GET['token'] ?? '');
+    if ($expected === '' || !is_string($given) || !hash_equals($expected, $given)) {
+        http_response_code(403);
+        exit('Forbidden');
+    }
 }
 
 function isAdmin(): bool {
