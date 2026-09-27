@@ -235,6 +235,23 @@
   };
 })();
 
+// ── Sidebar module groups ─────────────────────────────────────────────────
+// Clicking a module opens it and closes the others, so the menu stays short.
+document.querySelectorAll('#sidebar .nav-group-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const group = btn.closest('.nav-group');
+    const open  = !group.classList.contains('open');
+    document.querySelectorAll('#sidebar .nav-group.open').forEach(g => {
+      if (g !== group) {
+        g.classList.remove('open');
+        g.querySelector('.nav-group-toggle').setAttribute('aria-expanded', 'false');
+      }
+    });
+    group.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+});
+
 // ── Mobile sidebar toggle ─────────────────────────────────────────────────
 function toggleSidebar() {
   const sidebar   = document.getElementById('sidebar');

@@ -95,6 +95,56 @@ a { text-decoration: none; }
 #sidebar .nav-link:hover { background: #f1f5f9; color: var(--text-main); }
 #sidebar .nav-link.active { background: var(--primary-light); color: var(--primary); }
 
+/* Collapsible module groups (Operations, Finance, Inventory, …) */
+#sidebar .nav-group-toggle {
+    width: calc(100% - 1rem);
+    margin: 1px .5rem;
+    padding: .5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: .625rem;
+    background: none;
+    border: 0;
+    border-radius: .4rem;
+    color: var(--sidebar-text);
+    font: inherit;
+    font-size: .8375rem;
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+#sidebar .nav-group-toggle i { font-size: 1rem; flex-shrink: 0; width: 1.1rem; text-align: center; }
+#sidebar .nav-group-toggle:hover { background: #f1f5f9; color: var(--text-main); }
+#sidebar .nav-group-toggle:focus-visible,
+#sidebar .nav-link:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+#sidebar .nav-group.has-active > .nav-group-toggle { color: var(--primary); }
+#sidebar .nav-group-chevron { font-size: .75rem !important; transition: transform .2s; }
+#sidebar .nav-group.open > .nav-group-toggle .nav-group-chevron { transform: rotate(90deg); }
+
+/* Animates open/closed height without measuring it in JS */
+#sidebar .nav-group-items {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows .2s ease;
+}
+#sidebar .nav-group-items > div {
+    overflow: hidden;
+    min-height: 0;
+    visibility: hidden;              /* keeps collapsed links out of the tab order */
+    transition: visibility 0s .2s;
+}
+#sidebar .nav-group.open > .nav-group-items { grid-template-rows: 1fr; }
+#sidebar .nav-group.open > .nav-group-items > div { visibility: visible; transition-delay: 0s; }
+#sidebar .nav-group-items .nav-link { padding-left: 2.35rem; font-size: .8125rem; }
+#sidebar .sidebar-nav { padding-top: .5rem; }
+/* Top-level entries (Dashboard, single-page modules) match the group headings */
+#sidebar .sidebar-nav > .nav-link { font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+    #sidebar .nav-group-items, #sidebar .nav-group-chevron { transition: none; }
+}
+
 /* User panel (bottom) */
 #sidebar .user-panel {
     padding: .875rem 1.25rem;

@@ -67,155 +67,103 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     </button>
   </div>
 
-  <div class="nav-section">Operations</div>
-  <a href="/dashboard" class="nav-link <?= $activePath === 'dashboard' ? 'active' : '' ?>">
-    <i class="bi bi-grid-1x2"></i> Dashboard
-  </a>
-  <a href="/tickets" class="nav-link <?= str_starts_with($activePath, 'ticket') ? 'active' : '' ?>">
-    <i class="bi bi-ticket-perforated"></i> Tickets
-  </a>
-
-  <?php if (hasPermission('customers.view')): ?>
-  <a href="/customers" class="nav-link <?= $activePath === 'customers' ? 'active' : '' ?>">
-    <i class="bi bi-people"></i> Customers
-  </a>
-  <?php endif; ?>
-
-  <?php if (hasPermission('schedule.view') || hasPermission('map.view')): ?>
-  <div class="nav-section">Field</div>
-  <?php if (hasPermission('schedule.view')): ?>
-  <a href="/schedule" class="nav-link <?= $activePath === 'schedule' ? 'active' : '' ?>">
-    <i class="bi bi-calendar3"></i> Schedule
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('map.view')): ?>
-  <a href="/map" class="nav-link <?= $activePath === 'map' ? 'active' : '' ?>">
-    <i class="bi bi-map"></i> Field Map
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('tickets.checkin')): ?>
-  <a href="/my-jobs" class="nav-link <?= $activePath === 'my-jobs' ? 'active' : '' ?>">
-    <i class="bi bi-briefcase"></i> My Jobs
-  </a>
-  <?php endif; ?>
-  <?php endif; ?>
-
-  <?php if (hasPermission('installations.view')): ?>
-  <div class="nav-section">Installations</div>
-  <a href="/installations" class="nav-link <?= $activePath === 'installations' ? 'active' : '' ?>">
-    <i class="bi bi-wifi"></i> Installations
-  </a>
-  <?php endif; ?>
-
-  <?php if (hasPermission('finance.view')): ?>
-  <div class="nav-section">Finance</div>
-  <a href="/finance" class="nav-link <?= $activePath === 'finance' ? 'active' : '' ?>">
-    <i class="bi bi-graph-up-arrow"></i> Finance Dashboard
-  </a>
-  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
-    <i class="bi bi-cash-coin"></i> Payment Requests
-  </a>
-  <?php elseif (hasPermission('payment_requests.create') || hasPermission('payment_requests.view')): ?>
-  <a href="/payment-requests" class="nav-link <?= $activePath === 'payment-requests' ? 'active' : '' ?>">
-    <i class="bi bi-cash-coin"></i> Payment Requests
-  </a>
-  <?php endif; ?>
-
   <?php
+  // ── Navigation ──────────────────────────────────────────────────────────────
+  // Each module is a collapsible group; the group holding the current page
+  // starts open. A module with only one visible page is shown as a plain link.
+  // Visibility rules are unchanged from the flat menu.
   $_invAny = hasPermission('inventory.view') || hasPermission('inventory.assets.view')
           || hasPermission('inventory.items.view') || hasPermission('inventory.cabinets.view')
           || hasPermission('inventory.categories.view') || hasPermission('inventory.requests.view')
           || hasPermission('inventory.requests.create') || hasPermission('inventory.movements.view');
   $_invSub = ($activePath === 'inventory' || str_starts_with($activePath, 'inventory/')) ? explode('/', $activePath)[1] ?? 'dashboard' : '';
-  if ($_invAny):
+  $_fieldAny = hasPermission('schedule.view') || hasPermission('map.view');
+  $_navItem = fn(string $href, string $icon, string $label, bool $active, bool $show = true): array
+      => ['href' => $href, 'icon' => $icon, 'label' => $label, 'active' => $active, 'show' => $show];
+
+  $_navGroups = [
+    ['label' => 'Operations', 'icon' => 'bi-clipboard2-pulse', 'items' => [
+      $_navItem('/tickets',   'bi-ticket-perforated', 'Tickets',   str_starts_with($activePath, 'ticket')),
+      $_navItem('/customers', 'bi-people',            'Customers', $activePath === 'customers', hasPermission('customers.view')),
+    ]],
+    ['label' => 'Field', 'icon' => 'bi-geo-alt', 'items' => [
+      $_navItem('/schedule', 'bi-calendar3', 'Schedule',  $activePath === 'schedule', $_fieldAny && hasPermission('schedule.view')),
+      $_navItem('/map',      'bi-map',       'Field Map', $activePath === 'map',      $_fieldAny && hasPermission('map.view')),
+      $_navItem('/my-jobs',  'bi-briefcase', 'My Jobs',   $activePath === 'my-jobs',  $_fieldAny && hasPermission('tickets.checkin')),
+    ]],
+    ['label' => 'Installations', 'icon' => 'bi-wifi', 'items' => [
+      $_navItem('/installations', 'bi-wifi', 'Installations', $activePath === 'installations', hasPermission('installations.view')),
+    ]],
+    ['label' => 'Finance', 'icon' => 'bi-wallet2', 'items' => [
+      $_navItem('/finance',          'bi-graph-up-arrow', 'Finance Dashboard', $activePath === 'finance', hasPermission('finance.view')),
+      $_navItem('/payment-requests', 'bi-cash-coin',      'Payment Requests',  $activePath === 'payment-requests',
+                hasPermission('finance.view') || hasPermission('payment_requests.create') || hasPermission('payment_requests.view')),
+    ]],
+    ['label' => 'Inventory', 'icon' => 'bi-box-seam', 'items' => [
+      $_navItem('/inventory',                 'bi-box-seam',          'Overview',        $activePath === 'inventory',                             $_invAny && hasPermission('inventory.view')),
+      // Assets and Cabinets are hidden from the menu (per request); their pages still exist.
+      $_navItem('/inventory/items',           'bi-boxes',             'Stock Items',     in_array($_invSub, ['items', 'item-form', 'refill']),    $_invAny && hasPermission('inventory.items.view')),
+      $_navItem('/inventory/categories',      'bi-tags',              'Categories',      $_invSub === 'categories',                               $_invAny && hasPermission('inventory.categories.view')),
+      $_navItem('/inventory/requests',        'bi-clipboard-check',   'Stock Requests',  in_array($_invSub, ['requests', 'request-new']),         $_invAny && (hasPermission('inventory.requests.view') || hasPermission('inventory.requests.create'))),
+      $_navItem('/inventory/movements',       'bi-arrow-left-right',  'Movements',       $_invSub === 'movements',                                $_invAny && hasPermission('inventory.movements.view')),
+      $_navItem('/inventory/purchase-orders', 'bi-receipt',           'Purchase Orders', $_invSub === 'purchase-orders',                          $_invAny && hasPermission('inventory.po.view')),
+      $_navItem('/inventory/serials',         'bi-upc-scan',          'Serial Numbers',  $_invSub === 'serials',                                  $_invAny && hasPermission('inventory.serials.view')),
+    ]],
+    ['label' => 'NOC', 'icon' => 'bi-broadcast', 'items' => [
+      $_navItem('/noc', 'bi-broadcast', 'Network Status', str_starts_with($activePath, 'noc'), hasPermission('noc.view')),
+    ]],
+    ['label' => 'Team', 'icon' => 'bi-people', 'items' => [
+      $_navItem('/team',      'bi-person-badge',          'Team',      $activePath === 'team',      hasPermission('team.view')),
+      $_navItem('/analytics', 'bi-bar-chart-line',        'Analytics', $activePath === 'analytics', hasPermission('analytics.view')),
+      $_navItem('/reports',   'bi-file-earmark-bar-graph', 'Reports',  $activePath === 'reports',   hasPermission('reports.view')),
+    ]],
+    ['label' => 'System', 'icon' => 'bi-gear', 'items' => [
+      $_navItem('/admin',     'bi-gear',          'Admin',     $activePath === 'admin',                   hasPermission('admin.access')),
+      $_navItem('/audit-log', 'bi-journal-text',  'Audit Log', str_starts_with($activePath, 'audit-log'), hasPermission('admin.audit.view')),
+    ]],
+  ];
   ?>
-  <div class="nav-section">Inventory</div>
-  <?php if (hasPermission('inventory.view')): ?>
-  <a href="/inventory" class="nav-link <?= ($activePath === 'inventory') ? 'active' : '' ?>">
-    <i class="bi bi-box-seam"></i> Overview
-  </a>
-  <?php endif; ?>
-  <?php /* Assets — hidden from menu (commented out per request)
-  if (hasPermission('inventory.assets.view')): ?>
-  <a href="/inventory/assets" class="nav-link <?= in_array($_invSub,['assets','asset-form'])?'active':'' ?>">
-    <i class="bi bi-pc-display"></i> Assets
-  </a>
-  <?php endif; */ ?>
-  <?php if (hasPermission('inventory.items.view')): ?>
-  <a href="/inventory/items" class="nav-link <?= in_array($_invSub,['items','item-form','refill'])?'active':'' ?>">
-    <i class="bi bi-boxes"></i> Stock Items
-  </a>
-  <?php endif; ?>
-  <?php /* Cabinets — hidden from menu (commented out per request)
-  if (hasPermission('inventory.cabinets.view')): ?>
-  <a href="/inventory/cabinets" class="nav-link <?= $_invSub==='cabinets'?'active':'' ?>">
-    <i class="bi bi-archive"></i> Cabinets
-  </a>
-  <?php endif; */ ?>
-  <?php if (hasPermission('inventory.categories.view')): ?>
-  <a href="/inventory/categories" class="nav-link <?= $_invSub==='categories'?'active':'' ?>">
-    <i class="bi bi-tags"></i> Categories
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('inventory.requests.view') || hasPermission('inventory.requests.create')): ?>
-  <a href="/inventory/requests" class="nav-link <?= in_array($_invSub,['requests','request-new'])?'active':'' ?>">
-    <i class="bi bi-clipboard-check"></i> Stock Requests
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('inventory.movements.view')): ?>
-  <a href="/inventory/movements" class="nav-link <?= $_invSub==='movements'?'active':'' ?>">
-    <i class="bi bi-arrow-left-right"></i> Movements
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('inventory.po.view')): ?>
-  <a href="/inventory/purchase-orders" class="nav-link <?= $_invSub==='purchase-orders'?'active':'' ?>">
-    <i class="bi bi-receipt"></i> Purchase Orders
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('inventory.serials.view')): ?>
-  <a href="/inventory/serials" class="nav-link <?= $_invSub==='serials'?'active':'' ?>">
-    <i class="bi bi-upc-scan"></i> Serial Numbers
-  </a>
-  <?php endif; ?>
-  <?php endif; ?>
 
-  <?php if (hasPermission('noc.view')): ?>
-  <div class="nav-section">NOC</div>
-  <a href="/noc" class="nav-link <?= str_starts_with($activePath, 'noc') ? 'active' : '' ?>">
-    <i class="bi bi-broadcast"></i> Network Status
+  <nav class="sidebar-nav" aria-label="Main">
+  <a href="/dashboard" class="nav-link <?= $activePath === 'dashboard' ? 'active' : '' ?>">
+    <i class="bi bi-grid-1x2"></i> Dashboard
   </a>
-  <?php endif; ?>
 
-  <?php if (hasPermission('team.view') || hasPermission('analytics.view') || hasPermission('reports.view')): ?>
-  <div class="nav-section">Team</div>
-  <?php if (hasPermission('team.view')): ?>
-  <a href="/team" class="nav-link <?= $activePath === 'team' ? 'active' : '' ?>">
-    <i class="bi bi-person-badge"></i> Team
+  <?php foreach ($_navGroups as $_gi => $_group):
+    $_items = array_values(array_filter($_group['items'], fn($i) => $i['show']));
+    if (!$_items) continue;
+    if (count($_items) === 1):
+      $_it = $_items[0]; ?>
+  <a href="<?= $_it['href'] ?>" class="nav-link <?= $_it['active'] ? 'active' : '' ?>">
+    <?php // Single-page modules (NOC, Installations) keep the module name; a module that
+          // just has one page visible to this user shows that page's name. ?>
+    <?php if (count($_group['items']) === 1): ?>
+    <i class="bi <?= $_group['icon'] ?>"></i> <?= htmlspecialchars($_group['label']) ?>
+    <?php else: ?>
+    <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?>
+    <?php endif; ?>
   </a>
-  <?php endif; ?>
-  <?php if (hasPermission('analytics.view')): ?>
-  <a href="/analytics" class="nav-link <?= $activePath === 'analytics' ? 'active' : '' ?>">
-    <i class="bi bi-bar-chart-line"></i> Analytics
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('reports.view')): ?>
-  <a href="/reports" class="nav-link <?= $activePath === 'reports' ? 'active' : '' ?>">
-    <i class="bi bi-file-earmark-bar-graph"></i> Reports
-  </a>
-  <?php endif; ?>
-  <?php endif; ?>
-
-  <?php if (hasPermission('admin.access')): ?>
-  <div class="nav-section">System</div>
-  <a href="/admin" class="nav-link <?= $activePath === 'admin' ? 'active' : '' ?>">
-    <i class="bi bi-gear"></i> Admin
-  </a>
-  <?php endif; ?>
-  <?php if (hasPermission('admin.audit.view')): ?>
-  <a href="/audit-log" class="nav-link <?= str_starts_with($activePath, 'audit-log') ? 'active' : '' ?>">
-    <i class="bi bi-journal-text"></i> Audit Log
-  </a>
-  <?php endif; ?>
+    <?php continue; endif;
+    $_open = (bool)array_filter($_items, fn($i) => $i['active']);
+    $_gid  = 'navgroup-' . $_gi; ?>
+  <div class="nav-group<?= $_open ? ' open has-active' : '' ?>">
+    <button type="button" class="nav-group-toggle" aria-expanded="<?= $_open ? 'true' : 'false' ?>" aria-controls="<?= $_gid ?>">
+      <i class="bi <?= $_group['icon'] ?>"></i>
+      <span class="flex-grow-1 text-start"><?= htmlspecialchars($_group['label']) ?></span>
+      <i class="bi bi-chevron-right nav-group-chevron" aria-hidden="true"></i>
+    </button>
+    <div class="nav-group-items" id="<?= $_gid ?>">
+      <div>
+      <?php foreach ($_items as $_it): ?>
+        <a href="<?= $_it['href'] ?>" class="nav-link <?= $_it['active'] ? 'active' : '' ?>">
+          <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?>
+        </a>
+      <?php endforeach; ?>
+      </div>
+    </div>
+  </div>
+  <?php endforeach; ?>
+  </nav>
 
   <!-- Logout as last nav item — visible only on mobile (desktop uses the icon in user-panel) -->
   <a href="/logout" class="nav-link d-lg-none" style="margin-top:.25rem;color:#ef4444 !important">
