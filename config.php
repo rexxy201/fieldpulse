@@ -228,6 +228,16 @@ function ticketFieldError(array $b): ?string {
 define('TEMP_PASSWORD_HOURS', 72);
 
 /**
+ * Passwords that were once shipped as defaults (seeded admin, old Team-page
+ * default). Signing in with one forces a change, and they can't be chosen again.
+ */
+const WEAK_DEFAULT_PASSWORDS = ['admin123', 'password'];
+
+function isWeakDefaultPassword(string $plain): bool {
+    return in_array(strtolower($plain), WEAK_DEFAULT_PASSWORDS, true);
+}
+
+/**
  * Sets an admin-issued temporary password: the member must replace it at next
  * sign-in, and it stops working after TEMP_PASSWORD_HOURS so one that was
  * never passed on (or was intercepted) doesn't stay valid indefinitely.
@@ -247,6 +257,7 @@ function changeOwnPassword(string $userId, string $current, string $new, string 
     if (strlen($new) < 8) return 'Your new password must be at least 8 characters.';
     if ($new !== $confirm) return 'The new passwords do not match.';
     if ($new === $current) return 'Your new password must be different from the current one.';
+    if (isWeakDefaultPassword($new)) return 'That password is a well-known default. Choose a different one.';
     dbRun("UPDATE users SET password = ?, must_change_password = 0, temp_password_expires_at = NULL WHERE id = ?", [hashPassword($new), $userId]);
     keepSessionAfterPasswordChange($userId);
     return null;
@@ -310,6 +321,13 @@ function attemptLogin(string $username, string $password, ?string $ip = null): a
         // Clears this username+IP's failures; the legacy per-account columns
         // are no longer set but are reset here so old locks don't linger.
         rateLimitClear('login_fail_user_ip', $pairKey);
+        // Still on an old default password (e.g. admin123): let them in, but
+        // requireAuth() holds them on My Account until they change it. No
+        // expiry is set, unlike an admin-issued temporary password.
+        if (isWeakDefaultPassword($password) && empty($user['must_change_password'])) {
+            dbRun("UPDATE users SET must_change_password = 1 WHERE id = ?", [$user['id']]);
+            $user['must_change_password'] = 1;
+        }
         if ((int)($user['failed_login_attempts'] ?? 0) !== 0 || !empty($user['locked_until'])) {
             dbRun("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", [$user['id']]);
         }

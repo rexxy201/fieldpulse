@@ -81,7 +81,7 @@ require __DIR__ . '/../includes/header.php';
 </div>
 
 <?php if (!empty($fresh['must_change_password'])): ?>
-<div class="alert alert-warning py-2"><i class="bi bi-key me-1"></i>You signed in with a temporary password. Choose a new password below to continue.</div>
+<div class="alert alert-warning py-2"><i class="bi bi-key me-1"></i>Your password must be changed: it's temporary or a well-known default. Choose a new password below to continue.</div>
 <?php endif; ?>
 
 <?php if ($msg): ?>
