@@ -1,6 +1,15 @@
 <?php
 // Let PHP built-in server serve static files (CSS, JS, images, fonts) natively
-$_staticPath = __DIR__ . parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$_urlPath    = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/';
+$_staticPath = __DIR__ . $_urlPath;
+// Same rule as .htaccess (which covers Apache): only this router may be
+// requested as a URL. Other PHP files and vendor/ or includes/ are a 404,
+// never executed or served (the built-in server would otherwise run them).
+if (realpath($_staticPath) !== __FILE__
+    && (preg_match('/\.(php[0-9]?|phtml|phar)$/i', $_urlPath) || preg_match('#^/(vendor|includes)(/|$)#i', $_urlPath))
+    && file_exists($_staticPath)) {
+    http_response_code(404); exit;
+}
 if (is_file($_staticPath)) { return false; }
 
 require_once __DIR__ . '/config.php';

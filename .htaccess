@@ -3,6 +3,17 @@ Options +FollowSymLinks
 
 RewriteEngine On
 
+# Only index.php may be requested as a URL. Every other PHP file (pages/,
+# api/, includes/, vendor/, anything uploaded) is code the router loads with
+# require; requested directly it would run outside the router and its checks.
+# 404 rather than 403 so the response doesn't confirm the file exists. Also
+# covers /file.php/extra path-info tricks and other PHP-executed extensions.
+RewriteRule ^index\.php$ - [L]
+RewriteRule \.(php[0-9]?|phtml|phar)(/|$) - [NC,R=404,L]
+
+# Third-party code and templates are never served, PHP or not.
+RewriteRule ^(vendor|includes)(/|$) - [NC,R=404,L]
+
 # Serve real files and directories directly (CSS, JS, images, etc.)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
@@ -23,7 +34,3 @@ RewriteRule ^ index.php [QSA,L]
     Deny from all
 </FilesMatch>
 
-# Allow access to PHP files only through the router
-<FilesMatch "^(index)\.php$">
-    Allow from all
-</FilesMatch>

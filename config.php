@@ -430,6 +430,13 @@ function isAdmin(): bool {
     return hasRole('admin', 'project_admin');
 }
 
+/** SELECT list for GET /api/users, narrowed for users without team.view. */
+function usersListColumns(): string {
+    return hasPermission('team.view')
+        ? "SELECT id,username,name,email,phone,role,hub_id,team_id,vendor_id,status"
+        : "SELECT id,name,role";
+}
+
 // ─── SQL dialect helpers (MySQL ↔ PostgreSQL) ─────────────────────────────────
 /** Quoted `key` identifier for app_config table — backtick in MySQL, plain in PostgreSQL */
 function dbKey(): string {
