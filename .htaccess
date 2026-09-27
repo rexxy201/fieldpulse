@@ -34,6 +34,14 @@ RewriteRule ^ index.php [QSA,L]
     Deny from all
 </FilesMatch>
 
+# PHP writes its error log into the document root as "error_log" (no
+# extension, so the list above doesn't catch it). It reveals paths and
+# errors; never serve it.
+<FilesMatch "^(error_log|php_errorlog)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
 # Block direct execution of config/secrets — these must only ever be loaded via
 # require/include from index.php, never requested as a URL.
 <FilesMatch "^(config|secrets|secrets\.example)\.php$">
