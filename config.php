@@ -3675,6 +3675,53 @@ if (!$_sv47) {
     }
 }
 
+// schema_v48: ticket_checkins (GPS check-in, Phase 8c). It shipped only as
+// database/phase8c_migration.sql, which has to be run by hand; on a database
+// where nobody ran it every ticket page failed ("Table ... ticket_checkins
+// doesn't exist"). Created here so a deploy is enough. CREATE TABLE IF NOT
+// EXISTS leaves a database that already ran the SQL file untouched. The flag
+// is only recorded once the table really exists, so a failure retries.
+$_k = dbKey();
+$_sv48 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v48_migrated'");
+if (!$_sv48) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            db()->exec("CREATE TABLE IF NOT EXISTS `ticket_checkins` (
+                `id`             varchar(36)    NOT NULL,
+                `ticket_id`      varchar(36)    NOT NULL,
+                `user_id`        varchar(36)    NOT NULL,
+                `user_name`      varchar(255)   NOT NULL DEFAULT '',
+                `latitude`       decimal(10,7)  NOT NULL,
+                `longitude`      decimal(10,7)  NOT NULL,
+                `accuracy`       float          DEFAULT NULL,
+                `checked_in_at`  datetime       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `checked_out_at` datetime       DEFAULT NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_ticket_checkins_ticket` (`ticket_id`),
+                KEY `idx_ticket_checkins_user`   (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } else {
+            db()->exec("CREATE TABLE IF NOT EXISTS ticket_checkins (
+                id             varchar(36)   NOT NULL PRIMARY KEY,
+                ticket_id      varchar(36)   NOT NULL,
+                user_id        varchar(36)   NOT NULL,
+                user_name      varchar(255)  NOT NULL DEFAULT '',
+                latitude       decimal(10,7) NOT NULL,
+                longitude      decimal(10,7) NOT NULL,
+                accuracy       real          DEFAULT NULL,
+                checked_in_at  timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                checked_out_at timestamp     DEFAULT NULL
+            )");
+            db()->exec("CREATE INDEX IF NOT EXISTS idx_ticket_checkins_ticket ON ticket_checkins (ticket_id)");
+            db()->exec("CREATE INDEX IF NOT EXISTS idx_ticket_checkins_user ON ticket_checkins (user_id)");
+        }
+        dbFetch("SELECT 1 FROM ticket_checkins LIMIT 1");
+        dbUpsertConfig('schema_v48_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v48 migration error: ' . $e->getMessage());
+    }
+}
+
 // Once NOC_CRED_KEY is set, move stored device credentials off the old format
 // (and the old public repo key). A no-op after the first run for each key.
 try { nocReencryptLegacyCredentials(); }
