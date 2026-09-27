@@ -245,6 +245,7 @@ function changeOwnPassword(string $userId, string $current, string $new, string 
     if ($new !== $confirm) return 'The new passwords do not match.';
     if ($new === $current) return 'Your new password must be different from the current one.';
     dbRun("UPDATE users SET password = ?, must_change_password = 0, temp_password_expires_at = NULL WHERE id = ?", [hashPassword($new), $userId]);
+    keepSessionAfterPasswordChange($userId);
     return null;
 }
 
@@ -345,13 +346,57 @@ function isActiveUserRow(array $user): bool {
  */
 function refreshSessionUser(): bool {
     $row = dbFetch("SELECT * FROM users WHERE id = ?", [$_SESSION['user_id']]);
-    if (!$row || !isActiveUserRow($row)) {
+    if (!$row || !isActiveUserRow($row) || !sessionPasswordMatches($row)) {
         $_SESSION = [];
         session_destroy();
         return false;
     }
     $_SESSION['user'] = sanitizeUser($row);
     return true;
+}
+
+/**
+ * Sessions are tied to the password they were signed in with, so changing or
+ * resetting a password signs out every other session for that account (e.g.
+ * one on a lost phone, or one an attacker is holding). Only a fingerprint of
+ * the stored hash is kept in the session, never the hash itself.
+ */
+function passwordFingerprint(array $userRow): string {
+    return hash('sha256', 'fieldpulse-session|' . ($userRow['password'] ?? ''));
+}
+
+/** Signs $user in on this session (after the password and any 2FA check). */
+function startUserSession(array $user): void {
+    session_regenerate_id(true);
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    $_SESSION['user_id']    = $user['id'];
+    $_SESSION['user']       = sanitizeUser($user);
+    $_SESSION['pw_fp']      = passwordFingerprint($user);
+}
+
+function sessionPasswordMatches(array $row): bool {
+    $fp = passwordFingerprint($row);
+    // Sessions from before this check existed carry no fingerprint: adopt the
+    // current one rather than signing everyone out at deploy.
+    if (!isset($_SESSION['pw_fp'])) {
+        $_SESSION['pw_fp'] = $fp;
+        return true;
+    }
+    return hash_equals($_SESSION['pw_fp'], $fp);
+}
+
+/**
+ * Call after changing $userId's password. If that is the signed-in user, this
+ * session is kept (with a fresh ID) and re-tied to the new password; all of
+ * their other sessions end on their next request.
+ */
+function keepSessionAfterPasswordChange(string $userId): void {
+    if (session_status() !== PHP_SESSION_ACTIVE || ($_SESSION['user_id'] ?? null) !== $userId) return;
+    $row = dbFetch("SELECT * FROM users WHERE id = ?", [$userId]);
+    if (!$row) return;
+    if (!headers_sent()) session_regenerate_id(true);
+    $_SESSION['pw_fp'] = passwordFingerprint($row);
+    $_SESSION['user']  = sanitizeUser($row);
 }
 
 function requireAuth(): void {

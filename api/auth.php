@@ -13,13 +13,11 @@ if ($action === 'login' && method() === 'POST') {
         if (!empty($user['twofa_enabled']) && !empty($user['email'])) {
             session_regenerate_id(true);
             $_SESSION['twofa_pending_user_id'] = $user['id'];
+            $_SESSION['twofa_pending_pw_fp']   = passwordFingerprint($user);
             issueTwoFactorCode($user['id'], $user['email'], $user['name']);
             jsonResponse(['twofaRequired' => true]);
         }
-        session_regenerate_id(true);
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['user']    = sanitizeUser($user);
+        startUserSession($user);
         try { auditLog('login', 'user', $user['id']); } catch (Throwable) {}
         jsonResponse(sanitizeUser($user));
     }

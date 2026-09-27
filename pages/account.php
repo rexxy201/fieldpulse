@@ -49,7 +49,6 @@ if (method() === 'POST') {
         if ($err !== null) {
             $msg = $err; $msgType = 'danger';
         } else {
-            session_regenerate_id(true);
             $_SESSION['user']['must_change_password'] = 0;
             $fresh['must_change_password'] = 0;
             auditLog('change_password', 'user', $fresh['id']);

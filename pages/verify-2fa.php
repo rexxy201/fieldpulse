@@ -5,7 +5,12 @@ if (isLoggedIn()) { header('Location: /dashboard'); exit; }
 $pendingUserId = $_SESSION['twofa_pending_user_id'] ?? null;
 if (!$pendingUserId) { header('Location: /login'); exit; }
 $user = dbFetch("SELECT * FROM users WHERE id = ? AND twofa_enabled = 1", [$pendingUserId]);
-if (!$user) { unset($_SESSION['twofa_pending_user_id']); header('Location: /login'); exit; }
+// The password verified at sign-in must still be the account's password: a
+// change or reset in between cancels the pending sign-in.
+if (!$user || !hash_equals($_SESSION['twofa_pending_pw_fp'] ?? '', passwordFingerprint($user))) {
+    unset($_SESSION['twofa_pending_user_id'], $_SESSION['twofa_pending_pw_fp']);
+    header('Location: /login'); exit;
+}
 
 $_cfg          = getAppConfig();
 $_loginLogo    = $_cfg['companyLogo']  ?? '';
@@ -36,11 +41,8 @@ if (method() === 'POST') {
         }
         $code = trim($_POST['code'] ?? '');
         if (verifyTwoFactorCode($user['id'], $code)) {
-            unset($_SESSION['twofa_pending_user_id'], $_SESSION['twofa_last_resend']);
-            session_regenerate_id(true);
-            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['user']    = sanitizeUser($user);
+            unset($_SESSION['twofa_pending_user_id'], $_SESSION['twofa_pending_pw_fp'], $_SESSION['twofa_last_resend']);
+            startUserSession($user);
             try { auditLog('login', 'user', $user['id'], '2fa'); } catch (Throwable) {}
             header('Location: /dashboard'); exit;
         }
