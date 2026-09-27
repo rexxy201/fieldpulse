@@ -11,8 +11,15 @@ RewriteEngine On
 RewriteRule ^index\.php$ - [L]
 RewriteRule \.(php[0-9]?|phtml|phar)(/|$) - [NC,R=404,L]
 
-# Third-party code and templates are never served, PHP or not.
-RewriteRule ^(vendor|includes)(/|$) - [NC,R=404,L]
+# Third-party code and templates are never served, PHP or not. The git
+# checkout is the document root on the live server, so repo-only folders
+# (tests, scripts, database) are blocked here as well.
+RewriteRule ^(vendor|includes|tests|scripts|database|graphify-out)(/|$) - [NC,R=404,L]
+
+# Dotfiles and dot-folders: above all .git/, which would otherwise let anyone
+# download the full source and history. /.well-known/ stays reachable for
+# SSL (AutoSSL / Let's Encrypt) validation.
+RewriteRule (^|/)\.(?!well-known(/|$)) - [NC,R=404,L]
 
 # Serve real files and directories directly (CSS, JS, images, etc.)
 RewriteCond %{REQUEST_FILENAME} !-f
@@ -22,7 +29,15 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]
 
 # Security: block direct access to sensitive files
-<FilesMatch "\.(sql|log|env|json|md|gitignore)$">
+<FilesMatch "\.(sql|log|env|json|md|gitignore|lock|yml|yaml|xml|dist|sh)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# PHP writes its error log into the document root as "error_log" (no
+# extension, so the list above doesn't catch it). It reveals paths and
+# errors; never serve it.
+<FilesMatch "^(error_log|php_errorlog)$">
     Order Allow,Deny
     Deny from all
 </FilesMatch>

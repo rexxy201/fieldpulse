@@ -11,7 +11,7 @@
 # if the clone lives elsewhere):
 #
 #   mkdir -p ~/bin ~/logs
-#   cp scripts/deploy.sh ~/bin/deploy-fieldpulse.sh
+#   cp /home/mangonetcom/fieldpulse.mangonetonline.com/scripts/deploy.sh ~/bin/deploy-fieldpulse.sh
 #   chmod 700 ~/bin/deploy-fieldpulse.sh
 #   ~/bin/deploy-fieldpulse.sh          # run once by hand before trusting cron
 #
@@ -24,7 +24,10 @@
 
 set -u
 
-REPO="${REPO:-/home/mangonetcom/repositories/fieldpulse}"
+# On the live server the repository is cloned straight into the document
+# root, so the fast-forward below is itself the deploy.
+REPO="${REPO:-/home/mangonetcom/fieldpulse.mangonetonline.com}"
+SITE="${SITE:-/home/mangonetcom/fieldpulse.mangonetonline.com}"
 BRANCH="${BRANCH:-main}"
 GIT=/usr/bin/git
 UAPI=/usr/local/cpanel/bin/uapi
@@ -51,6 +54,13 @@ REMOTE=$($GIT rev-parse "origin/$BRANCH")
 if ! $GIT merge --ff-only "origin/$BRANCH" --quiet; then
     log "ERROR: cannot fast-forward $BRANCH — the checkout has diverged, resolve by hand"
     exit 1
+fi
+
+# When the repository is the document root the files are already live;
+# running .cpanel.yml as well would only copy them onto themselves.
+if [ "$(realpath "$REPO")" = "$(realpath "$SITE")" ]; then
+    log "deployed $($GIT rev-parse --short @) ($($GIT log -1 --pretty=%s))"
+    exit 0
 fi
 
 if ! $UAPI VersionControlDeployment create repository_root="$REPO"; then

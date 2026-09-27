@@ -20,10 +20,8 @@ deployment:
     # --delete here also clears out packages dropped from composer.lock,
     # which plain cp would leave behind indefinitely.
     - /usr/bin/rsync -a --delete vendor/   ${DEPLOYPATH}vendor/
-    # Root-level files stay a plain copy. There is no safe way to mirror the
-    # document root itself.
-    - /bin/cp index.php $DEPLOYPATH
-    - /bin/cp config.php $DEPLOYPATH
-    - /bin/cp composer.json $DEPLOYPATH
-    - /bin/cp composer.lock $DEPLOYPATH
-    - /bin/cp .htaccess $DEPLOYPATH
+    # Root-level files are copied without --delete: there is no safe way to
+    # mirror the document root itself. rsync rather than cp because on the
+    # live server the repository IS the document root, and cp refuses to copy
+    # a file onto itself (failing the deployment); rsync treats it as a no-op.
+    - /usr/bin/rsync -a index.php config.php composer.json composer.lock .htaccess $DEPLOYPATH

@@ -54,7 +54,10 @@ final class DirectAccessTest extends TestCase
         $ht = file_get_contents(__DIR__ . '/../../.htaccess');
         $this->assertStringContainsString('RewriteRule ^index\.php$ - [L]', $ht);
         $this->assertMatchesRegularExpression('/RewriteRule \\\\\.\(php\[0-9\]\?\|phtml\|phar\)\(\/\|\$\) - \[NC,R=404,L\]/', $ht);
-        $this->assertStringContainsString('RewriteRule ^(vendor|includes)(/|$) - [NC,R=404,L]', $ht);
+        $this->assertStringContainsString('RewriteRule ^(vendor|includes|tests|scripts|database|graphify-out)(/|$) - [NC,R=404,L]', $ht);
+        // The live document root is the git checkout: .git/ must never be served.
+        $this->assertStringContainsString('RewriteRule (^|/)\\.(?!well-known(/|$)) - [NC,R=404,L]', $ht);
+        $this->assertStringContainsString('<FilesMatch "^(error_log|php_errorlog)$">', $ht);
         // The block has to come before the front-controller rule to take effect.
         $this->assertLessThan(strpos($ht, 'RewriteRule ^ index.php'), strpos($ht, 'R=404'));
     }
