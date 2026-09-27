@@ -29,6 +29,10 @@ abstract class TestCase extends BaseTestCase
             }
         }
         $this->cleanup = [];
+        // Sign-in throttling counters are keyed by IP, and every test signs in
+        // from the same CLI "IP"; clear them so tests (and reruns) don't trip
+        // each other's limits.
+        try { dbRun("DELETE FROM rate_limit_hits WHERE bucket LIKE 'login_fail%'"); } catch (\Throwable $e) {}
         parent::tearDown();
     }
 

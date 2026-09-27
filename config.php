@@ -261,18 +261,37 @@ function verifyPassword(string $plain, string $stored): bool {
 // ─── Login brute-force lockout ─────────────────────────────────────────────────
 define('LOGIN_MAX_ATTEMPTS', 5);
 define('LOGIN_LOCKOUT_MINUTES', 15);
+define('LOGIN_IP_MAX_FAILURES', 30);
 
 /**
  * Shared by pages/login.php and api/auth.php so both entry points get the same
  * lockout behavior. Returns ['ok'=>bool, 'user'=>array|null, 'error'=>?string].
+ *
+ * Failed sign-ins are throttled in two ways, both counting failures only
+ * (successful sign-ins never count, so a whole office behind one IP is fine):
+ *  - per username + IP: LOGIN_MAX_ATTEMPTS failures lock that username out
+ *    from that IP only. The old lock was per account, from any IP, so anyone
+ *    could keep e.g. "admin" locked out indefinitely by guessing wrong.
+ *  - per IP: LOGIN_IP_MAX_FAILURES failures across any usernames block that
+ *    IP, which stops password-spraying many accounts from one address.
+ * Unknown usernames are counted the same way as real ones, so the lock
+ * message doesn't reveal which usernames exist.
  */
-function attemptLogin(string $username, string $password): array {
-    $user = dbFetch("SELECT * FROM users WHERE username = ?", [$username]);
+function attemptLogin(string $username, string $password, ?string $ip = null): array {
+    $ip      ??= clientIp();
+    $window  = LOGIN_LOCKOUT_MINUTES;
+    $pairKey = hash('sha256', strtolower(trim($username)) . '|' . $ip);
 
-    if ($user && !empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
-        $mins = (int)ceil((strtotime($user['locked_until']) - time()) / 60);
-        return ['ok' => false, 'user' => null, 'error' => "Too many failed attempts. Try again in {$mins} minute" . ($mins===1?'':'s') . "."];
+    $ipState = rateLimitState('login_fail_ip', $ip, $window);
+    if ($ipState['count'] >= LOGIN_IP_MAX_FAILURES) {
+        return ['ok' => false, 'user' => null, 'error' => 'Too many failed sign-in attempts from your network. Try again in ' . loginMinutesText($ipState['resetsIn']) . '.'];
     }
+    $pairState = rateLimitState('login_fail_user_ip', $pairKey, $window);
+    if ($pairState['count'] >= LOGIN_MAX_ATTEMPTS) {
+        return ['ok' => false, 'user' => null, 'error' => 'Too many failed attempts. Try again in ' . loginMinutesText($pairState['resetsIn']) . '.'];
+    }
+
+    $user = dbFetch("SELECT * FROM users WHERE username = ?", [$username]);
 
     if ($user && verifyPassword($password, $user['password'])) {
         // Checked only after the password verifies, so it reveals nothing to
@@ -284,22 +303,23 @@ function attemptLogin(string $username, string $password): array {
             && strtotime($user['temp_password_expires_at']) < time()) {
             return ['ok' => false, 'user' => null, 'error' => 'Your temporary password has expired. Ask an admin to reset it.'];
         }
+        // Clears this username+IP's failures; the legacy per-account columns
+        // are no longer set but are reset here so old locks don't linger.
+        rateLimitClear('login_fail_user_ip', $pairKey);
         if ((int)($user['failed_login_attempts'] ?? 0) !== 0 || !empty($user['locked_until'])) {
             dbRun("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?", [$user['id']]);
         }
         return ['ok' => true, 'user' => $user, 'error' => null];
     }
 
-    if ($user) {
-        $attempts = (int)($user['failed_login_attempts'] ?? 0) + 1;
-        if ($attempts >= LOGIN_MAX_ATTEMPTS) {
-            $lockUntil = date('Y-m-d H:i:s', time() + LOGIN_LOCKOUT_MINUTES * 60);
-            dbRun("UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?", [$attempts, $lockUntil, $user['id']]);
-        } else {
-            dbRun("UPDATE users SET failed_login_attempts = ? WHERE id = ?", [$attempts, $user['id']]);
-        }
-    }
+    rateLimitRecord('login_fail_ip', $ip, $window);
+    rateLimitRecord('login_fail_user_ip', $pairKey, $window);
     return ['ok' => false, 'user' => null, 'error' => 'Invalid username or password.'];
+}
+
+function loginMinutesText(int $seconds): string {
+    $mins = max(1, (int)ceil($seconds / 60));
+    return $mins . ' minute' . ($mins === 1 ? '' : 's');
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -3610,6 +3630,45 @@ function rateLimitCheck(string $bucket, string $key, int $maxAttempts, int $wind
     if ((int)$row['attempt_count'] >= $maxAttempts) return false;
     dbRun("UPDATE rate_limit_hits SET attempt_count=attempt_count+1 WHERE id=?", [$row['id']]);
     return true;
+}
+
+/**
+ * Read-only view of a rate_limit_hits counter: the count in the current
+ * window (0 if none or expired) and seconds until that window resets.
+ * Unlike rateLimitCheck(), it records nothing — used with rateLimitRecord()
+ * where only some outcomes (e.g. failed sign-ins) should count.
+ */
+function rateLimitState(string $bucket, string $key, int $windowMinutes): array {
+    $row = dbFetch("SELECT attempt_count, window_start FROM rate_limit_hits WHERE bucket=? AND rate_key=?", [$bucket, $key]);
+    if (!$row) return ['count' => 0, 'resetsIn' => 0];
+    $resetsIn = strtotime($row['window_start']) + $windowMinutes * 60 - time();
+    if ($resetsIn <= 0) return ['count' => 0, 'resetsIn' => 0];
+    return ['count' => (int)$row['attempt_count'], 'resetsIn' => $resetsIn];
+}
+
+/** Adds one to a counter, starting a fresh window if the old one expired. */
+function rateLimitRecord(string $bucket, string $key, int $windowMinutes): void {
+    $row = dbFetch("SELECT id, window_start FROM rate_limit_hits WHERE bucket=? AND rate_key=?", [$bucket, $key]);
+    if (!$row) {
+        try {
+            dbRun("INSERT INTO rate_limit_hits (id,bucket,rate_key,attempt_count,window_start) VALUES (?,?,?,1,NOW())",
+                [newUuid(), $bucket, $key]);
+            return;
+        } catch (\Throwable $e) {
+            // Unique-key race: another request inserted it; fall through to increment.
+            $row = dbFetch("SELECT id, window_start FROM rate_limit_hits WHERE bucket=? AND rate_key=?", [$bucket, $key]);
+            if (!$row) return;
+        }
+    }
+    if (time() - strtotime($row['window_start']) > $windowMinutes * 60) {
+        dbRun("UPDATE rate_limit_hits SET attempt_count=1, window_start=NOW() WHERE id=?", [$row['id']]);
+    } else {
+        dbRun("UPDATE rate_limit_hits SET attempt_count=attempt_count+1 WHERE id=?", [$row['id']]);
+    }
+}
+
+function rateLimitClear(string $bucket, string $key): void {
+    dbRun("DELETE FROM rate_limit_hits WHERE bucket=? AND rate_key=?", [$bucket, $key]);
 }
 
 /** Best-effort client IP for rate-limit keys — not identity, just a throttle key. */
