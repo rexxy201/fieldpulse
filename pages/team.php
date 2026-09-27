@@ -53,6 +53,7 @@ if (method() === 'POST') {
             // (unless the admin is setting their own).
             if ($b['id'] === (currentUser()['id'] ?? null)) {
                 dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
+                keepSessionAfterPasswordChange($b['id']);
             } else {
                 setTemporaryPassword($b['id'], $b['new_password']);
             }
