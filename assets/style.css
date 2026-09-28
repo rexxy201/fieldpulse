@@ -542,3 +542,11 @@ a { text-decoration: none; }
 @keyframes sp-pulse { 50% { opacity: .75; } }
 @media (prefers-reduced-motion: reduce) { .softphone[data-state="ringing"] .softphone-toggle { animation: none; } }
 
+
+/* ── Support WhatsApp inbox ───────────────────────────────────────────── */
+.wa-list { max-height: 70vh; overflow-y: auto; }
+.wa-thread { height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; background: rgba(37, 211, 102, .05); }
+.wa-msg { max-width: 75%; padding: .45rem .65rem; border-radius: .6rem; font-size: .9rem; word-wrap: break-word; }
+.wa-in  { align-self: flex-start; background: var(--bs-body-bg, #fff); border: 1px solid rgba(0,0,0,.08); }
+.wa-out { align-self: flex-end; background: rgba(37, 211, 102, .18); }
+.wa-meta { font-size: .72rem; opacity: .7; text-align: right; margin-top: .15rem; }

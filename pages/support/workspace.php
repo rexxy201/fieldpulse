@@ -20,7 +20,7 @@ if (method() === 'POST') {
     verifyCsrf();
     $action = $_POST['_action'] ?? '';
     $back   = '/support' . (!empty($_POST['customer_id']) ? '?customer=' . urlencode($_POST['customer_id']) : '');
-    $callQs = !empty($_POST['call_id']) ? 'call=' . urlencode($_POST['call_id']) : '';
+    $callQs = !empty($_POST['call_id']) ? 'call=' . urlencode($_POST['call_id']) : (!empty($_POST['wa_conversation_id']) ? 'wa=' . urlencode($_POST['wa_conversation_id']) : '');
     $flash  = null;
 
     if ($action === 'log') {
@@ -116,6 +116,10 @@ $logCall = !empty($_GET['call']) ? dbFetch("SELECT * FROM cs_calls WHERE id = ? 
 if ($logCall) {
     $form += ['channel' => 'call', 'direction' => $logCall['direction'],
               'contact_phone' => $logCall['direction'] === 'inbound' ? $logCall['from_number'] : $logCall['to_number']];
+}
+$logWa = !empty($_GET['wa']) ? dbFetch("SELECT * FROM cs_wa_conversations WHERE id = ? AND (assigned_to IS NULL OR assigned_to = ? OR ? = 1)", [$_GET['wa'], $me['id'], $viewAll ? 1 : 0]) : null;
+if ($logWa) {
+    $form += ['channel' => 'whatsapp', 'direction' => 'inbound', 'contact_phone' => '+' . $logWa['wa_phone'], 'contact_name' => $logWa['contact_name']];
 }
 $myStatus  = csAgentStatus($me['id']);
 $wrapCodes = csWrapCodesGrouped();
@@ -260,6 +264,8 @@ require __DIR__ . '/../../includes/header.php';
         <input type="hidden" name="started_ts" value="<?= $h($form['started_ts'] ?? $startedTs) ?>">
         <input type="hidden" name="customer_id" value="<?= $h($customer['id'] ?? '') ?>">
         <input type="hidden" name="call_id" value="<?= $h($logCall['id'] ?? ($form['call_id'] ?? '')) ?>">
+        <input type="hidden" name="wa_conversation_id" value="<?= $h($logWa['id'] ?? ($form['wa_conversation_id'] ?? '')) ?>">
+        <?php if ($logWa): ?><div class="alert alert-info py-1 small">Logging the WhatsApp conversation with +<?= $h($logWa['wa_phone']) ?>.</div><?php endif; ?>
         <?php if ($logCall): ?><div class="alert alert-info py-1 small">Logging the <?= $h($logCall['direction']) ?> call of <?= $h(date('H:i', strtotime($logCall['started_at']))) ?><?= $logCall['duration_sec'] !== null ? ' (' . (int)round($logCall['duration_sec'] / 60) . ' min)' : '' ?>.</div><?php endif; ?>
         <div class="row g-2">
           <?php if ($newCaller): ?>

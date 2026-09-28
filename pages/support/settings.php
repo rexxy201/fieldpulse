@@ -44,6 +44,26 @@ if (method() === 'POST') {
         if (trim((string)($_POST['atApiKey'] ?? '')) !== '') $v['atApiKey'] = trim((string)$_POST['atApiKey']);
         dbUpsertConfigs($v);
         auditLog('update', 'support_voice_settings', '', 'Telephony settings saved');
+    } elseif ($action === 'whatsapp') {
+        $w = [
+            'waProvider'          => isset(CS_WA_PROVIDERS[$_POST['waProvider'] ?? '']) ? $_POST['waProvider'] : 'none',
+            'atWaNumber'          => csE164(trim((string)($_POST['atWaNumber'] ?? ''))),
+            'metaWaPhoneNumberId' => preg_replace('/\D/', '', (string)($_POST['metaWaPhoneNumberId'] ?? '')),
+            'metaWaTemplate'      => preg_replace('/[^a-z0-9_]/', '', strtolower(trim((string)($_POST['metaWaTemplate'] ?? '')))),
+            'metaWaTemplateLang'  => preg_replace('/[^A-Za-z_]/', '', (string)($_POST['metaWaTemplateLang'] ?? '')) ?: 'en',
+            'waAutoReply'         => mb_substr(trim((string)($_POST['waAutoReply'] ?? '')), 0, 1000),
+        ];
+        // Tokens are write-only: an empty field keeps the stored value.
+        foreach (['metaWaAccessToken', 'metaWaAppSecret'] as $k) {
+            if (trim((string)($_POST[$k] ?? '')) !== '') $w[$k] = trim((string)$_POST[$k]);
+        }
+        if (($w['waProvider'] === 'africastalking') && trim((string)($_POST['atApiKey'] ?? '')) !== '') $w['atApiKey'] = trim((string)$_POST['atApiKey']);
+        if (($w['waProvider'] === 'africastalking') && trim((string)($_POST['atUsername'] ?? '')) !== '') $w['atUsername'] = mb_substr(trim((string)$_POST['atUsername']), 0, 100);
+        dbUpsertConfigs($w);
+        auditLog('update', 'support_whatsapp_settings', '', 'WhatsApp settings saved');
+    } elseif ($action === 'wa_secret') {
+        dbUpsertConfig('waWebhookSecret', bin2hex(random_bytes(20)));
+        auditLog('update', 'support_whatsapp_settings', '', 'WhatsApp webhook secret regenerated');
     } elseif ($action === 'voice_secret') {
         dbUpsertConfig('voiceWebhookSecret', bin2hex(random_bytes(20)));
         auditLog('update', 'support_voice_settings', '', 'Callback secret regenerated');
@@ -56,6 +76,7 @@ $usage = [];
 foreach (dbFetchAll("SELECT wrap_code_id, COUNT(*) AS n FROM cs_interactions GROUP BY wrap_code_id") as $u) $usage[$u['wrap_code_id']] = (int)$u['n'];
 
 $voice     = csVoiceSettings();
+$wa        = csWaSettings();
 $vcfg      = getAppConfig();
 $assignees = dbFetchAll("SELECT DISTINCT u.id, u.name FROM users u JOIN role_permissions rp ON rp.role = u.role
                          WHERE rp.permission = 'support.view' OR u.role = 'admin' ORDER BY u.name");
@@ -142,6 +163,91 @@ require __DIR__ . '/../../includes/header.php';
     <div class="text-muted mt-1">Treat this URL like a password: anyone who has it can send fake call events.</div>
   </div>
 </div>
+
+<div class="card-section mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-whatsapp me-1 text-success"></i>WhatsApp</span>
+    <span class="badge bg-<?= csWaEnabled($wa) ? 'success' : 'secondary' ?>"><?= csWaEnabled($wa) ? 'WhatsApp active' : 'WhatsApp off' ?></span>
+  </div>
+  <form method="POST" class="p-3">
+    <?= csrfField() ?>
+    <input type="hidden" name="_action" value="whatsapp">
+    <div class="row g-2">
+      <div class="col-sm-4">
+        <label class="form-label small fw-semibold mb-1">Provider</label>
+        <select name="waProvider" class="form-select form-select-sm" id="waProv">
+          <?php foreach (CS_WA_PROVIDERS as $k => $l): ?><option value="<?= $k ?>" <?= $wa['provider'] === $k ? 'selected' : '' ?>><?= $h($l) ?></option><?php endforeach; ?>
+        </select>
+      </div>
+      <div class="col-sm-8 small text-muted d-flex align-items-end">Africa's Talking uses the username and API key from Telephony above.</div>
+
+      <div class="col-sm-4 wa-at">
+        <label class="form-label small fw-semibold mb-1">Africa's Talking WhatsApp number</label>
+        <input type="text" name="atWaNumber" value="<?= $h($wa['at_wa_number']) ?>" class="form-control form-control-sm" placeholder="+234…">
+      </div>
+      <?php if ($wa['at_username'] === '' || $wa['at_api_key'] === ''): ?>
+      <div class="col-sm-4 wa-at">
+        <label class="form-label small fw-semibold mb-1">Africa's Talking username</label>
+        <input type="text" name="atUsername" value="<?= $h($wa['at_username']) ?>" class="form-control form-control-sm" autocomplete="off">
+      </div>
+      <div class="col-sm-4 wa-at">
+        <label class="form-label small fw-semibold mb-1">API key <span class="text-muted fw-normal"><?= $wa['at_api_key'] !== '' ? '(set)' : '(not set)' ?></span></label>
+        <input type="password" name="atApiKey" value="" class="form-control form-control-sm" autocomplete="new-password">
+      </div>
+      <?php endif; ?>
+
+      <div class="col-sm-4 wa-meta-f">
+        <label class="form-label small fw-semibold mb-1">Phone number ID</label>
+        <input type="text" name="metaWaPhoneNumberId" value="<?= $h($wa['meta_phone_id']) ?>" class="form-control form-control-sm" inputmode="numeric">
+      </div>
+      <div class="col-sm-4 wa-meta-f">
+        <label class="form-label small fw-semibold mb-1">Access token <span class="text-muted fw-normal"><?= $wa['meta_token'] !== '' ? '(set — leave blank to keep)' : '(not set)' ?></span></label>
+        <input type="password" name="metaWaAccessToken" value="" class="form-control form-control-sm" autocomplete="new-password">
+      </div>
+      <div class="col-sm-4 wa-meta-f">
+        <label class="form-label small fw-semibold mb-1">App secret <span class="text-muted fw-normal"><?= $wa['meta_app_secret'] !== '' ? '(set — leave blank to keep)' : '(required)' ?></span></label>
+        <input type="password" name="metaWaAppSecret" value="" class="form-control form-control-sm" autocomplete="new-password">
+      </div>
+      <div class="col-sm-4 wa-meta-f">
+        <label class="form-label small fw-semibold mb-1">Template after 24h <span class="text-muted fw-normal">(approved name, optional)</span></label>
+        <input type="text" name="metaWaTemplate" value="<?= $h($wa['meta_template']) ?>" class="form-control form-control-sm" placeholder="e.g. follow_up">
+      </div>
+      <div class="col-sm-2 wa-meta-f">
+        <label class="form-label small fw-semibold mb-1">Language</label>
+        <input type="text" name="metaWaTemplateLang" value="<?= $h($wa['meta_template_lang']) ?>" class="form-control form-control-sm" placeholder="en">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label small fw-semibold mb-1">Automatic reply <span class="text-muted fw-normal">(sent when a new or closed conversation starts; blank = none)</span></label>
+        <textarea name="waAutoReply" rows="2" class="form-control form-control-sm" placeholder="Thanks for contacting MangoNet. An agent will reply shortly."><?= $h($wa['auto_reply']) ?></textarea>
+      </div>
+    </div>
+    <div class="mt-3 d-flex justify-content-end"><button class="btn btn-sm btn-primary">Save WhatsApp settings</button></div>
+  </form>
+  <div class="px-3 pb-3 small">
+    <div class="fw-semibold">Webhook URL <span class="text-muted fw-normal">— set this as the incoming-message webhook in the provider's dashboard</span></div>
+    <div class="d-flex gap-2 align-items-center mt-1">
+      <code class="flex-grow-1 text-break user-select-all p-2 bg-light border rounded"><?= $h(csWaWebhookUrl($wa)) ?></code>
+      <form method="POST" onsubmit="return confirm('Regenerate the secret? Messages stop arriving until you paste the new URL into the provider.')">
+        <?= csrfField() ?><input type="hidden" name="_action" value="wa_secret">
+        <button class="btn btn-sm btn-outline-secondary">Regenerate</button>
+      </form>
+    </div>
+    <div class="wa-meta-f mt-2"><span class="fw-semibold">Verify token</span> <span class="text-muted">(Meta asks for this with the webhook URL)</span>
+      <code class="user-select-all ms-1"><?= $h($wa['meta_verify']) ?></code></div>
+    <div class="text-muted mt-1">Treat the URL like a password: anyone who has it can inject messages<?= $wa['provider'] === 'meta' ? ' (Meta posts are also signature-checked)' : '' ?>.</div>
+  </div>
+</div>
+<script>
+(function () {
+  var sel = document.getElementById('waProv');
+  function sync() {
+    document.querySelectorAll('.wa-at').forEach(function (e) { e.style.display = sel.value === 'africastalking' ? '' : 'none'; });
+    document.querySelectorAll('.wa-meta-f').forEach(function (e) { e.style.display = sel.value === 'meta' ? '' : 'none'; });
+  }
+  sel.addEventListener('change', sync); sync();
+})();
+</script>
 
 <div class="card-section mb-3">
   <div class="card-header"><i class="bi bi-plus-lg me-1 text-primary"></i>Add a wrap-up code</div>

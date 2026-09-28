@@ -3940,6 +3940,8 @@ function csLogInteraction(array $in, array $agent): array {
     if ($outcome === 'follow_up' && !$followTs) return ['ok' => false, 'error' => 'Set when the follow-up is due.'];
 
     $callId = trim((string)($in['call_id'] ?? '')) ?: null;
+    $waId   = trim((string)($in['wa_conversation_id'] ?? '')) ?: null;
+    if ($waId && !dbFetch("SELECT id FROM cs_wa_conversations WHERE id = ?", [$waId])) $waId = null;
     $call   = $callId ? dbFetch("SELECT id, duration_sec, started_at FROM cs_calls WHERE id = ?", [$callId]) : null;
 
     $ended   = time();
@@ -3953,11 +3955,11 @@ function csLogInteraction(array $in, array $agent): array {
     }
 
     $id = newUuid();
-    dbRun("INSERT INTO cs_interactions (id,customer_id,contact_name,contact_phone,channel,direction,wrap_code_id,summary,outcome,ticket_id,agent_id,agent_name,started_at,ended_at,duration_sec,created_at,call_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    dbRun("INSERT INTO cs_interactions (id,customer_id,contact_name,contact_phone,channel,direction,wrap_code_id,summary,outcome,ticket_id,agent_id,agent_name,started_at,ended_at,duration_sec,created_at,call_id,wa_conversation_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [$id, $customer['id'] ?? null, mb_substr($name, 0, 150), mb_substr($phone, 0, 40), $channel, $dir, $wrapId, $summary, $outcome, $ticketId,
          $agent['id'], mb_substr((string)($agent['name'] ?? ''), 0, 150),
-         $duration !== null ? date('Y-m-d H:i:s', $started) : null, date('Y-m-d H:i:s', $ended), $duration, date('Y-m-d H:i:s', $ended), $call['id'] ?? null]);
+         $duration !== null ? date('Y-m-d H:i:s', $started) : null, date('Y-m-d H:i:s', $ended), $duration, date('Y-m-d H:i:s', $ended), $call['id'] ?? null, $waId]);
 
     if ($followTs) {
         dbRun("INSERT INTO cs_followups (id,interaction_id,customer_id,contact_name,contact_phone,assigned_to,created_by,due_at,note,status)
@@ -4042,6 +4044,65 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v50_migrated'")) 
 }
 
 require_once __DIR__ . '/includes/support-voice.php';
+
+// schema_v51: WhatsApp inbox — one conversation per customer number, its
+// messages, raw provider webhooks, and the link from logged interactions.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v51_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_conversations (
+            id              VARCHAR(36)  NOT NULL PRIMARY KEY,
+            wa_phone        VARCHAR(20)  NOT NULL,
+            contact_name    VARCHAR(150) NOT NULL DEFAULT '',
+            customer_id     VARCHAR(36)  DEFAULT NULL,
+            status          VARCHAR(10)  NOT NULL DEFAULT 'open',
+            assigned_to     VARCHAR(36)  DEFAULT NULL,
+            unread          INT          NOT NULL DEFAULT 0,
+            last_inbound_at $_dt         DEFAULT NULL,
+            last_message_at $_dt         NOT NULL,
+            created_at      $_dt         NOT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_messages (
+            id                  VARCHAR(36)  NOT NULL PRIMARY KEY,
+            conversation_id     VARCHAR(36)  NOT NULL,
+            direction           VARCHAR(3)   NOT NULL,
+            provider            VARCHAR(20)  NOT NULL DEFAULT '',
+            provider_message_id VARCHAR(128) DEFAULT NULL,
+            body                TEXT,
+            msg_type            VARCHAR(20)  NOT NULL DEFAULT 'text',
+            status              VARCHAR(12)  NOT NULL DEFAULT 'received',
+            error               VARCHAR(255) DEFAULT NULL,
+            agent_id            VARCHAR(36)  DEFAULT NULL,
+            agent_name          VARCHAR(150) DEFAULT NULL,
+            created_at          $_dt         NOT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_events (
+            id          VARCHAR(36)  NOT NULL PRIMARY KEY,
+            provider    VARCHAR(20)  NOT NULL DEFAULT '',
+            payload     TEXT,
+            created_at  $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        foreach (['uq_cswc_phone ON cs_wa_conversations (wa_phone)', 'idx_cswc_last ON cs_wa_conversations (last_message_at)',
+                  'idx_cswm_conv ON cs_wa_messages (conversation_id, created_at)', 'idx_cswm_pid ON cs_wa_messages (provider_message_id)',
+                  'idx_cswe_created ON cs_wa_events (created_at)'] as $_ix) {
+            $_uq = str_starts_with($_ix, 'uq_') ? 'UNIQUE ' : '';
+            try { db()->exec("CREATE {$_uq}INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        try { db()->exec("ALTER TABLE cs_interactions ADD COLUMN wa_conversation_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) { /* exists */ }
+        $_c = getAppConfig();
+        if (empty($_c['waWebhookSecret']))   dbUpsertConfig('waWebhookSecret', bin2hex(random_bytes(20)));
+        if (empty($_c['metaWaVerifyToken'])) dbUpsertConfig('metaWaVerifyToken', bin2hex(random_bytes(16)));
+        dbFetch("SELECT 1 FROM cs_wa_messages LIMIT 1");
+        dbUpsertConfig('schema_v51_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v51 migration error: ' . $e->getMessage());
+    }
+}
+
+require_once __DIR__ . '/includes/support-whatsapp.php';
 
 /** Wrap-up codes grouped by category, for <optgroup> selects. */
 function csWrapCodesGrouped(bool $activeOnly = true): array {
