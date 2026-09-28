@@ -86,6 +86,7 @@ require __DIR__ . '/../../includes/header.php';
     <h2 class="fw-bold mb-0">WhatsApp</h2>
     <div class="text-muted small">Customer conversations on the business WhatsApp number.</div>
   </div>
+  <button type="button" id="waAlertsBtn" class="btn btn-sm btn-outline-secondary d-none"><i class="bi bi-bell"></i> Enable desktop alerts</button>
 </div>
 
 <?php if (!$waOn): ?>
@@ -192,6 +193,11 @@ require __DIR__ . '/../../includes/header.php';
 <script>
 (function () {
   var t = document.getElementById('waThread'); if (t) t.scrollTop = t.scrollHeight;
+  var ab = document.getElementById('waAlertsBtn');
+  if (ab && 'Notification' in window && Notification.permission === 'default') {
+    ab.classList.remove('d-none');
+    ab.addEventListener('click', function () { Notification.requestPermission().then(function () { ab.classList.add('d-none'); }); });
+  }
   var r = document.getElementById('waReply');
   if (r) r.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); r.form.querySelector('[value=send]').click(); } });
   // Check for new messages every 15s; reload only when the agent isn't typing.

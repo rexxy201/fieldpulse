@@ -34,6 +34,8 @@ function csWaSettings(): array {
         'meta_template_lang' => trim((string)($c['metaWaTemplateLang'] ?? '')) ?: 'en',
         'webhook_secret'  => (string)($c['waWebhookSecret'] ?? ''),
         'auto_reply'      => trim((string)($c['waAutoReply'] ?? '')),
+        'closed_reply'    => trim((string)($c['waClosedReply'] ?? '')),
+        'hours'           => csParseSupportHours((string)($c['supportHours'] ?? '')),
     ];
 }
 
@@ -153,8 +155,10 @@ function csWaReceive(array $m, ?array $s = null): ?string {
     dbRun("INSERT INTO cs_wa_messages (id,conversation_id,direction,provider,provider_message_id,body,msg_type,status,created_at) VALUES (?,?,'in',?,?,?,?,'received',?)",
         [newUuid(), $conv['id'], $s['provider'], $m['id'] !== '' ? mb_substr($m['id'], 0, 128) : null, $body, mb_substr($m['type'] ?: 'text', 0, 20), $now]);
 
-    if ($fresh && $s['auto_reply'] !== '' && csWaEnabled($s)) {
-        csWaSend(dbFetch("SELECT * FROM cs_wa_conversations WHERE id = ?", [$conv['id']]), $s['auto_reply'], null, false, $s);
+    // New or reopened conversation: the closed-hours reply when outside business hours, else the auto-reply.
+    $reply = !csSupportOpen($s['hours'] ?? []) && ($s['closed_reply'] ?? '') !== '' ? $s['closed_reply'] : $s['auto_reply'];
+    if ($fresh && $reply !== '' && csWaEnabled($s)) {
+        csWaSend(dbFetch("SELECT * FROM cs_wa_conversations WHERE id = ?", [$conv['id']]), $reply, null, false, $s);
     }
     return $conv['id'];
 }
@@ -237,4 +241,20 @@ function csWaSend(array $conv, string $text, ?array $agent, bool $template = fal
     if ($ok && $agent && empty($conv['assigned_to'])) dbRun("UPDATE cs_wa_conversations SET assigned_to = ? WHERE id = ?", [$agent['id'], $conv['id']]);
     if (!$ok) error_log('WhatsApp send failed (' . $s['provider'] . '): ' . $err);
     return $ok ? ['ok' => true] : ['ok' => false, 'error' => 'WhatsApp did not accept the message: ' . $err];
+}
+
+/**
+ * First-response times (seconds) since $since: for each customer message that
+ * starts a wait, the time until an agent (not the auto-reply) answered.
+ * Returns ['times' => [...], 'waiting' => conversations whose latest wait is unanswered].
+ */
+function csWaResponseTimes(string $since): array {
+    $rows = dbFetchAll("SELECT conversation_id, direction, agent_id, status, created_at FROM cs_wa_messages WHERE created_at >= ? ORDER BY conversation_id, created_at", [$since]);
+    $times = []; $pending = [];
+    foreach ($rows as $r) {
+        $c = $r['conversation_id'];
+        if ($r['direction'] === 'in') { $pending[$c] ??= strtotime($r['created_at']); continue; }
+        if ($r['agent_id'] !== null && $r['status'] !== 'failed' && isset($pending[$c])) { $times[] = strtotime($r['created_at']) - $pending[$c]; unset($pending[$c]); }
+    }
+    return ['times' => $times, 'waiting' => count($pending)];
 }

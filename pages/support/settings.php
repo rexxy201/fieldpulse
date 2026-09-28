@@ -44,6 +44,18 @@ if (method() === 'POST') {
         if (trim((string)($_POST['atApiKey'] ?? '')) !== '') $v['atApiKey'] = trim((string)$_POST['atApiKey']);
         dbUpsertConfigs($v);
         auditLog('update', 'support_voice_settings', '', 'Telephony settings saved');
+    } elseif ($action === 'hours') {
+        $hours = [];
+        foreach (CS_WEEKDAYS as $d => $_) {
+            if (empty($_POST['open_day'][$d])) continue;
+            $hours[$d] = [(string)($_POST['open_from'][$d] ?? ''), (string)($_POST['open_to'][$d] ?? '')];
+        }
+        dbUpsertConfigs([
+            'supportHours'         => json_encode(csParseSupportHours(json_encode($hours))),
+            'supportClosedMessage' => mb_substr(trim((string)($_POST['supportClosedMessage'] ?? '')), 0, 300),
+            'waClosedReply'        => mb_substr(trim((string)($_POST['waClosedReply'] ?? '')), 0, 1000),
+        ]);
+        auditLog('update', 'support_hours', '', 'Business hours saved');
     } elseif ($action === 'whatsapp') {
         $w = [
             'waProvider'          => isset(CS_WA_PROVIDERS[$_POST['waProvider'] ?? '']) ? $_POST['waProvider'] : 'none',
@@ -88,6 +100,37 @@ require __DIR__ . '/../../includes/header.php';
 <div class="mb-3">
   <h2 class="fw-bold mb-0">Support Settings</h2>
   <div class="text-muted small">Wrap-up codes: the reasons agents choose when they log a contact. They drive the “top contact reasons” report.</div>
+</div>
+
+<div class="card-section mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-clock me-1 text-primary"></i>Business hours</span>
+    <span class="badge bg-<?= csSupportOpen($voice['hours']) ? 'success' : 'secondary' ?>"><?= !$voice['hours'] ? 'Always open' : (csSupportOpen($voice['hours']) ? 'Open now' : 'Closed now') ?></span>
+  </div>
+  <form method="POST" class="p-3">
+    <?= csrfField() ?>
+    <input type="hidden" name="_action" value="hours">
+    <div class="small text-muted mb-2">Outside these hours calls go straight to voicemail (no phones ring) and new WhatsApp chats get the closed reply. Untick every day to stay always open. Times are <?= $h(date_default_timezone_get()) ?>.</div>
+    <?php foreach (CS_WEEKDAYS as $d => $dayName): $span = $voice['hours'][$d] ?? null; ?>
+    <div class="d-flex align-items-center gap-2 mb-1 small">
+      <div class="form-check" style="width:130px"><input class="form-check-input" type="checkbox" name="open_day[<?= $d ?>]" id="od<?= $d ?>" value="1" <?= $span ? 'checked' : '' ?>><label class="form-check-label" for="od<?= $d ?>"><?= $dayName ?></label></div>
+      <input type="time" name="open_from[<?= $d ?>]" value="<?= $h($span[0] ?? '08:00') ?>" class="form-control form-control-sm" style="width:auto" aria-label="<?= $dayName ?> opens">
+      <span>to</span>
+      <input type="time" name="open_to[<?= $d ?>]" value="<?= $h($span[1] ?? '17:00') ?>" class="form-control form-control-sm" style="width:auto" aria-label="<?= $dayName ?> closes">
+    </div>
+    <?php endforeach; ?>
+    <div class="row g-2 mt-1">
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold mb-1">Closed message (callers hear this before voicemail)</label>
+        <input type="text" name="supportClosedMessage" value="<?= $h($vcfg['supportClosedMessage'] ?? '') ?>" class="form-control form-control-sm" placeholder="Our office is closed right now. We are open Monday to Friday, 8am to 5pm.">
+      </div>
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold mb-1">WhatsApp closed reply <span class="text-muted fw-normal">(blank = use the normal automatic reply)</span></label>
+        <input type="text" name="waClosedReply" value="<?= $h($vcfg['waClosedReply'] ?? '') ?>" class="form-control form-control-sm" placeholder="Thanks for your message. We're closed now and will reply when we open.">
+      </div>
+    </div>
+    <div class="mt-3 d-flex justify-content-end"><button class="btn btn-sm btn-primary">Save business hours</button></div>
+  </form>
 </div>
 
 <div class="card-section mb-3">

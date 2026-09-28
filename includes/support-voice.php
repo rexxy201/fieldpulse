@@ -35,7 +35,35 @@ function csVoiceSettings(): array {
         'ivr_options'       => csParseIvrOptions((string)($c['voiceIvrOptions'] ?? "1=Technical support\n2=Billing and payments\n3=New connection and sales")),
         'fallback_numbers'  => array_values(array_filter(array_map('trim', explode(',', (string)($c['voiceFallbackNumbers'] ?? ''))))),
         'missed_assignee'   => (string)($c['voiceMissedCallAssignee'] ?? ''),
+        'hours'             => csParseSupportHours((string)($c['supportHours'] ?? '')),
+        'closed_message'    => trim((string)($c['supportClosedMessage'] ?? '')) ?: 'Our office is closed right now.',
     ];
+}
+
+// ── Business hours (shared by voice and WhatsApp) ────────────────────────────
+
+const CS_WEEKDAYS = [1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 7 => 'Sunday'];
+
+/** Stored JSON {"1":["08:00","17:00"],…} (ISO weekday → open, close) → validated array. Empty = always open. */
+function csParseSupportHours(string $json): array {
+    $out = [];
+    foreach ((array)(json_decode($json, true) ?: []) as $d => $span) {
+        $d = (int)$d;
+        if (!isset(CS_WEEKDAYS[$d]) || !is_array($span) || count($span) !== 2) continue;
+        [$o, $c] = array_map('strval', array_values($span));
+        if (preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $o) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $c) && $o < $c) $out[$d] = [$o, $c];
+    }
+    return $out;
+}
+
+/** Whether the support line is staffed at $ts (default now). No hours configured = always open. */
+function csSupportOpen(array $hours, ?int $ts = null): bool {
+    if (!$hours) return true;
+    $ts ??= time();
+    $span = $hours[(int)date('N', $ts)] ?? null;
+    if (!$span) return false;
+    $now = date('H:i', $ts);
+    return $now >= $span[0] && $now < $span[1];
 }
 
 function csVoiceEnabled(?array $s = null): bool {
@@ -155,13 +183,15 @@ function csAvailableAgentTargets(array $s): array {
     return array_map(fn($r) => $s['at_username'] . '.' . csAgentClientName($r['user_id']), $rows);
 }
 
+function csVoicemailAction(array $s, string $lead = 'All our agents are busy.'): array {
+    return ['record' => ['text' => $lead . ' Please leave a message with your name and account number after the beep, and we will call you back.',
+                         'maxLength' => 120, 'callBackUrl' => csVoiceCallbackUrl('voicemail', $s)]];
+}
+
 function csDialOrVoicemail(array $s): array {
     $clients = csAvailableAgentTargets($s);
     $numbers = $clients ?: array_map('csE164', $s['fallback_numbers']);
-    if (!$numbers) {
-        return [['record' => ['text' => 'All our agents are busy. Please leave a message with your name and account number after the beep, and we will call you back.',
-                              'maxLength' => 120, 'callBackUrl' => csVoiceCallbackUrl('voicemail', $s)]]];
-    }
+    if (!$numbers) return [csVoicemailAction($s)];
     // Browser clients ring together; fallback mobiles ring one after another.
     return [['dial' => ['numbers' => $numbers, 'record' => $s['record'], 'sequential' => !$clients, 'callerId' => $s['at_number'], 'maxDuration' => 3600]]];
 }
@@ -221,6 +251,10 @@ function csHandleVoiceCallback(array $post, string $step, ?array $s = null): str
 
     if (!$call) csInsertCall($sid, 'inbound', csE164($ev['caller']), $ev['destination'], null);
     $intro = [['say' => rtrim($s['greeting']) . ($s['record'] ? ' ' . $s['announcement'] : '')]];
+    // Outside business hours: straight to voicemail (a follow-up for the next shift), no ringing.
+    if (!csSupportOpen($s['hours'] ?? [])) {
+        return csVoiceXml(array_merge($intro, [csVoicemailAction($s, $s['closed_message'] ?? 'Our office is closed right now.')]));
+    }
     if ($s['ivr_enabled'] && $s['ivr_options']) {
         $menu = implode(' ', array_map(fn($d, $l) => "For $l, press $d.", array_keys($s['ivr_options']), $s['ivr_options']));
         // No key pressed within the timeout: the provider carries on with the actions after GetDigits.
