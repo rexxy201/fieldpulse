@@ -343,7 +343,7 @@ function csVoiceToken(array $user, ?array $s = null): array {
 
 /** Outside the web root, so recordings are only reachable through the permission-checked endpoint. */
 function csRecordingsDir(): string {
-    return defined('CS_RECORDINGS_DIR') ? CS_RECORDINGS_DIR : dirname(__DIR__, 2) . '/fieldops-recordings';
+    return defined('CS_RECORDINGS_DIR') ? CS_RECORDINGS_DIR : dirname(__DIR__, 2) . '/fieldpulse-recordings';
 }
 
 /** Downloads recordings not yet stored locally. Returns how many were saved. */

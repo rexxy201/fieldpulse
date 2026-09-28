@@ -1,6 +1,6 @@
 <?php
 
-if (!defined('CS_RECORDINGS_DIR')) define('CS_RECORDINGS_DIR', sys_get_temp_dir() . '/fieldops-test-recordings');
+if (!defined('CS_RECORDINGS_DIR')) define('CS_RECORDINGS_DIR', sys_get_temp_dir() . '/fieldpulse-test-recordings');
 
 /** Customer Support voice: call flow, provider XML, tokens, recordings. */
 final class SupportVoiceTest extends TestCase

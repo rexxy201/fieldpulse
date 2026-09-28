@@ -1,4 +1,4 @@
-/* Support softphone: Africa's Talking browser client + FieldOps glue. */
+/* Support softphone: Africa's Talking browser client + app glue. */
 (function () {
   'use strict';
   var root = document.getElementById('softphone');

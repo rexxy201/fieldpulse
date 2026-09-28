@@ -25,7 +25,7 @@
   function alertNew(n) {
     tone();
     if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden && onInbox) return;
-    var note = new Notification('WhatsApp', { body: n === 1 ? 'A customer is waiting for a reply.' : n + ' conversations are waiting for a reply.', tag: 'fieldops-wa' });
+    var note = new Notification('WhatsApp', { body: n === 1 ? 'A customer is waiting for a reply.' : n + ' conversations are waiting for a reply.', tag: 'support-wa' });
     note.onclick = function () { window.focus(); location.href = '/support/whatsapp'; note.close(); };
   }
 

@@ -1,7 +1,7 @@
 <?php
 /**
  * Customer Support housekeeping — call from cron every 15–30 minutes:
- *   curl -m 120 -fsS -o /dev/null -H "X-Cron-Token: SLA_TOKEN" https://fieldops.mangonetonline.com/api/support-housekeeping
+ *   curl -m 120 -fsS -o /dev/null -H "X-Cron-Token: SLA_TOKEN" https://fieldpulse.mangonetonline.com/api/support-housekeeping
  * Downloads new call recordings, deletes recordings older than the retention
  * period (Support Settings), and prunes raw provider callbacks (voice and WhatsApp) after 30 days.
  */
