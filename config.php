@@ -1287,7 +1287,7 @@ function saveTicketPhotos(array $files, string $ticketId, string $uploaderId, st
 }
 
 // ─── Role constants ───────────────────────────────────────────────────────────
-define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
+define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_manager','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
 
 // ─── Permission definitions ────────────────────────────────────────────────────
 define('ALL_PERMISSIONS', [
@@ -1353,6 +1353,10 @@ define('ALL_PERMISSIONS', [
     'noc.view'            => 'View NOC dashboard, ONU status board, and device list',
     'noc.devices.manage'  => 'Add / edit / delete network devices (OLTs, routers)',
     'map.coverage'        => 'Upload / manage KMZ/KML network coverage map layers',
+    // ── Customer Support module ──
+    'support.view'     => 'Use the Customer Support workspace: look up customers, log interactions, own follow-ups',
+    'support.view_all' => 'See every agent\'s interactions and follow-ups (supervisor)',
+    'support.manage'   => 'Manage Customer Support settings (wrap-up codes)',
 ]);
 
 // ─── RBAC helpers ─────────────────────────────────────────────────────────────
@@ -3770,6 +3774,342 @@ if (DB_TYPE === 'mysql') {
             error_log('ticket_checkins collation fix error: ' . $e->getMessage());
         }
     }
+}
+
+// ─── Customer Support module ──────────────────────────────────────────────────
+// Every customer contact (call, WhatsApp, walk-in, …) is logged as an
+// interaction with a wrap-up code and an outcome; follow-ups are callbacks an
+// agent owes a customer. Phase 1 has no telephony: agents log calls made on
+// their existing phones. See pages/support/.
+
+const CS_CHANNELS = [
+    'call'     => 'Phone call',
+    'whatsapp' => 'WhatsApp',
+    'sms'      => 'SMS',
+    'email'    => 'Email',
+    'walk_in'  => 'Walk-in',
+    'portal'   => 'Portal / chat',
+    'social'   => 'Social media',
+];
+const CS_OUTCOMES = [
+    'resolved'       => 'Resolved on contact',
+    'ticket_created' => 'Ticket created / updated',
+    'follow_up'      => 'Follow-up needed',
+    'escalated'      => 'Escalated to supervisor',
+    'no_answer'      => 'No answer / unreachable',
+    'info_only'      => 'Information only',
+];
+const CS_AGENT_STATUSES = [
+    'available' => 'Available',
+    'on_call'   => 'On a call',
+    'wrap_up'   => 'Wrap-up',
+    'break'     => 'On break',
+    'offline'   => 'Offline',
+];
+
+// schema_v49: Customer Support tables, default wrap-up codes, permissions.
+$_k = dbKey();
+$_sv49 = dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v49_migrated'");
+if (!$_sv49) {
+    try {
+        $_my = DB_TYPE === 'mysql';
+        $_dt = $_my ? 'DATETIME' : 'TIMESTAMP';
+        // Same collation as the tables these are joined to (customers, tickets,
+        // users); the server default can differ and breaks those joins.
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wrap_codes (
+            id         VARCHAR(36)  NOT NULL PRIMARY KEY,
+            category   VARCHAR(60)  NOT NULL,
+            name       VARCHAR(120) NOT NULL,
+            active     SMALLINT     NOT NULL DEFAULT 1,
+            sort_order INT          NOT NULL DEFAULT 0
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_interactions (
+            id            VARCHAR(36)  NOT NULL PRIMARY KEY,
+            customer_id   VARCHAR(36)  DEFAULT NULL,
+            contact_name  VARCHAR(150) NOT NULL DEFAULT '',
+            contact_phone VARCHAR(40)  NOT NULL DEFAULT '',
+            channel       VARCHAR(20)  NOT NULL,
+            direction     VARCHAR(10)  NOT NULL DEFAULT 'inbound',
+            wrap_code_id  VARCHAR(36)  DEFAULT NULL,
+            summary       TEXT,
+            outcome       VARCHAR(20)  NOT NULL,
+            ticket_id     VARCHAR(36)  DEFAULT NULL,
+            agent_id      VARCHAR(36)  NOT NULL,
+            agent_name    VARCHAR(150) NOT NULL DEFAULT '',
+            started_at    $_dt         DEFAULT NULL,
+            ended_at      $_dt         DEFAULT NULL,
+            duration_sec  INT          DEFAULT NULL,
+            created_at    $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_followups (
+            id             VARCHAR(36)  NOT NULL PRIMARY KEY,
+            interaction_id VARCHAR(36)  DEFAULT NULL,
+            customer_id    VARCHAR(36)  DEFAULT NULL,
+            contact_name   VARCHAR(150) NOT NULL DEFAULT '',
+            contact_phone  VARCHAR(40)  NOT NULL DEFAULT '',
+            assigned_to    VARCHAR(36)  NOT NULL,
+            created_by     VARCHAR(36)  NOT NULL,
+            due_at         $_dt         NOT NULL,
+            note           TEXT,
+            status         VARCHAR(12)  NOT NULL DEFAULT 'open',
+            done_at        $_dt         DEFAULT NULL,
+            created_at     $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_agent_status (
+            user_id    VARCHAR(36) NOT NULL PRIMARY KEY,
+            status     VARCHAR(12) NOT NULL DEFAULT 'offline',
+            changed_at $_dt        NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        foreach ([
+            'idx_csi_customer ON cs_interactions (customer_id)', 'idx_csi_agent ON cs_interactions (agent_id)',
+            'idx_csi_created ON cs_interactions (created_at)',   'idx_csi_phone ON cs_interactions (contact_phone)',
+            'idx_csf_assigned ON cs_followups (assigned_to, status)', 'idx_csf_customer ON cs_followups (customer_id)',
+        ] as $_ix) {
+            try { db()->exec(($_my ? 'CREATE INDEX ' : 'CREATE INDEX IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        if ((int)(dbFetch("SELECT COUNT(*) AS n FROM cs_wrap_codes")['n'] ?? 0) === 0) {
+            $_codes = [
+                'Technical'    => ['No internet', 'Slow speed', 'Intermittent connection', 'Router / ONT issue', 'Outage enquiry'],
+                'Billing'      => ['Payment not reflected', 'Subscription / renewal', 'Plan change', 'Refund request'],
+                'Installation' => ['New installation request', 'Installation status', 'Relocation request'],
+                'Account'      => ['Update account details', 'Suspension / cancellation request'],
+                'Sales'        => ['New plan enquiry'],
+                'General'      => ['General enquiry', 'Complaint', 'Compliment / feedback'],
+            ];
+            $_i = 0;
+            foreach ($_codes as $_cat => $_names) {
+                foreach ($_names as $_n) {
+                    dbRun("INSERT INTO cs_wrap_codes (id,category,name,active,sort_order) VALUES (?,?,?,1,?)", [newUuid(), $_cat, $_n, $_i++]);
+                }
+            }
+        }
+        foreach (['cx','cx_supervisor','admin','project_admin'] as $_r) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'support.view')", [newUuid(), $_r]); } catch (\Throwable $e) {}
+        }
+        foreach (['cx_supervisor','admin','project_admin'] as $_r) {
+            foreach (['support.view_all','support.manage'] as $_p) {
+                try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(), $_r, $_p]); } catch (\Throwable $e) {}
+            }
+        }
+        dbFetch("SELECT 1 FROM cs_interactions LIMIT 1");
+        dbUpsertConfig('schema_v49_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v49 migration error: ' . $e->getMessage());
+    }
+}
+
+/** Last 10 digits, so 0803…, +234803… and 234803… match the same number. */
+function csPhoneKey(?string $phone): string {
+    $d = preg_replace('/\D+/', '', (string)$phone);
+    return strlen($d) > 10 ? substr($d, -10) : $d;
+}
+
+/**
+ * Validates and stores one customer interaction (and its follow-up, if
+ * requested). Returns ['ok'=>true,'id'=>…] or ['ok'=>false,'error'=>…].
+ * $agent is the signed-in user row.
+ */
+function csLogInteraction(array $in, array $agent): array {
+    $channel = (string)($in['channel'] ?? '');
+    $outcome = (string)($in['outcome'] ?? '');
+    $dir     = ($in['direction'] ?? 'inbound') === 'outbound' ? 'outbound' : 'inbound';
+    if (!isset(CS_CHANNELS[$channel])) return ['ok' => false, 'error' => 'Choose a channel.'];
+    if (!isset(CS_OUTCOMES[$outcome])) return ['ok' => false, 'error' => 'Choose an outcome.'];
+
+    $customerId = trim((string)($in['customer_id'] ?? '')) ?: null;
+    $customer   = $customerId ? dbFetch("SELECT id,name,phone FROM customers WHERE id = ?", [$customerId]) : null;
+    if ($customerId && !$customer) return ['ok' => false, 'error' => 'Customer not found.'];
+    $name  = trim((string)($in['contact_name'] ?? '')) ?: ($customer['name'] ?? '');
+    $phone = trim((string)($in['contact_phone'] ?? '')) ?: ($customer['phone'] ?? '');
+    if (!$customer && $name === '' && $phone === '') return ['ok' => false, 'error' => 'Enter the caller\'s name or phone number.'];
+
+    $wrapId = trim((string)($in['wrap_code_id'] ?? '')) ?: null;
+    if (!$wrapId || !dbFetch("SELECT id FROM cs_wrap_codes WHERE id = ? AND active = 1", [$wrapId])) {
+        return ['ok' => false, 'error' => 'Choose a wrap-up code (the reason for contact).'];
+    }
+    $ticketId = trim((string)($in['ticket_id'] ?? '')) ?: null;
+    if ($ticketId && !dbFetch("SELECT id FROM tickets WHERE id = ?", [$ticketId])) $ticketId = null;
+    if ($outcome === 'ticket_created' && !$ticketId) return ['ok' => false, 'error' => 'Pick the ticket this contact created or updated.'];
+
+    $summary = trim((string)($in['summary'] ?? ''));
+    if ($summary === '') return ['ok' => false, 'error' => 'Add a short summary of the contact.'];
+
+    $followDue = trim((string)($in['followup_due'] ?? ''));
+    $followTs  = $followDue !== '' ? strtotime($followDue) : false;
+    if ($outcome === 'follow_up' && !$followTs) return ['ok' => false, 'error' => 'Set when the follow-up is due.'];
+
+    $callId = trim((string)($in['call_id'] ?? '')) ?: null;
+    $waId   = trim((string)($in['wa_conversation_id'] ?? '')) ?: null;
+    if ($waId && !dbFetch("SELECT id FROM cs_wa_conversations WHERE id = ?", [$waId])) $waId = null;
+    $call   = $callId ? dbFetch("SELECT id, duration_sec, started_at FROM cs_calls WHERE id = ?", [$callId]) : null;
+
+    $ended   = time();
+    $started = (int)($in['started_ts'] ?? 0);
+    // Handle time from when the agent opened the form; ignore anything
+    // implausible (clock skew, a tab left open overnight).
+    $duration = ($started > 0 && $started <= $ended && $ended - $started <= 4 * 3600) ? $ended - $started : null;
+    if ($call && $call['duration_sec'] !== null) {   // a phone call: use the provider's talk time
+        $duration = (int)$call['duration_sec'];
+        $started  = strtotime($call['started_at']);
+    }
+
+    $id = newUuid();
+    dbRun("INSERT INTO cs_interactions (id,customer_id,contact_name,contact_phone,channel,direction,wrap_code_id,summary,outcome,ticket_id,agent_id,agent_name,started_at,ended_at,duration_sec,created_at,call_id,wa_conversation_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [$id, $customer['id'] ?? null, mb_substr($name, 0, 150), mb_substr($phone, 0, 40), $channel, $dir, $wrapId, $summary, $outcome, $ticketId,
+         $agent['id'], mb_substr((string)($agent['name'] ?? ''), 0, 150),
+         $duration !== null ? date('Y-m-d H:i:s', $started) : null, date('Y-m-d H:i:s', $ended), $duration, date('Y-m-d H:i:s', $ended), $call['id'] ?? null, $waId]);
+
+    if ($followTs) {
+        dbRun("INSERT INTO cs_followups (id,interaction_id,customer_id,contact_name,contact_phone,assigned_to,created_by,due_at,note,status)
+               VALUES (?,?,?,?,?,?,?,?,?,'open')",
+            [newUuid(), $id, $customer['id'] ?? null, mb_substr($name, 0, 150), mb_substr($phone, 0, 40), $agent['id'], $agent['id'],
+             date('Y-m-d H:i:s', $followTs), trim((string)($in['followup_note'] ?? '')) ?: $summary]);
+    }
+    try { auditLog('create', 'cs_interaction', $id, CS_CHANNELS[$channel] . ' — ' . CS_OUTCOMES[$outcome]); } catch (\Throwable $e) {}
+    return ['ok' => true, 'id' => $id];
+}
+
+function csSetAgentStatus(string $userId, string $status): bool {
+    if (!isset(CS_AGENT_STATUSES[$status])) return false;
+    if (dbFetch("SELECT user_id FROM cs_agent_status WHERE user_id = ?", [$userId])) {
+        dbRun("UPDATE cs_agent_status SET status = ?, changed_at = ? WHERE user_id = ?", [$status, date('Y-m-d H:i:s'), $userId]);
+    } else {
+        dbRun("INSERT INTO cs_agent_status (user_id,status,changed_at) VALUES (?,?,?)", [$userId, $status, date('Y-m-d H:i:s')]);
+    }
+    return true;
+}
+
+function csAgentStatus(string $userId): string {
+    return dbFetch("SELECT status FROM cs_agent_status WHERE user_id = ?", [$userId])['status'] ?? 'offline';
+}
+
+// schema_v50: voice calls (cs_calls), raw provider callbacks (cs_call_events)
+// for troubleshooting, call links on interactions/follow-ups, the CX Manager
+// role, and the secret that authenticates provider callbacks.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v50_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_calls (
+            id                   VARCHAR(36)  NOT NULL PRIMARY KEY,
+            session_id           VARCHAR(100) NOT NULL,
+            direction            VARCHAR(10)  NOT NULL,
+            from_number          VARCHAR(40)  NOT NULL DEFAULT '',
+            to_number            VARCHAR(40)  NOT NULL DEFAULT '',
+            customer_id          VARCHAR(36)  DEFAULT NULL,
+            agent_id             VARCHAR(36)  DEFAULT NULL,
+            status               VARCHAR(12)  NOT NULL DEFAULT 'ringing',
+            ivr_choice           VARCHAR(60)  DEFAULT NULL,
+            started_at           $_dt         NOT NULL,
+            answered_at          $_dt         DEFAULT NULL,
+            ended_at             $_dt         DEFAULT NULL,
+            duration_sec         INT          DEFAULT NULL,
+            recording_url        TEXT,
+            recording_path       VARCHAR(255) DEFAULT NULL,
+            recording_deleted_at $_dt         DEFAULT NULL,
+            hangup_cause         VARCHAR(60)  DEFAULT NULL,
+            cost                 VARCHAR(20)  DEFAULT NULL,
+            currency             VARCHAR(5)   DEFAULT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_call_events (
+            id          VARCHAR(36)  NOT NULL PRIMARY KEY,
+            session_id  VARCHAR(100) NOT NULL DEFAULT '',
+            step        VARCHAR(20)  NOT NULL DEFAULT '',
+            payload     TEXT,
+            created_at  $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        foreach (['uq_csc_session ON cs_calls (session_id)', 'idx_csc_started ON cs_calls (started_at)', 'idx_csc_agent ON cs_calls (agent_id)',
+                  'idx_csce_created ON cs_call_events (created_at)'] as $_ix) {
+            $_uq = str_starts_with($_ix, 'uq_') ? 'UNIQUE ' : '';
+            try { db()->exec("CREATE {$_uq}INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        foreach (['cs_interactions', 'cs_followups'] as $_t) {
+            try { db()->exec("ALTER TABLE $_t ADD COLUMN call_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) { /* exists */ }
+        }
+        try { dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES ('cx_manager','CX Manager','cx',1)"); } catch (\Throwable $e) {}
+        $_mgr = array_column(dbFetchAll("SELECT permission FROM role_permissions WHERE role = 'cx_supervisor'"), 'permission');
+        foreach (array_unique(array_merge($_mgr, ['support.view','support.view_all','support.manage','reports.view','analytics.view'])) as $_p) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(), 'cx_manager', $_p]); } catch (\Throwable $e) {}
+        }
+        if (empty(getAppConfig()['voiceWebhookSecret'])) dbUpsertConfig('voiceWebhookSecret', bin2hex(random_bytes(20)));
+        dbFetch("SELECT 1 FROM cs_calls LIMIT 1");
+        dbUpsertConfig('schema_v50_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v50 migration error: ' . $e->getMessage());
+    }
+}
+
+require_once __DIR__ . '/includes/support-voice.php';
+
+// schema_v51: WhatsApp inbox — one conversation per customer number, its
+// messages, raw provider webhooks, and the link from logged interactions.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v51_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_conversations (
+            id              VARCHAR(36)  NOT NULL PRIMARY KEY,
+            wa_phone        VARCHAR(20)  NOT NULL,
+            contact_name    VARCHAR(150) NOT NULL DEFAULT '',
+            customer_id     VARCHAR(36)  DEFAULT NULL,
+            status          VARCHAR(10)  NOT NULL DEFAULT 'open',
+            assigned_to     VARCHAR(36)  DEFAULT NULL,
+            unread          INT          NOT NULL DEFAULT 0,
+            last_inbound_at $_dt         DEFAULT NULL,
+            last_message_at $_dt         NOT NULL,
+            created_at      $_dt         NOT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_messages (
+            id                  VARCHAR(36)  NOT NULL PRIMARY KEY,
+            conversation_id     VARCHAR(36)  NOT NULL,
+            direction           VARCHAR(3)   NOT NULL,
+            provider            VARCHAR(20)  NOT NULL DEFAULT '',
+            provider_message_id VARCHAR(128) DEFAULT NULL,
+            body                TEXT,
+            msg_type            VARCHAR(20)  NOT NULL DEFAULT 'text',
+            status              VARCHAR(12)  NOT NULL DEFAULT 'received',
+            error               VARCHAR(255) DEFAULT NULL,
+            agent_id            VARCHAR(36)  DEFAULT NULL,
+            agent_name          VARCHAR(150) DEFAULT NULL,
+            created_at          $_dt         NOT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_wa_events (
+            id          VARCHAR(36)  NOT NULL PRIMARY KEY,
+            provider    VARCHAR(20)  NOT NULL DEFAULT '',
+            payload     TEXT,
+            created_at  $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        foreach (['uq_cswc_phone ON cs_wa_conversations (wa_phone)', 'idx_cswc_last ON cs_wa_conversations (last_message_at)',
+                  'idx_cswm_conv ON cs_wa_messages (conversation_id, created_at)', 'idx_cswm_pid ON cs_wa_messages (provider_message_id)',
+                  'idx_cswe_created ON cs_wa_events (created_at)'] as $_ix) {
+            $_uq = str_starts_with($_ix, 'uq_') ? 'UNIQUE ' : '';
+            try { db()->exec("CREATE {$_uq}INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        try { db()->exec("ALTER TABLE cs_interactions ADD COLUMN wa_conversation_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) { /* exists */ }
+        $_c = getAppConfig();
+        if (empty($_c['waWebhookSecret']))   dbUpsertConfig('waWebhookSecret', bin2hex(random_bytes(20)));
+        if (empty($_c['metaWaVerifyToken'])) dbUpsertConfig('metaWaVerifyToken', bin2hex(random_bytes(16)));
+        dbFetch("SELECT 1 FROM cs_wa_messages LIMIT 1");
+        dbUpsertConfig('schema_v51_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v51 migration error: ' . $e->getMessage());
+    }
+}
+
+require_once __DIR__ . '/includes/support-whatsapp.php';
+
+/** Wrap-up codes grouped by category, for <optgroup> selects. */
+function csWrapCodesGrouped(bool $activeOnly = true): array {
+    $rows = dbFetchAll("SELECT * FROM cs_wrap_codes" . ($activeOnly ? " WHERE active = 1" : "") . " ORDER BY category, sort_order, name");
+    $out = [];
+    foreach ($rows as $r) $out[$r['category']][] = $r;
+    return $out;
 }
 
 // Once NOC_CRED_KEY is set, move stored device credentials off the old format

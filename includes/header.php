@@ -78,13 +78,32 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
           || hasPermission('inventory.requests.create') || hasPermission('inventory.movements.view');
   $_invSub = ($activePath === 'inventory' || str_starts_with($activePath, 'inventory/')) ? explode('/', $activePath)[1] ?? 'dashboard' : '';
   $_fieldAny = hasPermission('schedule.view') || hasPermission('map.view');
-  $_navItem = fn(string $href, string $icon, string $label, bool $active, bool $show = true): array
-      => ['href' => $href, 'icon' => $icon, 'label' => $label, 'active' => $active, 'show' => $show];
+  $_navItem = fn(string $href, string $icon, string $label, bool $active, bool $show = true, string $badgeId = '', int $badge = 0): array
+      => ['href' => $href, 'icon' => $icon, 'label' => $label, 'active' => $active, 'show' => $show, 'badgeId' => $badgeId, 'badge' => $badge];
+  // WhatsApp conversations waiting on me or on anyone (footer JS keeps this live).
+  $_waUnread = 0;
+  if (hasPermission('support.view')) {
+      try {
+          $_waUnread = (int)(dbFetch("SELECT COUNT(*) AS n FROM cs_wa_conversations WHERE status = 'open' AND unread > 0 AND (assigned_to IS NULL OR assigned_to = ?)",
+                                     [currentUser()['id']])['n'] ?? 0);
+      } catch (\Throwable $e) { /* table not migrated yet */ }
+  }
+  $_navBadge = fn(array $it) => $it['badgeId'] === '' ? ''
+      : '<span id="' . $it['badgeId'] . '" class="badge rounded-pill bg-success ms-auto' . ($it['badge'] ? '' : ' d-none') . '">' . $it['badge'] . '</span>';
 
   $_navGroups = [
     ['label' => 'Operations', 'icon' => 'bi-clipboard2-pulse', 'items' => [
       $_navItem('/tickets',   'bi-ticket-perforated', 'Tickets',   str_starts_with($activePath, 'ticket')),
       $_navItem('/customers', 'bi-people',            'Customers', $activePath === 'customers', hasPermission('customers.view')),
+    ]],
+    ['label' => 'Customer Support', 'icon' => 'bi-headset', 'items' => [
+      $_navItem('/support',              'bi-person-lines-fill', 'Agent Workspace', $activePath === 'support',              hasPermission('support.view')),
+      $_navItem('/support/dashboard',    'bi-speedometer2',      'Supervisor Dashboard', $activePath === 'support/dashboard', hasPermission('support.view_all')),
+      $_navItem('/support/interactions', 'bi-chat-left-text',    'Interactions',    $activePath === 'support/interactions', hasPermission('support.view')),
+      $_navItem('/support/calls',        'bi-telephone',         'Calls',           $activePath === 'support/calls',        hasPermission('support.view')),
+      $_navItem('/support/whatsapp',     'bi-whatsapp',          'WhatsApp',        $activePath === 'support/whatsapp',     hasPermission('support.view'), 'waNavBadge', $_waUnread),
+      $_navItem('/support/followups',    'bi-alarm',             'Follow-ups',      $activePath === 'support/followups',    hasPermission('support.view')),
+      $_navItem('/support/settings',     'bi-sliders',           'Support Settings', $activePath === 'support/settings',    hasPermission('support.manage')),
     ]],
     ['label' => 'Field', 'icon' => 'bi-geo-alt', 'items' => [
       $_navItem('/schedule', 'bi-calendar3', 'Schedule',  $activePath === 'schedule', $_fieldAny && hasPermission('schedule.view')),
@@ -140,7 +159,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <?php if (count($_group['items']) === 1): ?>
     <i class="bi <?= $_group['icon'] ?>"></i> <?= htmlspecialchars($_group['label']) ?>
     <?php else: ?>
-    <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?>
+    <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?><?= $_navBadge($_it) ?>
     <?php endif; ?>
   </a>
     <?php continue; endif;
@@ -150,13 +169,16 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     <button type="button" class="nav-group-toggle" aria-expanded="<?= $_open ? 'true' : 'false' ?>" aria-controls="<?= $_gid ?>">
       <i class="bi <?= $_group['icon'] ?>"></i>
       <span class="flex-grow-1 text-start"><?= htmlspecialchars($_group['label']) ?></span>
+      <?php if ($_wa = array_values(array_filter($_items, fn($i) => $i['badgeId'] !== ''))): ?>
+      <span id="<?= $_wa[0]['badgeId'] ?>Group" class="badge rounded-pill bg-success me-1<?= $_wa[0]['badge'] ? '' : ' d-none' ?>"><?= $_wa[0]['badge'] ?></span>
+      <?php endif; ?>
       <i class="bi bi-chevron-right nav-group-chevron" aria-hidden="true"></i>
     </button>
     <div class="nav-group-items" id="<?= $_gid ?>">
       <div>
       <?php foreach ($_items as $_it): ?>
         <a href="<?= $_it['href'] ?>" class="nav-link <?= $_it['active'] ? 'active' : '' ?>">
-          <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?>
+          <i class="bi <?= $_it['icon'] ?>"></i> <?= htmlspecialchars($_it['label']) ?><?= $_navBadge($_it) ?>
         </a>
       <?php endforeach; ?>
       </div>

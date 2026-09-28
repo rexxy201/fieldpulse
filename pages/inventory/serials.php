@@ -28,7 +28,7 @@ $items = dbFetchAll(
 );
 
 $customers     = dbFetchAll("SELECT id, name, account_number FROM customers ORDER BY name LIMIT 1000");
-$installations = dbFetchAll("SELECT id, installation_number, customer_name FROM installation_profiles ORDER BY created_at DESC LIMIT 200");
+$installations = dbFetchAll("SELECT id, name, address FROM installation_profiles ORDER BY created_at DESC LIMIT 200");
 $onuUnits      = dbFetchAll(
     "SELECT ou.id, ou.serial_number, ou.olt_port, c.name AS customer_name
      FROM onu_units ou
@@ -209,7 +209,7 @@ require __DIR__ . '/../../includes/header.php';
           <select id="dispatchInstallation" class="form-select">
             <option value="">— None —</option>
             <?php foreach ($installations as $ins): ?>
-            <option value="<?= htmlspecialchars($ins['id']) ?>"><?= htmlspecialchars($ins['installation_number'] . ' — ' . $ins['customer_name']) ?></option>
+            <option value="<?= htmlspecialchars($ins['id']) ?>"><?= htmlspecialchars($ins['name'] . ($ins['address'] ? ' — ' . $ins['address'] : '')) ?></option>
             <?php endforeach; ?>
           </select>
         </div>

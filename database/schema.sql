@@ -461,3 +461,145 @@ CREATE TABLE IF NOT EXISTS `ticket_checkins` (
   KEY `idx_ticket_checkins_ticket`  (`ticket_id`),
   KEY `idx_ticket_checkins_user`    (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer Support module (also created by config.php schema_v49)
+CREATE TABLE IF NOT EXISTS `cs_wrap_codes` (
+  `id`         varchar(36)  NOT NULL,
+  `category`   varchar(60)  NOT NULL,
+  `name`       varchar(120) NOT NULL,
+  `active`     smallint     NOT NULL DEFAULT 1,
+  `sort_order` int          NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_interactions` (
+  `id`            varchar(36)  NOT NULL,
+  `customer_id`   varchar(36)  DEFAULT NULL,
+  `contact_name`  varchar(150) NOT NULL DEFAULT '',
+  `contact_phone` varchar(40)  NOT NULL DEFAULT '',
+  `channel`       varchar(20)  NOT NULL,
+  `direction`     varchar(10)  NOT NULL DEFAULT 'inbound',
+  `wrap_code_id`  varchar(36)  DEFAULT NULL,
+  `summary`       text,
+  `outcome`       varchar(20)  NOT NULL,
+  `ticket_id`     varchar(36)  DEFAULT NULL,
+  `agent_id`      varchar(36)  NOT NULL,
+  `agent_name`    varchar(150) NOT NULL DEFAULT '',
+  `started_at`    datetime     DEFAULT NULL,
+  `ended_at`      datetime     DEFAULT NULL,
+  `duration_sec`  int          DEFAULT NULL,
+  `created_at`    datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `call_id`        varchar(36)  DEFAULT NULL,
+  `wa_conversation_id` varchar(36) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_csi_customer` (`customer_id`),
+  KEY `idx_csi_agent` (`agent_id`),
+  KEY `idx_csi_created` (`created_at`),
+  KEY `idx_csi_phone` (`contact_phone`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_followups` (
+  `id`             varchar(36)  NOT NULL,
+  `interaction_id` varchar(36)  DEFAULT NULL,
+  `customer_id`    varchar(36)  DEFAULT NULL,
+  `contact_name`   varchar(150) NOT NULL DEFAULT '',
+  `contact_phone`  varchar(40)  NOT NULL DEFAULT '',
+  `assigned_to`    varchar(36)  NOT NULL,
+  `created_by`     varchar(36)  NOT NULL,
+  `due_at`         datetime     NOT NULL,
+  `note`           text,
+  `status`         varchar(12)  NOT NULL DEFAULT 'open',
+  `done_at`        datetime     DEFAULT NULL,
+  `created_at`     datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `call_id`        varchar(36)  DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_csf_assigned` (`assigned_to`, `status`),
+  KEY `idx_csf_customer` (`customer_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_agent_status` (
+  `user_id`    varchar(36) NOT NULL,
+  `status`     varchar(12) NOT NULL DEFAULT 'offline',
+  `changed_at` datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_calls` (
+  `id`                   varchar(36)  NOT NULL,
+  `session_id`           varchar(100) NOT NULL,
+  `direction`            varchar(10)  NOT NULL,
+  `from_number`          varchar(40)  NOT NULL DEFAULT '',
+  `to_number`            varchar(40)  NOT NULL DEFAULT '',
+  `customer_id`          varchar(36)  DEFAULT NULL,
+  `agent_id`             varchar(36)  DEFAULT NULL,
+  `status`               varchar(12)  NOT NULL DEFAULT 'ringing',
+  `ivr_choice`           varchar(60)  DEFAULT NULL,
+  `started_at`           datetime     NOT NULL,
+  `answered_at`          datetime     DEFAULT NULL,
+  `ended_at`             datetime     DEFAULT NULL,
+  `duration_sec`         int          DEFAULT NULL,
+  `recording_url`        text,
+  `recording_path`       varchar(255) DEFAULT NULL,
+  `recording_deleted_at` datetime     DEFAULT NULL,
+  `hangup_cause`         varchar(60)  DEFAULT NULL,
+  `cost`                 varchar(20)  DEFAULT NULL,
+  `currency`             varchar(5)   DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_csc_session` (`session_id`),
+  KEY `idx_csc_started` (`started_at`),
+  KEY `idx_csc_agent` (`agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_call_events` (
+  `id`         varchar(36)  NOT NULL,
+  `session_id` varchar(100) NOT NULL DEFAULT '',
+  `step`       varchar(20)  NOT NULL DEFAULT '',
+  `payload`    text,
+  `created_at` datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_csce_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_wa_conversations` (
+  `id`              varchar(36)  NOT NULL,
+  `wa_phone`        varchar(20)  NOT NULL,
+  `contact_name`    varchar(150) NOT NULL DEFAULT '',
+  `customer_id`     varchar(36)  DEFAULT NULL,
+  `status`          varchar(10)  NOT NULL DEFAULT 'open',
+  `assigned_to`     varchar(36)  DEFAULT NULL,
+  `unread`          int          NOT NULL DEFAULT 0,
+  `last_inbound_at` datetime     DEFAULT NULL,
+  `last_message_at` datetime     NOT NULL,
+  `created_at`      datetime     NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cswc_phone` (`wa_phone`),
+  KEY `idx_cswc_last` (`last_message_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_wa_messages` (
+  `id`                  varchar(36)  NOT NULL,
+  `conversation_id`     varchar(36)  NOT NULL,
+  `direction`           varchar(3)   NOT NULL,
+  `provider`            varchar(20)  NOT NULL DEFAULT '',
+  `provider_message_id` varchar(128) DEFAULT NULL,
+  `body`                text,
+  `msg_type`            varchar(20)  NOT NULL DEFAULT 'text',
+  `status`              varchar(12)  NOT NULL DEFAULT 'received',
+  `error`               varchar(255) DEFAULT NULL,
+  `agent_id`            varchar(36)  DEFAULT NULL,
+  `agent_name`          varchar(150) DEFAULT NULL,
+  `created_at`          datetime     NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_cswm_conv` (`conversation_id`, `created_at`),
+  KEY `idx_cswm_pid` (`provider_message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_wa_events` (
+  `id`         varchar(36) NOT NULL,
+  `provider`   varchar(20) NOT NULL DEFAULT '',
+  `payload`    text,
+  `created_at` datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_cswe_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
