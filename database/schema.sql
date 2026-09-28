@@ -460,4 +460,4 @@ CREATE TABLE IF NOT EXISTS `ticket_checkins` (
   PRIMARY KEY (`id`),
   KEY `idx_ticket_checkins_ticket`  (`ticket_id`),
   KEY `idx_ticket_checkins_user`    (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

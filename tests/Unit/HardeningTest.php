@@ -44,4 +44,13 @@ final class HardeningTest extends TestCase
         $this->assertStringContainsString("'\"':'&quot;'", $src);
         $this->assertStringContainsString("\"'\":'&#39;'", $src);
     }
+
+    public function testTicketCheckinsUsesTheSameCollationAsTickets(): void
+    {
+        if (DB_TYPE !== 'mysql') $this->markTestSkipped('MySQL only');
+        $this->assertSame(tableCollation('tickets'), tableCollation('ticket_checkins'));
+        // The join My Jobs runs must not raise "Illegal mix of collations".
+        dbFetchAll("SELECT t.id FROM tickets t LEFT JOIN ticket_checkins ci ON ci.ticket_id = t.id LIMIT 1");
+        $this->addToAssertionCount(1);
+    }
 }
