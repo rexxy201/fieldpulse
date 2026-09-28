@@ -89,6 +89,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
     ['label' => 'Customer Support', 'icon' => 'bi-headset', 'items' => [
       $_navItem('/support',              'bi-person-lines-fill', 'Agent Workspace', $activePath === 'support',              hasPermission('support.view')),
       $_navItem('/support/interactions', 'bi-chat-left-text',    'Interactions',    $activePath === 'support/interactions', hasPermission('support.view')),
+      $_navItem('/support/calls',        'bi-telephone',         'Calls',           $activePath === 'support/calls',        hasPermission('support.view')),
       $_navItem('/support/followups',    'bi-alarm',             'Follow-ups',      $activePath === 'support/followups',    hasPermission('support.view')),
       $_navItem('/support/settings',     'bi-sliders',           'Support Settings', $activePath === 'support/settings',    hasPermission('support.manage')),
     ]],

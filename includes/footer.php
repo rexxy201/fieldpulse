@@ -282,5 +282,6 @@ document.addEventListener('keydown', e => {
 });
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<?php if (hasPermission('support.view') && csVoiceEnabled()) require __DIR__ . '/softphone.php'; ?>
 </body>
 </html>

@@ -1287,7 +1287,7 @@ function saveTicketPhotos(array $files, string $ticketId, string $uploaderId, st
 }
 
 // ─── Role constants ───────────────────────────────────────────────────────────
-define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
+define('ROLES', ['admin','project_admin','supervisor-fiber','supervisor-noc','cx_manager','cx_supervisor','cx','engineer','noc_engineer','vendor','accountant','accounts_receivable','accounts_payable','coo_manager']);
 
 // ─── Permission definitions ────────────────────────────────────────────────────
 define('ALL_PERMISSIONS', [
@@ -3939,18 +3939,25 @@ function csLogInteraction(array $in, array $agent): array {
     $followTs  = $followDue !== '' ? strtotime($followDue) : false;
     if ($outcome === 'follow_up' && !$followTs) return ['ok' => false, 'error' => 'Set when the follow-up is due.'];
 
+    $callId = trim((string)($in['call_id'] ?? '')) ?: null;
+    $call   = $callId ? dbFetch("SELECT id, duration_sec, started_at FROM cs_calls WHERE id = ?", [$callId]) : null;
+
     $ended   = time();
     $started = (int)($in['started_ts'] ?? 0);
     // Handle time from when the agent opened the form; ignore anything
     // implausible (clock skew, a tab left open overnight).
     $duration = ($started > 0 && $started <= $ended && $ended - $started <= 4 * 3600) ? $ended - $started : null;
+    if ($call && $call['duration_sec'] !== null) {   // a phone call: use the provider's talk time
+        $duration = (int)$call['duration_sec'];
+        $started  = strtotime($call['started_at']);
+    }
 
     $id = newUuid();
-    dbRun("INSERT INTO cs_interactions (id,customer_id,contact_name,contact_phone,channel,direction,wrap_code_id,summary,outcome,ticket_id,agent_id,agent_name,started_at,ended_at,duration_sec,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    dbRun("INSERT INTO cs_interactions (id,customer_id,contact_name,contact_phone,channel,direction,wrap_code_id,summary,outcome,ticket_id,agent_id,agent_name,started_at,ended_at,duration_sec,created_at,call_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [$id, $customer['id'] ?? null, mb_substr($name, 0, 150), mb_substr($phone, 0, 40), $channel, $dir, $wrapId, $summary, $outcome, $ticketId,
          $agent['id'], mb_substr((string)($agent['name'] ?? ''), 0, 150),
-         $duration !== null ? date('Y-m-d H:i:s', $started) : null, date('Y-m-d H:i:s', $ended), $duration, date('Y-m-d H:i:s', $ended)]);
+         $duration !== null ? date('Y-m-d H:i:s', $started) : null, date('Y-m-d H:i:s', $ended), $duration, date('Y-m-d H:i:s', $ended), $call['id'] ?? null]);
 
     if ($followTs) {
         dbRun("INSERT INTO cs_followups (id,interaction_id,customer_id,contact_name,contact_phone,assigned_to,created_by,due_at,note,status)
@@ -3975,6 +3982,66 @@ function csSetAgentStatus(string $userId, string $status): bool {
 function csAgentStatus(string $userId): string {
     return dbFetch("SELECT status FROM cs_agent_status WHERE user_id = ?", [$userId])['status'] ?? 'offline';
 }
+
+// schema_v50: voice calls (cs_calls), raw provider callbacks (cs_call_events)
+// for troubleshooting, call links on interactions/follow-ups, the CX Manager
+// role, and the secret that authenticates provider callbacks.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v50_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_calls (
+            id                   VARCHAR(36)  NOT NULL PRIMARY KEY,
+            session_id           VARCHAR(100) NOT NULL,
+            direction            VARCHAR(10)  NOT NULL,
+            from_number          VARCHAR(40)  NOT NULL DEFAULT '',
+            to_number            VARCHAR(40)  NOT NULL DEFAULT '',
+            customer_id          VARCHAR(36)  DEFAULT NULL,
+            agent_id             VARCHAR(36)  DEFAULT NULL,
+            status               VARCHAR(12)  NOT NULL DEFAULT 'ringing',
+            ivr_choice           VARCHAR(60)  DEFAULT NULL,
+            started_at           $_dt         NOT NULL,
+            answered_at          $_dt         DEFAULT NULL,
+            ended_at             $_dt         DEFAULT NULL,
+            duration_sec         INT          DEFAULT NULL,
+            recording_url        TEXT,
+            recording_path       VARCHAR(255) DEFAULT NULL,
+            recording_deleted_at $_dt         DEFAULT NULL,
+            hangup_cause         VARCHAR(60)  DEFAULT NULL,
+            cost                 VARCHAR(20)  DEFAULT NULL,
+            currency             VARCHAR(5)   DEFAULT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_call_events (
+            id          VARCHAR(36)  NOT NULL PRIMARY KEY,
+            session_id  VARCHAR(100) NOT NULL DEFAULT '',
+            step        VARCHAR(20)  NOT NULL DEFAULT '',
+            payload     TEXT,
+            created_at  $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        foreach (['uq_csc_session ON cs_calls (session_id)', 'idx_csc_started ON cs_calls (started_at)', 'idx_csc_agent ON cs_calls (agent_id)',
+                  'idx_csce_created ON cs_call_events (created_at)'] as $_ix) {
+            $_uq = str_starts_with($_ix, 'uq_') ? 'UNIQUE ' : '';
+            try { db()->exec("CREATE {$_uq}INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        foreach (['cs_interactions', 'cs_followups'] as $_t) {
+            try { db()->exec("ALTER TABLE $_t ADD COLUMN call_id VARCHAR(36) DEFAULT NULL"); } catch (\Throwable $e) { /* exists */ }
+        }
+        try { dbInsertIgnore("INSERT INTO roles (name,label,department,is_system) VALUES ('cx_manager','CX Manager','cx',1)"); } catch (\Throwable $e) {}
+        $_mgr = array_column(dbFetchAll("SELECT permission FROM role_permissions WHERE role = 'cx_supervisor'"), 'permission');
+        foreach (array_unique(array_merge($_mgr, ['support.view','support.view_all','support.manage','reports.view','analytics.view'])) as $_p) {
+            try { dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,?)", [newUuid(), 'cx_manager', $_p]); } catch (\Throwable $e) {}
+        }
+        if (empty(getAppConfig()['voiceWebhookSecret'])) dbUpsertConfig('voiceWebhookSecret', bin2hex(random_bytes(20)));
+        dbFetch("SELECT 1 FROM cs_calls LIMIT 1");
+        dbUpsertConfig('schema_v50_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v50 migration error: ' . $e->getMessage());
+    }
+}
+
+require_once __DIR__ . '/includes/support-voice.php';
 
 /** Wrap-up codes grouped by category, for <optgroup> selects. */
 function csWrapCodesGrouped(bool $activeOnly = true): array {

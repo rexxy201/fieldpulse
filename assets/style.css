@@ -526,3 +526,19 @@ a { text-decoration: none; }
     /* Hide the icon-only logout in user-panel; the nav-link "Logout" item handles it on mobile */
     #sidebar .logout-btn { display: none !important; }
 }
+
+/* ── Support softphone ─────────────────────────────────────────────────── */
+.softphone { position: fixed; right: 1rem; bottom: 1rem; z-index: 1050; width: 300px; max-width: calc(100vw - 2rem); }
+.softphone-toggle { width: 100%; border: 0; border-radius: .6rem; padding: .5rem .75rem; text-align: left;
+    background: var(--sidebar-brand-bg); color: #fff; font-size: .85rem; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+.softphone[data-state="ready"] .softphone-toggle { background: #15803d; }
+.softphone[data-state="ringing"] .softphone-toggle { background: #b45309; animation: sp-pulse 1s infinite; }
+.softphone[data-state="active"] .softphone-toggle { background: #b91c1c; }
+.softphone[data-state="error"] .softphone-toggle { background: #475569; }
+.softphone-panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: .6rem; padding: .75rem;
+    margin-top: .4rem; box-shadow: 0 8px 24px rgba(0,0,0,.15); }
+.softphone-panel > * + * { margin-top: .5rem; }
+.softphone-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .25rem; }
+@keyframes sp-pulse { 50% { opacity: .75; } }
+@media (prefers-reduced-motion: reduce) { .softphone[data-state="ringing"] .softphone-toggle { animation: none; } }
+

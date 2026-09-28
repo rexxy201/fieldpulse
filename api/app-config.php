@@ -7,7 +7,7 @@ const SENSITIVE_KEYS = ['smtpPassword', 'smtpUser', 'smtpHost', 'smtpPort', 'smt
                         'smsApiKey', 'smsApiSecret', 'smsUsername'];
 // Cron tokens are shown once when generated (Admin -> Automation & Cron
 // Tokens) and never returned again, to admins included.
-const WRITE_ONLY_KEYS = ['slaCheckToken', 'installSyncToken'];
+const WRITE_ONLY_KEYS = ['slaCheckToken', 'installSyncToken', 'atApiKey', 'voiceWebhookSecret', 'metaWaAccessToken', 'metaWaAppSecret', 'metaWaVerifyToken'];
 if (method() === 'GET') {
     $_k  = dbKey();
     $rows = dbFetchAll("SELECT $_k, value FROM app_config");

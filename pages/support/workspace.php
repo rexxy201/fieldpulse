@@ -20,6 +20,7 @@ if (method() === 'POST') {
     verifyCsrf();
     $action = $_POST['_action'] ?? '';
     $back   = '/support' . (!empty($_POST['customer_id']) ? '?customer=' . urlencode($_POST['customer_id']) : '');
+    $callQs = !empty($_POST['call_id']) ? 'call=' . urlencode($_POST['call_id']) : '';
     $flash  = null;
 
     if ($action === 'log') {
@@ -31,6 +32,7 @@ if (method() === 'POST') {
             $_SESSION['support_form'] = $_POST;
             $flash = ['danger', $res['error']];
             if (empty($_POST['customer_id'])) $back = '/support?new=1';
+            if ($callQs !== '') $back .= (str_contains($back, '?') ? '&' : '?') . $callQs;
         }
     } elseif ($action === 'status') {
         csSetAgentStatus($me['id'], (string)($_POST['status'] ?? ''));
@@ -91,8 +93,10 @@ if ($customer) {
         }
     }
     $history = dbFetchAll(
-        "SELECT i.*, w.category AS wrap_category, w.name AS wrap_name, t.ticket_number
+        "SELECT i.*, w.category AS wrap_category, w.name AS wrap_name, t.ticket_number,
+                cc.recording_path, cc.recording_url, cc.recording_deleted_at
          FROM cs_interactions i LEFT JOIN cs_wrap_codes w ON w.id = i.wrap_code_id LEFT JOIN tickets t ON t.id = i.ticket_id
+         LEFT JOIN cs_calls cc ON cc.id = i.call_id
          WHERE i.customer_id = ? ORDER BY i.created_at DESC LIMIT 20", [$customer['id']]);
     $custFollowups = dbFetchAll(
         "SELECT f.*, u.name AS assigned_name FROM cs_followups f LEFT JOIN users u ON u.id = f.assigned_to
@@ -102,6 +106,17 @@ if ($customer) {
 $myFollowups = dbFetchAll(
     "SELECT * FROM cs_followups WHERE assigned_to = ? AND status = 'open' AND due_at <= ? ORDER BY due_at LIMIT 20",
     [$me['id'], date('Y-m-d 23:59:59')]);
+$voiceOn   = csVoiceEnabled();
+$callsToLog = dbFetchAll(
+    "SELECT c.*, cu.name AS customer_name FROM cs_calls c LEFT JOIN customers cu ON cu.id = c.customer_id
+     WHERE c.agent_id = ? AND c.started_at >= ? AND c.status IN ('completed','in_progress')
+       AND NOT EXISTS (SELECT 1 FROM cs_interactions i WHERE i.call_id = c.id)
+     ORDER BY c.started_at DESC LIMIT 10", [$me['id'], date('Y-m-d H:i:s', time() - 86400)]);
+$logCall = !empty($_GET['call']) ? dbFetch("SELECT * FROM cs_calls WHERE id = ? AND (agent_id = ? OR ? = 1)", [$_GET['call'], $me['id'], $viewAll ? 1 : 0]) : null;
+if ($logCall) {
+    $form += ['channel' => 'call', 'direction' => $logCall['direction'],
+              'contact_phone' => $logCall['direction'] === 'inbound' ? $logCall['from_number'] : $logCall['to_number']];
+}
 $myStatus  = csAgentStatus($me['id']);
 $wrapCodes = csWrapCodesGrouped();
 $openTicketCount = count(array_filter($tickets, fn($t) => !in_array($t['status'], ['resolved', 'closed'], true)));
@@ -163,6 +178,22 @@ require __DIR__ . '/../../includes/header.php';
       </div>
     </div>
 
+    <?php if ($callsToLog): ?>
+    <div class="card-section mb-3">
+      <div class="card-header"><i class="bi bi-telephone me-1 text-primary"></i>Calls to log</div>
+      <div class="p-2">
+        <?php foreach ($callsToLog as $c): $num = $c['direction'] === 'inbound' ? $c['from_number'] : $c['to_number']; ?>
+        <a class="d-block border-bottom small p-2 text-decoration-none"
+           href="/support?<?= $c['customer_id'] ? 'customer=' . urlencode($c['customer_id']) : 'new=1&amp;caller=' . urlencode($num) ?>&amp;call=<?= $h($c['id']) ?>">
+          <i class="bi bi-telephone-<?= $c['direction'] === 'inbound' ? 'inbound' : 'outbound' ?>"></i>
+          <span class="fw-semibold"><?= $h($c['customer_name'] ?: $num) ?></span>
+          <span class="text-muted">· <?= $h(date('H:i', strtotime($c['started_at']))) ?><?= $c['duration_sec'] !== null ? ' · ' . gmdate('i:s', (int)$c['duration_sec']) : '' ?></span>
+        </a>
+        <?php endforeach; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+
     <div class="card-section">
       <div class="card-header d-flex justify-content-between">
         <span><i class="bi bi-alarm me-1 text-primary"></i>My follow-ups due</span>
@@ -209,7 +240,8 @@ require __DIR__ . '/../../includes/header.php';
       </div>
       <div class="p-3 row g-2 small">
         <div class="col-sm-4"><div class="text-muted">Account no.</div><div class="fw-semibold"><?= $h($customer['account_number']) ?></div></div>
-        <div class="col-sm-4"><div class="text-muted">Phone</div><div class="fw-semibold"><?= $h($customer['phone'] ?: '—') ?></div></div>
+        <div class="col-sm-4"><div class="text-muted">Phone</div><div class="fw-semibold"><?= $h($customer['phone'] ?: '—') ?>
+          <?php if ($voiceOn && $customer['phone']): ?><a href="#" data-call="<?= $h($customer['phone']) ?>" class="ms-1" title="Call"><i class="bi bi-telephone-outbound"></i></a><?php endif; ?></div></div>
         <div class="col-sm-4"><div class="text-muted">Email</div><div class="fw-semibold text-break"><?= $h($customer['email'] ?: '—') ?></div></div>
         <div class="col-sm-4"><div class="text-muted">Plan</div><div class="fw-semibold"><?= $h($customer['plan'] ?: '—') ?></div></div>
         <div class="col-sm-4"><div class="text-muted">Expiry</div><div class="fw-semibold"><?= $h($customer['expiration'] ?: '—') ?></div></div>
@@ -227,6 +259,8 @@ require __DIR__ . '/../../includes/header.php';
         <input type="hidden" name="_action" value="log">
         <input type="hidden" name="started_ts" value="<?= $h($form['started_ts'] ?? $startedTs) ?>">
         <input type="hidden" name="customer_id" value="<?= $h($customer['id'] ?? '') ?>">
+        <input type="hidden" name="call_id" value="<?= $h($logCall['id'] ?? ($form['call_id'] ?? '')) ?>">
+        <?php if ($logCall): ?><div class="alert alert-info py-1 small">Logging the <?= $h($logCall['direction']) ?> call of <?= $h(date('H:i', strtotime($logCall['started_at']))) ?><?= $logCall['duration_sec'] !== null ? ' (' . (int)round($logCall['duration_sec'] / 60) . ' min)' : '' ?>.</div><?php endif; ?>
         <div class="row g-2">
           <?php if ($newCaller): ?>
           <?php $callerGuess = trim($_GET['caller'] ?? ''); $guessIsPhone = strlen(csPhoneKey($callerGuess)) >= 7; ?>
@@ -379,6 +413,9 @@ require __DIR__ . '/../../includes/header.php';
                   <?= $h(($i['wrap_category'] ?? '') . ' › ' . ($i['wrap_name'] ?? '')) ?>
                   <span class="badge bg-light text-dark border"><?= $h(CS_OUTCOMES[$i['outcome']] ?? $i['outcome']) ?></span>
                   <?php if ($i['ticket_number']): ?><a href="/ticket/<?= $h($i['ticket_id']) ?>" target="_blank"><?= $h($i['ticket_number']) ?></a><?php endif; ?>
+                  <?php if ($i['call_id'] && ($i['recording_path'] || $i['recording_url']) && !$i['recording_deleted_at']): ?>
+                  <a href="/api/support-recording?call=<?= $h($i['call_id']) ?>" target="_blank"><i class="bi bi-play-circle"></i> Recording</a>
+                  <?php endif; ?>
                 </span>
                 <span class="text-muted"><?= $h(date('d M Y H:i', strtotime($i['created_at']))) ?> · <?= $h($i['agent_name']) ?></span>
               </div>
