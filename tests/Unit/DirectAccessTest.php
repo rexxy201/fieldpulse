@@ -61,4 +61,18 @@ final class DirectAccessTest extends TestCase
         // The block has to come before the front-controller rule to take effect.
         $this->assertLessThan(strpos($ht, 'RewriteRule ^ index.php'), strpos($ht, 'R=404'));
     }
+
+    public function testPagesLinkToRoutesNotPhpFiles(): void
+    {
+        // .htaccess 404s any direct .php request, so a link like
+        // /api/installations-export.php breaks; links must use the route.
+        $root = __DIR__ . '/../../';
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . 'pages'));
+        $files = array_merge(iterator_to_array($it), [new SplFileInfo($root . 'includes/header.php'), new SplFileInfo($root . 'includes/footer.php')]);
+        foreach ($files as $f) {
+            if ($f->isFile() && str_ends_with($f->getFilename(), '.php')) {
+                $this->assertDoesNotMatchRegularExpression('#["\'`]/(api|pages|includes)/[\w/-]+\.php#', file_get_contents($f->getPathname()), $f->getFilename() . ' links to a .php URL');
+            }
+        }
+    }
 }
