@@ -86,6 +86,12 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
       $_navItem('/tickets',   'bi-ticket-perforated', 'Tickets',   str_starts_with($activePath, 'ticket')),
       $_navItem('/customers', 'bi-people',            'Customers', $activePath === 'customers', hasPermission('customers.view')),
     ]],
+    ['label' => 'Customer Support', 'icon' => 'bi-headset', 'items' => [
+      $_navItem('/support',              'bi-person-lines-fill', 'Agent Workspace', $activePath === 'support',              hasPermission('support.view')),
+      $_navItem('/support/interactions', 'bi-chat-left-text',    'Interactions',    $activePath === 'support/interactions', hasPermission('support.view')),
+      $_navItem('/support/followups',    'bi-alarm',             'Follow-ups',      $activePath === 'support/followups',    hasPermission('support.view')),
+      $_navItem('/support/settings',     'bi-sliders',           'Support Settings', $activePath === 'support/settings',    hasPermission('support.manage')),
+    ]],
     ['label' => 'Field', 'icon' => 'bi-geo-alt', 'items' => [
       $_navItem('/schedule', 'bi-calendar3', 'Schedule',  $activePath === 'schedule', $_fieldAny && hasPermission('schedule.view')),
       $_navItem('/map',      'bi-map',       'Field Map', $activePath === 'map',      $_fieldAny && hasPermission('map.view')),

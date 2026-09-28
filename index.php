@@ -84,6 +84,14 @@ if ($page === 'ticket' && ($segments[2] ?? '') === 'job-sheet') {
     require __DIR__ . '/pages/ticket-job-sheet.php'; exit;
 }
 
+// ── Customer Support module dispatch ─────────────────────────────────────────
+if ($page === 'support') {
+    $supportPages = ['' => 'workspace', 'interactions' => 'interactions', 'followups' => 'followups', 'settings' => 'settings'];
+    $sub = $segments[1] ?? '';
+    if (isset($supportPages[$sub])) { require __DIR__ . '/pages/support/' . $supportPages[$sub] . '.php'; exit; }
+    header('Location: /support'); exit;
+}
+
 $pages = [
     'my-jobs'       => 'my-jobs',
     'dashboard'     => 'dashboard',

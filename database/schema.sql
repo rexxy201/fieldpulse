@@ -461,3 +461,62 @@ CREATE TABLE IF NOT EXISTS `ticket_checkins` (
   KEY `idx_ticket_checkins_ticket`  (`ticket_id`),
   KEY `idx_ticket_checkins_user`    (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer Support module (also created by config.php schema_v49)
+CREATE TABLE IF NOT EXISTS `cs_wrap_codes` (
+  `id`         varchar(36)  NOT NULL,
+  `category`   varchar(60)  NOT NULL,
+  `name`       varchar(120) NOT NULL,
+  `active`     smallint     NOT NULL DEFAULT 1,
+  `sort_order` int          NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_interactions` (
+  `id`            varchar(36)  NOT NULL,
+  `customer_id`   varchar(36)  DEFAULT NULL,
+  `contact_name`  varchar(150) NOT NULL DEFAULT '',
+  `contact_phone` varchar(40)  NOT NULL DEFAULT '',
+  `channel`       varchar(20)  NOT NULL,
+  `direction`     varchar(10)  NOT NULL DEFAULT 'inbound',
+  `wrap_code_id`  varchar(36)  DEFAULT NULL,
+  `summary`       text,
+  `outcome`       varchar(20)  NOT NULL,
+  `ticket_id`     varchar(36)  DEFAULT NULL,
+  `agent_id`      varchar(36)  NOT NULL,
+  `agent_name`    varchar(150) NOT NULL DEFAULT '',
+  `started_at`    datetime     DEFAULT NULL,
+  `ended_at`      datetime     DEFAULT NULL,
+  `duration_sec`  int          DEFAULT NULL,
+  `created_at`    datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_csi_customer` (`customer_id`),
+  KEY `idx_csi_agent` (`agent_id`),
+  KEY `idx_csi_created` (`created_at`),
+  KEY `idx_csi_phone` (`contact_phone`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_followups` (
+  `id`             varchar(36)  NOT NULL,
+  `interaction_id` varchar(36)  DEFAULT NULL,
+  `customer_id`    varchar(36)  DEFAULT NULL,
+  `contact_name`   varchar(150) NOT NULL DEFAULT '',
+  `contact_phone`  varchar(40)  NOT NULL DEFAULT '',
+  `assigned_to`    varchar(36)  NOT NULL,
+  `created_by`     varchar(36)  NOT NULL,
+  `due_at`         datetime     NOT NULL,
+  `note`           text,
+  `status`         varchar(12)  NOT NULL DEFAULT 'open',
+  `done_at`        datetime     DEFAULT NULL,
+  `created_at`     datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_csf_assigned` (`assigned_to`, `status`),
+  KEY `idx_csf_customer` (`customer_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_agent_status` (
+  `user_id`    varchar(36) NOT NULL,
+  `status`     varchar(12) NOT NULL DEFAULT 'offline',
+  `changed_at` datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

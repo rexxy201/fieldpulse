@@ -240,7 +240,7 @@ require __DIR__ . '/../includes/header.php';
             <select name="customer_id" id="customer_id" class="form-select">
               <option value="">— Select customer —</option>
               <?php foreach ($customers as $c): ?>
-              <option value="<?= $c['id'] ?>"
+              <option value="<?= $c['id'] ?>" <?= ($_GET['customer_id'] ?? '') === $c['id'] ? 'selected' : '' ?>
                 data-has-email="<?= !empty($c['email']) ? '1' : '0' ?>"
                 data-hub="<?= htmlspecialchars($c['resolved_hub_id'] ?? '') ?>"
                 data-hub-name="<?= htmlspecialchars($c['hub_name'] ?? '') ?>">
