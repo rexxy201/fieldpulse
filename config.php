@@ -3717,7 +3717,7 @@ if (!$_sv48) {
                 PRIMARY KEY (`id`),
                 KEY `idx_ticket_checkins_ticket` (`ticket_id`),
                 KEY `idx_ticket_checkins_user`   (`user_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=" . tableCollation('tickets'));
         } else {
             db()->exec("CREATE TABLE IF NOT EXISTS ticket_checkins (
                 id             varchar(36)   NOT NULL PRIMARY KEY,
@@ -3737,6 +3737,38 @@ if (!$_sv48) {
         dbUpsertConfig('schema_v48_migrated', 'true');
     } catch (\Throwable $e) {
         error_log('Schema v48 migration error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * The collation of an existing MySQL table (e.g. utf8mb4_unicode_ci). New
+ * tables that are joined to it must use the same one: the server default
+ * can differ (MariaDB: utf8mb4_general_ci), and joining text columns across
+ * collations fails with "Illegal mix of collations".
+ */
+function tableCollation(string $table): string {
+    $row = dbFetch("SELECT TABLE_COLLATION AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?", [$table]);
+    $c = (string)($row['c'] ?? '');
+    return preg_match('/^utf8mb4_[a-z0-9_]+$/', $c) ? $c : 'utf8mb4_unicode_ci';
+}
+
+// ticket_checkins was created with the server's default collation (by
+// schema_v48 before this fix, or by database/phase8c_migration.sql), which
+// breaks My Jobs where it's joined to tickets. Convert it to match tickets.
+// Runs until the collations match, then records the flag.
+if (DB_TYPE === 'mysql') {
+    $_k = dbKey();
+    if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'ticket_checkins_collation_fixed'")) {
+        try {
+            $_want = tableCollation('tickets');
+            $_have = dbFetch("SELECT TABLE_COLLATION AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ticket_checkins'")['c'] ?? null;
+            if ($_have !== null && $_have !== $_want) {
+                db()->exec("ALTER TABLE ticket_checkins CONVERT TO CHARACTER SET utf8mb4 COLLATE $_want");
+            }
+            if ($_have !== null) dbUpsertConfig('ticket_checkins_collation_fixed', 'true');
+        } catch (\Throwable $e) {
+            error_log('ticket_checkins collation fix error: ' . $e->getMessage());
+        }
     }
 }
 
