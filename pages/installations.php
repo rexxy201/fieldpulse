@@ -492,7 +492,7 @@ require __DIR__ . '/../includes/header.php';
     </select>
     <?php if ($_instFilters): ?><a href="/installations" class="btn btn-outline-secondary">Clear</a><?php endif; ?>
   </form>
-  <a href="/api/installations-export.php?<?= http_build_query($_instFilters) ?>" class="btn btn-outline-success btn-sm">
+  <a href="/api/installations-export?<?= http_build_query($_instFilters) ?>" class="btn btn-outline-success btn-sm">
     <i class="bi bi-file-earmark-excel me-1"></i>Export
   </a>
   <?php if ($canEdit): ?>
