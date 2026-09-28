@@ -40,9 +40,11 @@ if (($_GET['export'] ?? '') === 'csv') {
     exit;
 }
 
+// $perPage/$offset are ints and interpolated: execute() binds every value as a
+// string, and MariaDB rejects LIMIT '50' (the page failed with a syntax error).
 $rows = dbFetchAll(
-    "SELECT id,user_name,action,entity,entity_id,details,created_at FROM audit_logs $where ORDER BY created_at DESC LIMIT ? OFFSET ?",
-    array_merge($params, [$perPage, $offset])
+    "SELECT id,user_name,action,entity,entity_id,details,created_at FROM audit_logs $where ORDER BY created_at DESC LIMIT $perPage OFFSET $offset",
+    $params
 );
 
 // For filter dropdowns

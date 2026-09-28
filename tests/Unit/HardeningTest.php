@@ -53,4 +53,18 @@ final class HardeningTest extends TestCase
         dbFetchAll("SELECT t.id FROM tickets t LEFT JOIN ticket_checkins ci ON ci.ticket_id = t.id LIMIT 1");
         $this->addToAssertionCount(1);
     }
+
+    public function testNoPlaceholdersInLimitOrOffset(): void
+    {
+        // dbFetchAll() binds every parameter as a string; MariaDB rejects
+        // LIMIT '50'. Interpolate cast ints instead.
+        $root = __DIR__ . '/../../';
+        foreach (['pages', 'api', 'includes'] as $dir) {
+            foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . $dir)) as $f) {
+                if ($f->isFile() && str_ends_with($f->getFilename(), '.php')) {
+                    $this->assertDoesNotMatchRegularExpression('/\b(LIMIT|OFFSET)\s+\?/i', file_get_contents($f->getPathname()), $f->getPathname());
+                }
+            }
+        }
+    }
 }
