@@ -7,6 +7,11 @@ $id  = $segments[2] ?? null;
 $sub = $segments[3] ?? null;
 
 if ($id && $sub === 'password' && method() === 'PATCH') {
+    // Your own password only (admins reset others from the Team page), and a
+    // limit on guesses: otherwise any signed-in user could brute-force another
+    // user's current password here, past the login lockout.
+    if ($id !== (currentUser()['id'] ?? null)) jsonResponse(['error'=>'You can only change your own password.'],403);
+    if (!rateLimitCheck('password_change', $id, 5, 15)) jsonResponse(['error'=>'Too many attempts. Try again in 15 minutes.'],429);
     $b = getBody();
     $u = dbFetch("SELECT password FROM users WHERE id=?",[$id]);
     if (!$u || !verifyPassword($b['currentPassword']??'',$u['password'])) jsonResponse(['error'=>'Current password incorrect'],400);
@@ -20,6 +25,9 @@ if ($id && $sub === 'password' && method() === 'PATCH') {
 if ($id && method() === 'PATCH') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
+    $target = dbFetch("SELECT role FROM users WHERE id=?",[$id]);
+    if (!$target) jsonResponse(['error'=>'Not found'],404);
+    if ($err = userRoleChangeError($target['role'], (string)($b['role'] ?? $target['role']))) jsonResponse(['error'=>$err],403);
     $allowed=['name','email','phone','role','hub_id','team_id','vendor_id','status'];
     $sets=[]; $vals=[];
     foreach ($allowed as $c) { if (array_key_exists($c,$b)) { $sets[]="$c=?"; $vals[]=$b[$c]; } }
@@ -40,6 +48,7 @@ if (method() === 'GET') {
 if (method() === 'POST') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
+    if ($err = userRoleChangeError(null, (string)($b['role'] ?? 'engineer'))) jsonResponse(['error'=>$err],403);
     $newId = newUuid();
     // Same rule as the Team page: the password is temporary (must be changed
     // at first sign-in, expires after TEMP_PASSWORD_HOURS). If none is given a
@@ -58,6 +67,7 @@ if (method() === 'POST') {
 
 if ($id && method() === 'DELETE') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
+    if (!canManageUserAccount(dbFetch("SELECT role FROM users WHERE id=?",[$id]))) jsonResponse(['error'=>'Only an admin can remove admin accounts.'],403);
     dbRun("DELETE FROM users WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }

@@ -57,9 +57,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
     $action = $_POST['action'] ?? '';
     $reqId  = $_POST['req_id'] ?? '';
     $notes  = trim($_POST['review_notes'] ?? '');
+    $_requesterRole = (string)(dbFetch("SELECT u.role FROM payment_requests pr LEFT JOIN users u ON u.id = pr.requester_id WHERE pr.id = ?", [$reqId])['role'] ?? '');
 
     if ($action === 'authorize') {
         if (!$canAuthorize) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        if (!canAuthorizePaymentFrom($_requesterRole)) { echo json_encode(['ok'=>false,'msg'=>'Only an authorizer in the requester\'s department can authorize this request.']); exit; }
         // The Authorizer may revise the requested amount (e.g. trimming an
         // inflated figure) before it moves on to Approve. The requester's
         // original figure is preserved in original_amount for audit/print.
@@ -109,6 +111,11 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
         // Terminal rejection — only at the Authorize/Approve stages. Finance
         // uses "return" instead, which sends the request back to the requester.
         if (!$canAuthorize && !$canApproveStage) { echo json_encode(['ok'=>false,'msg'=>'Access denied']); exit; }
+        // At the authorize stage, only the requester's department (or the approver tier) may reject.
+        $_stage = dbFetch("SELECT status FROM payment_requests WHERE id=?", [$reqId])['status'] ?? '';
+        if ($_stage === 'pending' && !$canApproveStage && !canAuthorizePaymentFrom($_requesterRole)) {
+            echo json_encode(['ok'=>false,'msg'=>'Only an authorizer in the requester\'s department can reject this request.']); exit;
+        }
         if ($notes === '') { echo json_encode(['ok'=>false,'msg'=>'A reason is required to reject.']); exit; }
         dbRun("UPDATE payment_requests SET status='rejected', reviewed_by=?, reviewed_by_name=?, reviewed_at=NOW(), review_notes=? WHERE id=? AND status IN ('pending','authorized')",
             [$user['id'], $user['name'], $notes, $reqId]);

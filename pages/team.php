@@ -8,8 +8,20 @@ $msg = ''; $msgType = 'success';
 
 if (method() === 'POST') {
     verifyCsrf();
+    // The add/edit/delete buttons only show with team.manage; the server must
+    // enforce it too, or anyone who can view the team could create an admin.
+    requirePermission('team.manage');
     $b = $_POST;
     $action = $b['_action'] ?? '';
+    $_target = !empty($b['id']) && in_array($action, ['edit_user', 'del_user', 'reset_2fa'], true)
+        ? dbFetch("SELECT id, role FROM users WHERE id = ?", [$b['id']]) : null;
+    $_roleErr = null;
+    if ($action === 'add_user')  $_roleErr = userRoleChangeError(null, (string)($b['role'] ?? 'engineer'));
+    if ($action === 'edit_user') $_roleErr = $_target ? userRoleChangeError($_target['role'], (string)($b['role'] ?? 'engineer')) : 'Member not found.';
+    if (in_array($action, ['del_user', 'reset_2fa'], true) && !canManageUserAccount($_target)) {
+        $_roleErr = 'Only an admin can change or remove admin accounts.';
+    }
+    if ($_roleErr !== null) { $msg = $_roleErr; $msgType = 'danger'; $action = ''; }
 
     if ($action === 'add_user') {
         // One multi-select drives both columns: hub_ids gets the full set

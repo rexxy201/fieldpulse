@@ -7,20 +7,23 @@ $user = currentUser();
 $role = $user['role'];
 $id   = $segments[2] ?? null;
 
-$editRoles = ['admin','project_admin','supervisor-fiber'];
+// Role permissions (Team page) decide who may edit, not a hard-coded role list,
+// so the API matches pages/installations.php exactly.
+$canEditInstall   = hasPermission('installations.update');
+$canCreateInstall = hasPermission('installations.create');
 
 if ($id && method() === 'GET') {
     $p = dbFetch("SELECT * FROM installation_profiles WHERE id=?",[$id]);
     if (!$p) jsonResponse(['error'=>'Not found'],404);
     $isVendorRole = in_array($role, ['vendor','vendor-mtce'], true);
     if ($isVendorRole && !canAccessInstallation($p)) jsonResponse(['error'=>'Forbidden'],403);
-    if (!in_array($role,$editRoles) && !$isVendorRole && !hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
+    if (!$canEditInstall && !$isVendorRole && !hasPermission('installations.view')) jsonResponse(['error'=>'Forbidden'],403);
     jsonResponse($p);
 }
 
 if ($id && method() === 'PATCH') {
     $b = getBody();
-    if (!in_array($role, $editRoles)) {
+    if (!$canEditInstall) {
         if (in_array($role, ['vendor','vendor-mtce'], true)) {
             $p = dbFetch("SELECT vendor_id, hub_id FROM installation_profiles WHERE id=?",[$id]);
             if (!$p || !canAccessInstallation($p)) jsonResponse(['error'=>'Forbidden'],403);
@@ -83,7 +86,7 @@ if ($id && method() === 'PATCH') {
 }
 
 if ($id && method() === 'DELETE') {
-    // Its own permission, deliberately not tied to $editRoles/installations.update —
+    // Its own permission, deliberately not tied to installations.update —
     // a role opened up for editing should not automatically be able to delete.
     if (!hasPermission('installations.delete')) jsonResponse(['error'=>'Forbidden'],403);
     dbRun("DELETE FROM installation_profiles WHERE id=?",[$id]);
@@ -100,7 +103,7 @@ if (method() === 'GET') {
 }
 
 if (method() === 'POST') {
-    if (!in_array($role,$editRoles)) jsonResponse(['error'=>'Forbidden'],403);
+    if (!$canCreateInstall) jsonResponse(['error'=>'Forbidden'],403);
     $b = getBody();
     $newId = newUuid();
     $paymentAt = $b['paymentConfirmedAt'] ?? null;

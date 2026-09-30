@@ -10,7 +10,7 @@ if (method() === 'POST') {
     if ($action === 'add_subscription') {
         $rType = $b['report_type'] ?? '';
         $cadence = in_array($b['cadence'] ?? '', ['daily','weekly','monthly'], true) ? $b['cadence'] : 'weekly';
-        $recipients = trim($b['recipients'] ?? '');
+        $recipients = implode(', ', staffEmailsOnly((string)($b['recipients'] ?? '')));
         if (array_key_exists($rType, REPORT_SUBSCRIPTION_TYPES) && $recipients !== '') {
             $u = currentUser();
             dbRun("INSERT INTO report_subscriptions (id,report_type,cadence,recipients,created_by,created_by_name) VALUES (?,?,?,?,?,?)",
@@ -530,7 +530,7 @@ document.getElementById('askDataInput')?.addEventListener('keydown', function (e
         </div>
         <div class="mb-0">
           <label class="form-label fw-semibold">Recipients</label>
-          <textarea name="recipients" class="form-control form-control-sm" rows="2" placeholder="comma-separated emails" required></textarea>
+          <textarea name="recipients" class="form-control form-control-sm" rows="2" placeholder="comma-separated staff emails (addresses of FieldPulse users only)" required></textarea>
         </div>
       </div>
       <div class="modal-footer">

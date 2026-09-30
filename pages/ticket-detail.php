@@ -102,6 +102,11 @@ if (method() === 'POST') {
         if (isset($b['priority']) && !in_array($b['priority'], TICKET_PRIORITIES, true)) unset($b['priority']);
         if (($b['status'] ?? null) === 'resolved' && !$canResolve) unset($b['status']);
         if (($b['status'] ?? null) === 'closed'   && !$canClose)   unset($b['status']);
+        // Resolve/assign-only users can't edit the ticket's other fields.
+        if (!$canEdit) {
+            foreach (['priority', 'description', 'olt'] as $_k) unset($b[$_k]);
+            if (isset($b['status']) && !in_array($b['status'], ['resolved', 'closed'], true)) unset($b['status']);
+        }
 
         $newStatus  = $b['status'] ?? $ticket['status'];
         $isResolving = in_array($newStatus, ['resolved','closed']) && !in_array($ticket['status'], ['resolved','closed']);

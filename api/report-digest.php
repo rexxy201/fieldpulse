@@ -105,7 +105,8 @@ foreach ($due as $sub) {
         <table style='border-collapse:collapse;width:100%;font-size:.85rem'>{$headHtml}{$rowsHtml}</table>
         <p style='color:#94a3b8;font-size:.8rem;margin-top:2rem'>You're receiving this because a Report Subscription was set up on the Reports page in FieldPulse.</p>";
 
-    $recipients = array_filter(array_map('trim', explode(',', $sub['recipients'])));
+    // Staff addresses only, including for subscriptions saved before this rule.
+    $recipients = staffEmailsOnly((string)$sub['recipients']);
     $sentCount = 0;
     foreach ($recipients as $email) {
         if (filter_var($email, FILTER_VALIDATE_EMAIL) && sendEmail($email, 'Team', "{$co} — {$title}", $bodyHtml)) $sentCount++;

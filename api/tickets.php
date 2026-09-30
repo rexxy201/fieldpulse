@@ -108,6 +108,7 @@ if ($id === 'bulk-update' && method() === 'POST') {
 // ticket in the loop, so a busy run naturally spreads across the team
 // instead of stacking everything on whoever sorts first.
 if ($id === 'auto-dispatch' && method() === 'POST') {
+    if (!hasPermission('tickets.assign')) jsonResponse(['error' => 'Forbidden — missing tickets.assign'], 403);
     $unassigned = dbFetchAll("SELECT * FROM tickets WHERE status='open' AND assigned_to IS NULL");
     $dispatched = 0;
     foreach ($unassigned as $t) {
@@ -172,6 +173,12 @@ if ($id && method() === 'PATCH') {
     // — mirrors the web form, which just doesn't offer the field rather than
     // rejecting the whole request over it.
     if (!$_canAssignApi) unset($b['assigned_to']);
+    // Without tickets.update a caller may only resolve/close (with RCA) — not
+    // edit priority, description, OLT or move the ticket to other statuses.
+    if (!$_canEditApi) {
+        foreach (['priority', 'description', 'olt'] as $_k) unset($b[$_k]);
+        if (isset($b['status']) && !in_array($b['status'], ['resolved', 'closed'], true)) unset($b['status']);
+    }
     if ($_fieldErr = ticketFieldError($b)) jsonResponse(['error' => $_fieldErr], 400);
     $allowed = ['status','priority','assigned_to','description','olt','roca_root_cause','roca_observation','roca_corrective_action','roca_analysis'];
     $sets = []; $vals = [];

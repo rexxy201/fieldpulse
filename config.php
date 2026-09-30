@@ -475,6 +475,66 @@ function isAdmin(): bool {
     return hasRole('admin', 'project_admin');
 }
 
+/**
+ * Why the signed-in user may not set a user's role to $newRole (the user's
+ * current role is $currentRole; null for a new account), or null when allowed.
+ * Only a full admin can create, change or remove admin accounts, so a project
+ * admin or team manager can't promote themselves or take over an admin.
+ */
+function userRoleChangeError(?string $currentRole, string $newRole): ?string {
+    if (!in_array($newRole, roleKeys(), true)) return 'Unknown role.';
+    if ((currentUser()['role'] ?? '') === 'admin') return null;
+    if ($newRole === 'admin' || $currentRole === 'admin') return 'Only an admin can create, change or remove admin accounts.';
+    return null;
+}
+
+/** Same rule for actions on an existing account (delete, 2FA reset, password): admins only touch admins. */
+function canManageUserAccount(?array $target): bool {
+    if (!$target) return false;
+    return ($target['role'] ?? '') !== 'admin' || (currentUser()['role'] ?? '') === 'admin';
+}
+
+/**
+ * Whether the signed-in user may authorize a payment request raised by
+ * someone with $requesterRole: only an authorizer in the requester's own
+ * department (fiber, NOC, CX), or an admin (who also covers departments
+ * without an authorizer: vendors, finance, management).
+ */
+function canAuthorizePaymentFrom(string $requesterRole): bool {
+    $me = currentUser();
+    if (($me['role'] ?? '') === 'admin') return true;
+    $dept = roleDepartment($requesterRole);
+    return $dept !== '' && $dept === roleDepartment($me['role'] ?? '');
+}
+
+/**
+ * The addresses in a comma-separated list that belong to active staff
+ * accounts (lower-cased). Scheduled report emails go only to staff, so
+ * someone who can view reports can't send company data to an outside inbox.
+ */
+function staffEmailsOnly(string $csv): array {
+    $want = array_unique(array_filter(array_map(fn($e) => strtolower(trim($e)), explode(',', $csv))));
+    if (!$want) return [];
+    $ph = implode(',', array_fill(0, count($want), '?'));
+    $have = array_map('strtolower', array_column(
+        dbFetchAll("SELECT email FROM users WHERE status = 'active' AND LOWER(email) IN ($ph)", array_values($want)), 'email'));
+    return array_values(array_intersect($want, $have));
+}
+
+/** Public-page masking: "Chinedu Okafor" → "Chinedu O." */
+function maskPersonName(string $name): string {
+    $parts = preg_split('/\s+/', trim($name)) ?: [];
+    if (count($parts) <= 1) return $parts[0] ?? '';
+    return $parts[0] . ' ' . mb_strtoupper(mb_substr(end($parts), 0, 1)) . '.';
+}
+
+/** Public-page masking: "chinedu@example.com" → "c•••@example.com" */
+function maskEmail(string $email): string {
+    if (!str_contains($email, '@')) return $email === '' ? '' : '•••';
+    [$local, $domain] = explode('@', $email, 2);
+    return mb_substr($local, 0, 1) . '•••@' . $domain;
+}
+
 /** SELECT list for GET /api/users, narrowed for users without team.view. */
 function usersListColumns(): string {
     return hasPermission('team.view')

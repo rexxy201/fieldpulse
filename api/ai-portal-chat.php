@@ -67,7 +67,7 @@ $system = "You are the customer support chat assistant on MangoNet's FieldPulse 
         . "Keep replies short (2-4 sentences), friendly, plain language, no markdown formatting. "
         . "Respond ONLY as JSON: {\"reply\": \"...\", \"draftTicket\": {\"description\": \"...\", \"faultTypeName\": \"...\"} or null}.";
 
-$accountContext = "Customer: {$cust['name']} | Plan: " . ($cust['plan'] ?: '—') . " | Status: {$cust['status']}\n"
+$accountContext = "Customer: " . maskPersonName((string)$cust['name']) . " | Plan: " . ($cust['plan'] ?: '—') . " | Status: {$cust['status']}\n"
                  . "Recent tickets:\n{$ticketsText}";
 
 $historyText = '';
