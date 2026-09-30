@@ -117,6 +117,16 @@ final class SecurityLocksTest extends TestCase
         $this->assertSame('engineer', dbFetch("SELECT role FROM users WHERE id=?", [$victim['id']])['role']);
     }
 
+    public function testTeamChangesAreAudited(): void
+    {
+        $victim = $this->makeUser(['role' => 'engineer']);
+        [, $csrf] = $this->loginAs('admin');
+        $this->request('POST', '/team', ['_csrf' => $csrf, '_action' => 'edit_user', 'id' => $victim['id'], 'name' => 'X', 'role' => 'cx', 'status' => 'active']);
+        $a = dbFetch("SELECT action, details FROM audit_logs WHERE entity = 'user' AND entity_id = ? ORDER BY created_at DESC, id DESC LIMIT 1", [$victim['id']]);
+        $this->assertSame('user_update', $a['action'] ?? null);
+        $this->assertStringContainsString('role engineer → cx', $a['details']);
+    }
+
     public function testAutoDispatchNeedsAssignPermission(): void
     {
         [, $csrf] = $this->loginAs('vendor');

@@ -19,6 +19,7 @@ if ($id && $sub === 'password' && method() === 'PATCH') {
     if (isWeakDefaultPassword((string)($b['newPassword'] ?? ''))) jsonResponse(['error'=>'That password is a well-known default. Choose a different one.'],400);
     dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['newPassword']??''),$id]);
     keepSessionAfterPasswordChange($id);
+    auditUserChange('password_change', $id, 'changed own password (API)');
     jsonResponse(['ok'=>true]);
 }
 
@@ -34,6 +35,8 @@ if ($id && method() === 'PATCH') {
     if (!$sets) jsonResponse(['error'=>'Nothing to update'],400);
     $vals[]=$id;
     dbRun("UPDATE users SET ".implode(',',$sets)." WHERE id=?",$vals);
+    $_what = array_key_exists('role', $b) && $b['role'] !== $target['role'] ? "role {$target['role']} → {$b['role']}" : 'fields: ' . implode(', ', array_intersect($allowed, array_keys($b)));
+    auditUserChange('user_update', $id, $_what . ' (API)');
     jsonResponse(dbFetch("SELECT id,username,name,email,phone,role,hub_id,team_id,vendor_id,status FROM users WHERE id=?",[$id]));
 }
 
@@ -60,6 +63,7 @@ if (method() === 'POST') {
          hashPassword($tempPassword),$b['hubId']??null,$b['teamId']??null,$b['vendorId']??null]
     );
     setTemporaryPassword($newId, $tempPassword);
+    auditUserChange('user_create', $newId, 'added via API');
     $out = dbFetch("SELECT id,username,name,email,role,status FROM users WHERE id=?",[$newId]);
     if (($b['password'] ?? '') === '') $out['temporaryPassword'] = $tempPassword;
     jsonResponse($out, 201);
@@ -68,6 +72,7 @@ if (method() === 'POST') {
 if ($id && method() === 'DELETE') {
     if (!isAdmin()) jsonResponse(['error'=>'Forbidden'],403);
     if (!canManageUserAccount(dbFetch("SELECT role FROM users WHERE id=?",[$id]))) jsonResponse(['error'=>'Only an admin can remove admin accounts.'],403);
+    auditUserChange('user_delete', $id, 'removed via API');
     dbRun("DELETE FROM users WHERE id=?",[$id]);
     jsonResponse(['ok'=>true]);
 }

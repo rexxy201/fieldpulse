@@ -43,6 +43,7 @@ if (method() === 'POST') {
             [$newId,$b['username']??'',$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
              hashPassword($tempPassword),$primaryHub,$hubIds,$b['team_id']??null,$b['vendor_id']??null]);
         setTemporaryPassword($newId, $tempPassword);
+        auditUserChange('user_create', $newId, 'added from Team page');
         $msg = 'Member added. Temporary password: ' . $tempPassword
              . ' (shown only once). Share it privately; it expires in ' . TEMP_PASSWORD_HOURS
              . ' hours and must be changed at first sign-in.';
@@ -55,6 +56,7 @@ if (method() === 'POST') {
         // "{id1,id2}" string this used to write, which fails that constraint.
         $hubIds = $hubIdsArr ? json_encode($hubIdsArr) : null;
         $primaryHub = $hubIdsArr[0] ?? null;
+        $_before = dbFetch("SELECT role, status FROM users WHERE id = ?", [$b['id']]);
         $sets = "name=?,email=?,phone=?,role=?,status=?,hub_id=?,hub_ids=?,team_id=?,vendor_id=?";
         dbRun("UPDATE users SET $sets WHERE id=?",
             [$b['name']??'',$b['email']??'',$b['phone']??'',$b['role']??'engineer',
@@ -66,13 +68,19 @@ if (method() === 'POST') {
             if ($b['id'] === (currentUser()['id'] ?? null)) {
                 dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL WHERE id=?", [hashPassword($b['new_password']), $b['id']]);
                 keepSessionAfterPasswordChange($b['id']);
+                auditUserChange('password_change', $b['id'], 'changed own password from Team page');
             } else {
                 setTemporaryPassword($b['id'], $b['new_password']);
             }
         }
+        $_changes = [];
+        if ($_before && $_before['role'] !== ($b['role'] ?? 'engineer'))     $_changes[] = "role {$_before['role']} → " . ($b['role'] ?? 'engineer');
+        if ($_before && $_before['status'] !== ($b['status'] ?? 'active'))   $_changes[] = "status {$_before['status']} → " . ($b['status'] ?? 'active');
+        auditUserChange('user_update', $b['id'], $_changes ? implode('; ', $_changes) : 'details edited');
         $msg = 'Member updated.';
     }
     if ($action === 'del_user' && !empty($b['id'])) {
+        auditUserChange('user_delete', $b['id'], 'removed from Team page');
         dbRun("DELETE FROM users WHERE id=?", [$b['id']]);
         $msg = 'Member removed.';
     }
