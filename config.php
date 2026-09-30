@@ -876,16 +876,44 @@ function notifyRoles(array $roles, string $title, string $message, string $link 
     }
 }
 
+/** Roles that supervise a department's staff (ticket SLA alerts go to these). */
+const DEPARTMENT_SUPERVISOR_ROLES = ['supervisor-fiber', 'supervisor-noc', 'cx_supervisor', 'cx_manager'];
+
 /**
- * Notify (in-app + email) every active user holding a given permission —
+ * Active supervisors of a department (id, name, email). Falls back to admins
+ * when the department is unknown or has no supervisor, so an alert always
+ * reaches someone.
+ */
+function departmentSupervisors(string $department): array {
+    $users = [];
+    if ($department !== '') {
+        $ph = implode(',', array_fill(0, count(DEPARTMENT_SUPERVISOR_ROLES), '?'));
+        $users = dbFetchAll("SELECT u.id, u.name, u.email FROM users u JOIN roles r ON r.name = u.role
+                             WHERE r.department = ? AND u.role IN ($ph) AND u.status = 'active'",
+                            array_merge([$department], DEPARTMENT_SUPERVISOR_ROLES));
+    }
+    return $users ?: dbFetchAll("SELECT id, name, email FROM users WHERE role = 'admin' AND status = 'active'");
+}
+
+/**
+ * Notify (in-app + email) the active users holding a given permission —
  * used to route Payment Request stage-change alerts to whichever roles
  * currently hold payment_requests.authorize / .approve / .finance_check,
  * without hardcoding role names (role_permissions is the source of truth
  * for who holds a permission, and it's admin-configurable).
+ *
+ * With $department, only roles in that department are notified (a fiber
+ * engineer's request goes to the fiber supervisor, finance notices to the
+ * finance team); if none of them holds the permission, admins are notified
+ * instead so the request never stalls unseen.
  */
-function notifyPermissionHolders(string $permission, string $title, string $inAppMessage, string $link, string $emailSubject, string $emailBodyHtml): void {
+function notifyPermissionHolders(string $permission, string $title, string $inAppMessage, string $link, string $emailSubject, string $emailBodyHtml, ?string $department = null): void {
     try {
         $roles = array_column(dbFetchAll("SELECT DISTINCT role FROM role_permissions WHERE permission = ?", [$permission]), 'role');
+        if ($department !== null) {
+            $inDept = array_column(dbFetchAll("SELECT name FROM roles WHERE department = ?", [$department]), 'name');
+            $roles  = array_values(array_intersect($roles, $inDept)) ?: ['admin'];
+        }
         if (!$roles) return;
         $ph = implode(',', array_fill(0, count($roles), '?'));
         $users = dbFetchAll("SELECT id, name, email FROM users WHERE role IN ($ph) AND status = 'active'", $roles);
@@ -4103,6 +4131,30 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v51_migrated'")) 
 }
 
 require_once __DIR__ . '/includes/support-whatsapp.php';
+
+// schema_v52: payment request sign-off by department.
+//  - Authorize: the fiber and NOC supervisors and the CX Manager (not the CX
+//    supervisor); project admins only raise requests.
+//  - Approve: COO and admins only.
+//  - Finance check: finance department and admins only.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v52_migrated'")) {
+    try {
+        db()->exec("DELETE FROM role_permissions WHERE role = 'project_admin'
+                    AND permission IN ('payment_requests.authorize','payment_requests.approve','payment_requests.finance_check')");
+        db()->exec("DELETE FROM role_permissions WHERE role = 'cx_supervisor' AND permission = 'payment_requests.authorize'");
+        db()->exec("DELETE FROM role_permissions WHERE permission = 'payment_requests.approve' AND role NOT IN ('coo_manager','admin')");
+        db()->exec("DELETE FROM role_permissions WHERE permission = 'payment_requests.finance_check' AND role <> 'admin'
+                    AND role NOT IN (SELECT name FROM roles WHERE department = 'finance')");
+        foreach (['supervisor-fiber', 'supervisor-noc', 'cx_manager'] as $_r) {
+            dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'payment_requests.authorize')", [newUuid(), $_r]);
+        }
+        dbInsertIgnore("INSERT INTO role_permissions (id,role,permission) VALUES (?,?,'payment_requests.approve')", [newUuid(), 'coo_manager']);
+        dbUpsertConfig('schema_v52_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v52 migration error: ' . $e->getMessage());
+    }
+}
 
 /** Wrap-up codes grouped by category, for <optgroup> selects. */
 function csWrapCodesGrouped(bool $activeOnly = true): array {

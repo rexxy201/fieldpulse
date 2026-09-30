@@ -81,7 +81,8 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
                 "{$_pr['requester_name']}'s request ({$_pr['request_no']}) has been authorized and needs your approval.",
                 '/payment-requests?status=authorized',
                 "Payment Request Awaiting Your Approval — {$_pr['request_no']}",
-                paymentRequestEmailBody($_pr, "A payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting your approval."));
+                paymentRequestEmailBody($_pr, "A payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting your approval."),
+                'executive');
             notifyPaymentRequestOriginator($_pr, "Payment Request Authorized — {$_pr['request_no']}",
                 "Your payment request has been authorized by " . htmlspecialchars($user['name']) . " and is now awaiting approval.");
         }
@@ -97,7 +98,8 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
                 "{$_pr['requester_name']}'s request ({$_pr['request_no']}) has been approved and is ready for finance processing.",
                 '/payment-requests?status=approved',
                 "Payment Request Ready for Finance Processing — {$_pr['request_no']}",
-                paymentRequestEmailBody($_pr, "A payment request has been approved by " . htmlspecialchars($user['name']) . " and is now ready for finance processing."));
+                paymentRequestEmailBody($_pr, "A payment request has been approved by " . htmlspecialchars($user['name']) . " and is now ready for finance processing."),
+                'finance');
             notifyPaymentRequestOriginator($_pr, "Payment Request Approved — {$_pr['request_no']}",
                 "Your payment request has been approved by " . htmlspecialchars($user['name']) . " and is now with finance for processing.");
         }
@@ -249,7 +251,8 @@ if (method() === 'POST' && isset($_POST['ajax'])) {
                 "Finance review complete for {$_pr['requester_name']}'s request ({$_pr['request_no']}). Line items adjusted. New total: ₦" . number_format($grandTotal, 2) . ". Ready to disburse.",
                 '/payment-requests?status=pending_disbursement',
                 "Ready to Disburse — {$_pr['request_no']}",
-                paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed review of this payment request. New total: ₦" . number_format($grandTotal, 2) . ". It is now ready for disbursement."));
+                paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " (Finance) has completed review of this payment request. New total: ₦" . number_format($grandTotal, 2) . ". It is now ready for disbursement."),
+                'finance');
             notifyPaymentRequestOriginator($_pr, "Finance Review Complete — {$_pr['request_no']}",
                 "Your payment request has been reviewed by Finance. New total: ₦" . number_format($grandTotal, 2) . ". It is now approved and pending disbursement.");
         }
@@ -442,7 +445,10 @@ if (method() === 'POST' && !isset($_POST['ajax'])) {
                     "{$user['name']} raised a payment request ({$_pr['request_no']}) that needs your authorization.",
                     '/payment-requests?status=pending',
                     "Payment Request Awaiting Your Authorization — {$_pr['request_no']}",
-                    paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " has raised a payment request that needs your authorization."));
+                    paymentRequestEmailBody($_pr, htmlspecialchars($user['name']) . " has raised a payment request that needs your authorization."),
+                    // The requester's own department authorizes (fiber → fiber supervisor, CX → CX manager);
+                    // departments without an authorizer (vendors, finance, management) go to admins.
+                    roleDepartment($user['role']));
             }
             header('Location: /payment-requests'); exit;
         }
