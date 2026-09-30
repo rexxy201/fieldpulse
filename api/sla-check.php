@@ -26,17 +26,10 @@ $approaching = dbFetchAll(
     "SELECT t.*,
             u_assigned.name  AS assigned_name,  u_assigned.email  AS assigned_email,
             u_creator.name   AS creator_name,   u_creator.email   AS creator_email,
-            u_supervisor.name AS sup_name,       u_supervisor.email AS sup_email
+            u_assigned.role  AS assigned_role,  u_creator.role    AS creator_role
      FROM tickets t
      LEFT JOIN users u_assigned   ON u_assigned.id   = t.assigned_to
      LEFT JOIN users u_creator    ON u_creator.id    = t.created_by
-     LEFT JOIN users u_supervisor ON u_supervisor.id = (
-         SELECT u2.id FROM users u2
-         LEFT JOIN (SELECT user_id, MAX(created_at) AS ll FROM audit_logs WHERE action='login' GROUP BY user_id) al ON al.user_id = u2.id
-         WHERE u2.role IN ('supervisor-fiber','supervisor-noc','cx_supervisor','admin','project_admin')
-         AND u2.status = 'active'
-         ORDER BY COALESCE(al.ll,'2000-01-01') DESC LIMIT 1
-     )
      WHERE t.sla_breach_at IS NOT NULL
        AND t.status NOT IN ('resolved','closed')
        AND t.sla_warned_at IS NULL
@@ -64,8 +57,12 @@ foreach ($approaching as $t) {
     if (!empty($t['assigned_email']))  $recipients[] = [$t['assigned_email'],  $t['assigned_name']];
     if (!empty($t['creator_email']) && $t['creator_email'] !== $t['assigned_email'])
                                        $recipients[] = [$t['creator_email'],   $t['creator_name']];
-    if (!empty($t['sup_email'])    && !in_array($t['sup_email'], array_column($recipients, 0)))
-                                       $recipients[] = [$t['sup_email'],       $t['sup_name']];
+    // The supervisor(s) of the assignee's department (the creator's if unassigned); admins if none.
+    $dept = roleDepartment((string)($t['assigned_role'] ?: $t['creator_role'] ?: ''));
+    foreach (departmentSupervisors($dept) as $sup) {
+        if (!empty($sup['email']) && !in_array($sup['email'], array_column($recipients, 0)))
+            $recipients[] = [$sup['email'], $sup['name']];
+    }
 
     foreach ($recipients as [$email, $name]) {
         try {
