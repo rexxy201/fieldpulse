@@ -291,9 +291,9 @@ if ($onus) {
         <div class="p-4">
           <div class="row g-3">
             <div class="col-12">
-              <h5 class="fw-bold mb-1"><?= htmlspecialchars($cust['name']) ?></h5>
+              <h5 class="fw-bold mb-1"><?= htmlspecialchars(maskPersonName((string)$cust['name'])) ?></h5>
               <div class="text-muted small">Account: <strong class="font-monospace"><?= htmlspecialchars($cust['account_number']) ?></strong>
-                <?php if (!empty($cust['email'])): ?> &bull; <?= htmlspecialchars($cust['email']) ?><?php endif; ?>
+                <?php if (!empty($cust['email'])): ?> &bull; <?= htmlspecialchars(maskEmail((string)$cust['email'])) ?><?php endif; ?>
               </div>
             </div>
 
@@ -512,7 +512,7 @@ if ($onus) {
 
         <div class="modal-body">
           <div class="mb-3 p-3 rounded" style="background:#f8fafc;border:1px solid var(--border,#e2e8f0)">
-            <div class="fw-semibold small"><?= htmlspecialchars($cust['name']) ?></div>
+            <div class="fw-semibold small"><?= htmlspecialchars(maskPersonName((string)$cust['name'])) ?></div>
             <div class="text-muted" style="font-size:.8rem">Account: <?= htmlspecialchars($cust['account_number']) ?></div>
           </div>
 
