@@ -9,9 +9,10 @@ final class UserAuditTest extends TestCase
         parent::tearDown();
     }
 
-    private function lastAudit(string $userId): ?array
+    /** The user's audit entry for $action (entries in the same second have no reliable order, so look up by action). */
+    private function audit(string $userId, string $action): ?array
     {
-        return dbFetch("SELECT action, details FROM audit_logs WHERE entity = 'user' AND entity_id = ? ORDER BY created_at DESC, id DESC LIMIT 1", [$userId]);
+        return dbFetch("SELECT action, details FROM audit_logs WHERE entity = 'user' AND entity_id = ? AND action = ? LIMIT 1", [$userId, $action]);
     }
 
     public function testNewAccountsRecordCreationTime(): void
@@ -25,15 +26,15 @@ final class UserAuditTest extends TestCase
         $u = $this->makeUser(['role' => 'engineer']);
         $_SESSION['user'] = ['id' => $u['id'], 'role' => 'engineer', 'name' => 'T'];
         $this->assertNull(changeOwnPassword($u['id'], 'TestPassw0rd!', 'Brand-New-Pass-7', 'Brand-New-Pass-7'));
-        $a = $this->lastAudit($u['id']);
-        $this->assertSame('password_change', $a['action']);
+        $a = $this->audit($u['id'], 'password_change');
+        $this->assertNotNull($a);
         $this->assertStringContainsString($u['username'], $a['details']);
 
         setTemporaryPassword($u['id'], 'Temp-Pass-12345');
-        $this->assertSame('password_set', $this->lastAudit($u['id'])['action']);
+        $this->assertNotNull($this->audit($u['id'], 'password_set'));
 
         completePasswordReset($u['id'], 'Reset-Pass-12345');
-        $this->assertSame('password_reset', $this->lastAudit($u['id'])['action']);
+        $this->assertNotNull($this->audit($u['id'], 'password_reset'));
     }
 
     public function testDeletedAccountStaysIdentifiableInTheLog(): void
@@ -41,7 +42,7 @@ final class UserAuditTest extends TestCase
         $u = $this->makeUser(['role' => 'cx']);
         auditUserChange('user_delete', $u['id'], 'removed');
         dbRun("DELETE FROM users WHERE id = ?", [$u['id']]);
-        $this->assertStringContainsString($u['username'] . ' (cx)', $this->lastAudit($u['id'])['details']);
+        $this->assertStringContainsString($u['username'] . ' (cx)', $this->audit($u['id'], 'user_delete')['details']);
     }
 
     public function testNoticeFallsBackToAdminsWhenTheAuthorizerRoleIsEmpty(): void
