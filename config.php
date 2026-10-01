@@ -245,6 +245,19 @@ function isWeakDefaultPassword(string $plain): bool {
 function setTemporaryPassword(string $userId, string $plain): void {
     dbRun("UPDATE users SET password = ?, must_change_password = 1, temp_password_expires_at = ? WHERE id = ?",
         [hashPassword($plain), date('Y-m-d H:i:s', time() + TEMP_PASSWORD_HOURS * 3600), $userId]);
+    auditUserChange('password_set', $userId, 'temporary password issued');
+}
+
+/**
+ * Audit-log a change to a user account ('user_create', 'user_update',
+ * 'user_delete', 'password_set', 'password_change', 'password_reset'), with
+ * the target's username in the details so the log stays readable after the
+ * account is deleted. Call before a delete, while the row still exists.
+ */
+function auditUserChange(string $action, string $userId, string $details = ''): void {
+    $u = dbFetch("SELECT username, role FROM users WHERE id = ?", [$userId]);
+    $who = $u ? "{$u['username']} ({$u['role']})" : $userId;
+    auditLog($action, 'user', $userId, trim($who . ($details !== '' ? ' — ' . $details : '')));
 }
 
 /**
@@ -260,6 +273,7 @@ function changeOwnPassword(string $userId, string $current, string $new, string 
     if (isWeakDefaultPassword($new)) return 'That password is a well-known default. Choose a different one.';
     dbRun("UPDATE users SET password = ?, must_change_password = 0, temp_password_expires_at = NULL WHERE id = ?", [hashPassword($new), $userId]);
     keepSessionAfterPasswordChange($userId);
+    auditUserChange('password_change', $userId, 'changed own password');
     return null;
 }
 
@@ -977,6 +991,11 @@ function notifyPermissionHolders(string $permission, string $title, string $inAp
         if (!$roles) return;
         $ph = implode(',', array_fill(0, count($roles), '?'));
         $users = dbFetchAll("SELECT id, name, email FROM users WHERE role IN ($ph) AND status = 'active'", $roles);
+        // A role can hold the permission with nobody in it (e.g. no fiber
+        // supervisor hired yet): fall back to admins rather than notify no one.
+        if (!$users && $department !== null) {
+            $users = dbFetchAll("SELECT id, name, email FROM users WHERE role = 'admin' AND status = 'active'");
+        }
         foreach ($users as $u) {
             notifyUser($u['id'], $title, $inAppMessage, $link);
             if (!empty($u['email'])) {
@@ -3111,6 +3130,7 @@ function findUserByResetToken(string $token): ?array {
 function completePasswordReset(string $userId, string $newPassword): void {
     dbRun("UPDATE users SET password=?, must_change_password=0, temp_password_expires_at=NULL, reset_token_hash=NULL, reset_token_expires_at=NULL, failed_login_attempts=0, locked_until=NULL WHERE id=?",
         [hashPassword($newPassword), $userId]);
+    auditUserChange('password_reset', $userId, 'reset via emailed link');
 }
 
 // ─── Schema v29: per-item inventory reorder threshold ──────────────────────────
@@ -4191,6 +4211,25 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v51_migrated'")) 
 }
 
 require_once __DIR__ . '/includes/support-whatsapp.php';
+
+// schema_v53: users.created_at, so every new account records when it was
+// made. Existing accounts stay NULL (their creation date was never kept)
+// rather than all getting today's date.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v53_migrated'")) {
+    try {
+        if (DB_TYPE === 'mysql') {
+            try { db()->exec("ALTER TABLE users ADD COLUMN created_at DATETIME NULL"); } catch (\Throwable $e) { /* exists */ }
+            db()->exec("ALTER TABLE users MODIFY COLUMN created_at DATETIME NULL DEFAULT CURRENT_TIMESTAMP");
+        } else {
+            try { db()->exec("ALTER TABLE users ADD COLUMN created_at TIMESTAMP NULL"); } catch (\Throwable $e) { /* exists */ }
+            db()->exec("ALTER TABLE users ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP");
+        }
+        dbUpsertConfig('schema_v53_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v53 migration error: ' . $e->getMessage());
+    }
+}
 
 // schema_v52: payment request sign-off by department.
 //  - Authorize: the fiber and NOC supervisors and the CX Manager (not the CX

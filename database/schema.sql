@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `hub_ids`   TEXT,
   `failed_login_attempts` INT NOT NULL DEFAULT 0,
   `locked_until`           DATETIME DEFAULT NULL,
+  `created_at`             DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
