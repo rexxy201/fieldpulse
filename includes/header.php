@@ -129,7 +129,8 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
       $_navItem('/inventory/serials',         'bi-upc-scan',          'Serial Numbers',  $_invSub === 'serials',                                  $_invAny && hasPermission('inventory.serials.view')),
     ]],
     ['label' => 'NOC', 'icon' => 'bi-broadcast', 'items' => [
-      $_navItem('/noc', 'bi-broadcast', 'Network Status', str_starts_with($activePath, 'noc'), hasPermission('noc.view')),
+      $_navItem('/noc/pops', 'bi-hdd-network', 'POP Monitor',  $activePath === 'noc/pops', hasPermission('noc.view')),
+      $_navItem('/noc',      'bi-diagram-3',   'OLT & ONUs',   $activePath === 'noc',      hasPermission('noc.view')),
     ]],
     ['label' => 'Team', 'icon' => 'bi-people', 'items' => [
       $_navItem('/team',      'bi-person-badge',          'Team',      $activePath === 'team',      hasPermission('team.view')),

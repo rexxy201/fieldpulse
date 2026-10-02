@@ -76,6 +76,7 @@ if ($page === 'inventory') {
 
 // ── NOC module dispatch ──────────────────────────────────────────────────────
 if ($page === 'noc') {
+    if (($segments[1] ?? '') === 'pops') { require __DIR__ . '/pages/noc-pops.php'; exit; }
     require __DIR__ . '/pages/noc.php'; exit;
 }
 

@@ -4231,6 +4231,62 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v53_migrated'")) 
     }
 }
 
+// schema_v54: NOC POP availability — POPs (router public IP pinged every
+// minute by scripts/pop-check.php), every check, and each outage.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v54_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS noc_pops (
+            id                   VARCHAR(36)  NOT NULL PRIMARY KEY,
+            name                 VARCHAR(120) NOT NULL,
+            hub_id               VARCHAR(36)  DEFAULT NULL,
+            ip_address           VARCHAR(255) NOT NULL,
+            location             VARCHAR(255) NOT NULL DEFAULT '',
+            tcp_port             INT          NOT NULL DEFAULT 8291,
+            down_after           INT          NOT NULL DEFAULT 3,
+            latency_warn_ms      INT          DEFAULT NULL,
+            enabled              SMALLINT     NOT NULL DEFAULT 1,
+            status               VARCHAR(10)  NOT NULL DEFAULT 'unknown',
+            consecutive_failures INT          NOT NULL DEFAULT 0,
+            down_since           $_dt         DEFAULT NULL,
+            last_check_at        $_dt         DEFAULT NULL,
+            last_up_at           $_dt         DEFAULT NULL,
+            last_latency_ms      DECIMAL(8,1) DEFAULT NULL,
+            last_packet_loss     DECIMAL(5,1) DEFAULT NULL,
+            last_error           VARCHAR(255) DEFAULT NULL,
+            created_at           $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS noc_pop_checks (
+            id          " . ($_my ? 'BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY' : 'BIGSERIAL PRIMARY KEY') . ",
+            pop_id      VARCHAR(36)  NOT NULL,
+            checked_at  $_dt         NOT NULL,
+            ok          SMALLINT     NOT NULL,
+            packet_loss DECIMAL(5,1) DEFAULT NULL,
+            latency_ms  DECIMAL(8,1) DEFAULT NULL,
+            method      VARCHAR(20)  NOT NULL DEFAULT ''
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS noc_pop_outages (
+            id           VARCHAR(36) NOT NULL PRIMARY KEY,
+            pop_id       VARCHAR(36) NOT NULL,
+            started_at   $_dt        NOT NULL,
+            ended_at     $_dt        DEFAULT NULL,
+            duration_sec INT         DEFAULT NULL
+        )$_end");
+        foreach (['idx_npc_pop_time ON noc_pop_checks (pop_id, checked_at)', 'idx_npc_time ON noc_pop_checks (checked_at)',
+                  'idx_npo_pop ON noc_pop_outages (pop_id, started_at)'] as $_ix) {
+            try { db()->exec("CREATE INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        dbFetch("SELECT 1 FROM noc_pop_checks LIMIT 1");
+        dbUpsertConfig('schema_v54_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v54 migration error: ' . $e->getMessage());
+    }
+}
+require_once __DIR__ . '/includes/noc-pops.php';
+
 // schema_v52: payment request sign-off by department.
 //  - Authorize: the fiber and NOC supervisors and the CX Manager (not the CX
 //    supervisor); project admins only raise requests.

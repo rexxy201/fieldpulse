@@ -604,3 +604,48 @@ CREATE TABLE IF NOT EXISTS `cs_wa_events` (
   KEY `idx_cswe_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- NOC POP Monitor (also created by config.php schema_v54)
+CREATE TABLE IF NOT EXISTS `noc_pops` (
+  `id`                   varchar(36)  NOT NULL,
+  `name`                 varchar(120) NOT NULL,
+  `hub_id`               varchar(36)  DEFAULT NULL,
+  `ip_address`           varchar(255) NOT NULL,
+  `location`             varchar(255) NOT NULL DEFAULT '',
+  `tcp_port`             int          NOT NULL DEFAULT 8291,
+  `down_after`           int          NOT NULL DEFAULT 3,
+  `latency_warn_ms`      int          DEFAULT NULL,
+  `enabled`              smallint     NOT NULL DEFAULT 1,
+  `status`               varchar(10)  NOT NULL DEFAULT 'unknown',
+  `consecutive_failures` int          NOT NULL DEFAULT 0,
+  `down_since`           datetime     DEFAULT NULL,
+  `last_check_at`        datetime     DEFAULT NULL,
+  `last_up_at`           datetime     DEFAULT NULL,
+  `last_latency_ms`      decimal(8,1) DEFAULT NULL,
+  `last_packet_loss`     decimal(5,1) DEFAULT NULL,
+  `last_error`           varchar(255) DEFAULT NULL,
+  `created_at`           datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `noc_pop_checks` (
+  `id`          bigint unsigned NOT NULL AUTO_INCREMENT,
+  `pop_id`      varchar(36)  NOT NULL,
+  `checked_at`  datetime     NOT NULL,
+  `ok`          smallint     NOT NULL,
+  `packet_loss` decimal(5,1) DEFAULT NULL,
+  `latency_ms`  decimal(8,1) DEFAULT NULL,
+  `method`      varchar(20)  NOT NULL DEFAULT '',
+  PRIMARY KEY (`id`),
+  KEY `idx_npc_pop_time` (`pop_id`, `checked_at`),
+  KEY `idx_npc_time` (`checked_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `noc_pop_outages` (
+  `id`           varchar(36) NOT NULL,
+  `pop_id`       varchar(36) NOT NULL,
+  `started_at`   datetime    NOT NULL,
+  `ended_at`     datetime    DEFAULT NULL,
+  `duration_sec` int         DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_npo_pop` (`pop_id`, `started_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
