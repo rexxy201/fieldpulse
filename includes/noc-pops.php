@@ -187,3 +187,48 @@ function nocPopUptime(string $since): array {
     }
     return $out;
 }
+
+/** When scripts/pop-check.php last ran (it records this every run), or null. */
+function nocPopCronLastRun(): ?string {
+    return nocConfigValue('popCronLastRun');
+}
+
+/** Read straight from app_config (getAppConfig() caches for the whole request). */
+function nocConfigValue(string $key): ?string {
+    $k = dbKey();
+    $v = dbFetch("SELECT value FROM app_config WHERE $k = ?", [$key])['value'] ?? null;
+    return $v === null || $v === '' ? null : (string)$v;
+}
+
+/**
+ * Backup for a stopped POP cron, called by the 15-minute SLA cron: when the
+ * every-minute job hasn't run for 10 minutes, check the POPs from here and
+ * tell the NOC supervisors and admins (at most every 6 hours) so it gets fixed.
+ * Returns 'ok', 'none' (no POPs) or 'stale'.
+ */
+function nocPopWatchdog(): string {
+    $first = dbFetch("SELECT MIN(created_at) AS t FROM noc_pops WHERE enabled = 1")['t'] ?? null;
+    if (!$first) return 'none';
+    $last = nocPopCronLastRun();
+    $ref  = $last ?: $first;
+    if (strtotime($ref) >= time() - 600) return 'ok';
+
+    nocCheckPops();
+    $alerted = nocConfigValue('popCronAlertedAt');
+    if (!$alerted || strtotime($alerted) < time() - 6 * 3600) {
+        $title = 'POP Monitor: the every-minute check has stopped';
+        $msg   = ($last ? 'scripts/pop-check.php last ran ' . nocDuration(time() - strtotime($last)) . ' ago.' : 'scripts/pop-check.php has never run.')
+               . ' POPs are being checked every 15 minutes as a backup until the cron job is fixed.';
+        $body  = '<p><strong>' . htmlspecialchars($title) . '</strong></p><p>' . htmlspecialchars($msg) . '</p>'
+               . "<p><a href='" . siteBaseUrl() . "/noc/pops'>Open POP Monitor →</a></p>";
+        foreach (nocPopAlertRecipients() as $u) {
+            notifyUser($u['id'], $title, $msg, '/noc/pops');
+            if (!empty($u['email'])) {
+                try { sendEmail($u['email'], $u['name'], $title, $body); }
+                catch (\Throwable $e) { error_log("POP watchdog email failed ({$u['email']}): " . $e->getMessage()); }
+            }
+        }
+        dbUpsertConfig('popCronAlertedAt', date('Y-m-d H:i:s'));
+    }
+    return 'stale';
+}

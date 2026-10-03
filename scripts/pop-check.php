@@ -16,6 +16,7 @@ $lock = fopen(sys_get_temp_dir() . '/fieldpulse-pop-check.lock', 'c');
 if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) exit(0);
 
 try {
+    dbUpsertConfig('popCronLastRun', date('Y-m-d H:i:s'));   // the SLA cron's watchdog looks at this
     $r = nocCheckPops();
     foreach ($r['events'] as $name => $event) {
         echo '[' . date('Y-m-d H:i:s') . "] POP $name: " . ($event === 'down' ? 'DOWN' : 'recovered') . "\n";

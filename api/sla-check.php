@@ -124,8 +124,12 @@ foreach ($newlyBreached as $t) {
     dbRun("UPDATE tickets SET sla_warned_at = NOW() WHERE id = ?", [$t['id']]);
 }
 
+// Backup for the every-minute POP check cron (see includes/noc-pops.php).
+try { $popCron = nocPopWatchdog(); } catch (\Throwable $e) { $popCron = 'error'; $errors[] = 'POP watchdog: ' . $e->getMessage(); }
+
 jsonResponse([
     'ok'         => true,
+    'pop_cron'   => $popCron,
     'warnings'   => $warned,
     'breached'   => $breached,
     'errors'     => $errors,

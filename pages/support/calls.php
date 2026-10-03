@@ -35,7 +35,7 @@ $rows = dbFetchAll("SELECT c.*, cu.name AS customer_name, u.name AS agent_name,
         (SELECT COUNT(*) FROM cs_interactions i WHERE i.call_id = c.id) AS logged
     FROM cs_calls c LEFT JOIN customers cu ON cu.id = c.customer_id LEFT JOIN users u ON u.id = c.agent_id
     $where ORDER BY c.started_at DESC LIMIT 200", $params);
-$badge = ['completed' => 'success', 'missed' => 'danger', 'voicemail' => 'warning', 'ringing' => 'secondary', 'in_progress' => 'info'];
+$badge = ['completed' => 'success', 'missed' => 'danger', 'voicemail' => 'warning', 'ringing' => 'secondary', 'in_progress' => 'info', 'queued' => 'secondary', 'callback' => 'warning'];
 $mmss  = fn($s) => $s === null ? '—' : sprintf('%d:%02d', intdiv((int)$s, 60), (int)$s % 60);
 
 $pageTitle = 'Calls';
@@ -79,7 +79,7 @@ require __DIR__ . '/../../includes/header.php';
         <td><i class="bi bi-telephone-<?= $c['direction'] === 'inbound' ? 'inbound' : 'outbound' ?>"></i> <?= $h($c['direction']) ?></td>
         <td class="text-nowrap"><?= $h($num) ?></td>
         <td><?php if ($c['customer_id']): ?><a href="/support?customer=<?= $h($c['customer_id']) ?>"><?= $h($c['customer_name']) ?></a><?php else: ?><span class="text-muted">—</span><?php endif; ?></td>
-        <td><?= $h($c['ivr_choice'] ?? '') ?></td>
+        <td><?= $h($c['ivr_choice'] ?? '') ?><?php if (!empty($c['transferred_to'])): ?><div class="small text-muted">→ <?= $h($c['transferred_to']) ?></div><?php endif; ?></td>
         <td><span class="badge bg-<?= $badge[$c['status']] ?? 'secondary' ?>"><?= $h(CS_CALL_STATUSES[$c['status']] ?? $c['status']) ?></span></td>
         <td><?= $h($mmss($c['duration_sec'])) ?></td>
         <?php if ($viewAll): ?><td><?= $h($c['agent_name'] ?? '—') ?></td><?php endif; ?>
@@ -89,7 +89,7 @@ require __DIR__ . '/../../includes/header.php';
           <?php else: ?><span class="text-muted">—</span><?php endif; ?>
         </td>
         <td class="text-nowrap">
-          <?php if (!$c['logged'] && in_array($c['status'], ['completed', 'missed', 'voicemail'], true)): ?>
+          <?php if (!$c['logged'] && in_array($c['status'], ['completed', 'missed', 'voicemail', 'callback'], true)): ?>
           <a class="btn btn-sm btn-outline-primary py-0" href="/support?<?= $c['customer_id'] ? 'customer=' . urlencode($c['customer_id']) : 'new=1&amp;caller=' . urlencode($num) ?>&amp;call=<?= $h($c['id']) ?>">Log</a>
           <?php elseif ($c['logged']): ?><span class="text-success small"><i class="bi bi-check2"></i> Logged</span><?php endif; ?>
         </td>

@@ -44,6 +44,27 @@ if (method() === 'POST') {
         if (trim((string)($_POST['atApiKey'] ?? '')) !== '') $v['atApiKey'] = trim((string)$_POST['atApiKey']);
         dbUpsertConfigs($v);
         auditLog('update', 'support_voice_settings', '', 'Telephony settings saved');
+    } elseif ($action === 'routing') {
+        $music = trim((string)($_POST['voiceHoldMusicUrl'] ?? ''));
+        dbUpsertConfigs([
+            'voiceQueueOverflow'  => !empty($_POST['voiceQueueOverflow']) ? '1' : '0',
+            'voiceHoldEnabled'    => !empty($_POST['voiceHoldEnabled']) ? '1' : '0',
+            'voiceHoldMaxMinutes' => (string)max(1, min(30, (int)($_POST['voiceHoldMaxMinutes'] ?? 5))),
+            'voiceHoldMusicUrl'   => preg_match('#^https://#i', $music) ? mb_substr($music, 0, 500) : '',
+            'voiceWrapUpSeconds'  => (string)max(0, min(600, (int)($_POST['voiceWrapUpSeconds'] ?? 30))),
+            'voiceOutageNotice'   => !empty($_POST['voiceOutageNotice']) ? '1' : '0',
+            'voiceTicketStatus'   => !empty($_POST['voiceTicketStatus']) ? '1' : '0',
+        ]);
+        // Teams: only people who can take support contacts.
+        $allowed = array_column(dbFetchAll("SELECT DISTINCT u.id FROM users u JOIN role_permissions rp ON rp.role = u.role
+                                            WHERE rp.permission = 'support.view' OR u.role = 'admin'"), 'id');
+        dbRun("DELETE FROM cs_queue_members");
+        foreach (array_keys(csVoiceSettings()['ivr_options']) as $d) {
+            foreach (array_unique((array)($_POST['team'][$d] ?? [])) as $uid) {
+                if (in_array($uid, $allowed, true)) dbRun("INSERT INTO cs_queue_members (digit, user_id) VALUES (?, ?)", [(string)$d, $uid]);
+            }
+        }
+        auditLog('update', 'support_voice_settings', '', 'Call routing saved');
     } elseif ($action === 'hours') {
         $hours = [];
         foreach (CS_WEEKDAYS as $d => $_) {
@@ -205,6 +226,51 @@ require __DIR__ . '/../../includes/header.php';
     </div>
     <div class="text-muted mt-1">Treat this URL like a password: anyone who has it can send fake call events.</div>
   </div>
+</div>
+
+<?php $teams = csQueueMembers(); ?>
+<div class="card-section mb-3">
+  <div class="card-header"><i class="bi bi-signpost-split me-1 text-primary"></i>Call routing</div>
+  <form method="POST" class="p-3">
+    <?= csrfField() ?>
+    <input type="hidden" name="_action" value="routing">
+    <div class="small text-muted mb-2">Each menu option rings its team's free agents first. Callers wait in a hold queue while agents are signed in but busy,
+      and can press 1 to ask for a callback (it lands in Follow-ups). Fallback mobiles and voicemail are used when nobody is signed in.</div>
+    <?php if ($voice['ivr_options']): ?>
+    <div class="row g-2 mb-2">
+      <?php foreach ($voice['ivr_options'] as $d => $label): ?>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label small fw-semibold mb-1"><?= $h($d) ?> — <?= $h($label) ?> <span class="text-muted fw-normal">(none ticked = everyone)</span></label>
+        <div class="border rounded p-2" style="max-height:9rem;overflow-y:auto">
+          <?php foreach ($assignees as $a): ?>
+          <div class="form-check small"><input class="form-check-input" type="checkbox" name="team[<?= $h($d) ?>][]" value="<?= $h($a['id']) ?>" id="t<?= $h($d . $a['id']) ?>" <?= in_array($a['id'], $teams[$d] ?? [], true) ? 'checked' : '' ?>>
+            <label class="form-check-label" for="t<?= $h($d . $a['id']) ?>"><?= $h($a['name']) ?></label></div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php else: ?><div class="small text-muted mb-2">Add menu options under Telephony to set up teams.</div><?php endif; ?>
+    <div class="row g-2">
+      <div class="col-sm-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="voiceQueueOverflow" id="rOver" value="1" <?= $voice['overflow'] ? 'checked' : '' ?>><label class="form-check-label small" for="rOver">When a team is all busy, ring any free agent</label></div></div>
+      <div class="col-sm-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="voiceHoldEnabled" id="rHold" value="1" <?= $voice['hold_enabled'] ? 'checked' : '' ?>><label class="form-check-label small" for="rHold">Hold queue (with callback option) when everyone is busy</label></div></div>
+      <div class="col-sm-3">
+        <label class="form-label small fw-semibold mb-1">Longest hold (minutes)</label>
+        <input type="number" min="1" max="30" name="voiceHoldMaxMinutes" value="<?= (int)$voice['hold_max_minutes'] ?>" class="form-control form-control-sm">
+      </div>
+      <div class="col-sm-3">
+        <label class="form-label small fw-semibold mb-1">Wrap-up after a call (seconds)</label>
+        <input type="number" min="0" max="600" name="voiceWrapUpSeconds" value="<?= (int)$voice['wrapup_seconds'] ?>" class="form-control form-control-sm">
+      </div>
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold mb-1">Hold music <span class="text-muted fw-normal">(https link to an MP3; blank = spoken updates only)</span></label>
+        <input type="url" name="voiceHoldMusicUrl" value="<?= $h($voice['hold_music_url']) ?>" class="form-control form-control-sm" placeholder="https://…/hold.mp3">
+      </div>
+      <div class="col-sm-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="voiceOutageNotice" id="rOut" value="1" <?= $voice['outage_notice'] ? 'checked' : '' ?>><label class="form-check-label small" for="rOut">Tell callers about an outage in their area (POP Monitor shows their hub's POP down)</label></div></div>
+      <div class="col-sm-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="voiceTicketStatus" id="rTkt" value="1" <?= $voice['ticket_status'] ? 'checked' : '' ?>><label class="form-check-label small" for="rTkt">Let callers with an open fault report hear its status (menu key <?= $h(csTicketDigit($voice) ?: '—') ?>)</label></div></div>
+    </div>
+    <div class="mt-3 d-flex justify-content-end"><button class="btn btn-sm btn-primary">Save call routing</button></div>
+  </form>
 </div>
 
 <div class="card-section mb-3">

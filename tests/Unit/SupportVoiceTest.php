@@ -69,8 +69,11 @@ final class SupportVoiceTest extends TestCase
         $this->assertStringContainsString('This call may be recorded.', (string)$doc->Say);
         $this->assertStringContainsString('For Technical support, press 1.', (string)$doc->GetDigits->Say);
         $this->assertStringContainsString('step=menu', (string)$doc->GetDigits['callBackUrl']);
-        $this->assertNotEmpty($doc->Record, 'no agent available and no fallback: voicemail');
+        // No key pressed: the menu step routes the call to anyone.
+        $this->assertStringContainsString('step=menu', (string)$doc->Redirect);
         $this->assertSame('ringing', dbFetch("SELECT status FROM cs_calls WHERE session_id = ?", [$sid])['status']);
+        $doc = simplexml_load_string(csHandleVoiceCallback(['sessionId' => $sid, 'isActive' => '1'], 'menu', $s));
+        $this->assertNotEmpty($doc->Record, 'no agent available and no fallback: voicemail');
     }
 
     public function testMenuChoiceIsStoredAndAvailableAgentsAreDialledTogether(): void

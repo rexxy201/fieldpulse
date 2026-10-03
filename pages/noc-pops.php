@@ -73,8 +73,10 @@ $up7  = nocPopUptime(date('Y-m-d H:i:s', time() - 7 * 86400));
 $outages = dbFetchAll("SELECT o.*, p.name FROM noc_pop_outages o JOIN noc_pops p ON p.id = o.pop_id ORDER BY o.started_at DESC LIMIT 25");
 $hubs = dbFetchAll("SELECT id, name FROM hubs ORDER BY name");
 $counts = array_count_values(array_map(fn($p) => $p['enabled'] ? $p['status'] : 'disabled', $pops));
-$lastRun = dbFetch("SELECT MAX(last_check_at) AS t FROM noc_pops WHERE enabled = 1")['t'] ?? null;
-$stale = $pops && $lastRun && strtotime($lastRun) < time() - 300;
+// The every-minute cron records each run; checks from "Check now" or the
+// 15-minute SLA-cron backup don't count, so they can't hide a stopped cron.
+$lastRun = nocPopCronLastRun();
+$stale = $pops && array_filter($pops, fn($p) => $p['enabled']) && (!$lastRun || strtotime($lastRun) < time() - 300);
 $edit = $canManage && !empty($_GET['edit']) ? dbFetch("SELECT * FROM noc_pops WHERE id = ?", [$_GET['edit']]) : null;
 $badge = ['up' => 'success', 'degraded' => 'warning', 'down' => 'danger', 'unknown' => 'secondary'];
 
@@ -91,7 +93,10 @@ require __DIR__ . '/../includes/header.php';
 </div>
 
 <?php if ($flash): ?><div class="alert alert-<?= $h($flash[0]) ?> small"><?= $h($flash[1]) ?></div><?php endif; ?>
-<?php if ($stale): ?><div class="alert alert-warning small">No checks for <?= $h(nocDuration(time() - strtotime($lastRun))) ?> — the POP check cron job may have stopped.</div><?php endif; ?>
+<?php if ($stale): ?><div class="alert alert-warning small">
+  <strong>The every-minute POP check cron is not running</strong> — <?= $lastRun ? 'last run ' . $h(nocDuration(time() - strtotime($lastRun))) . ' ago' : 'it has never run' ?>.
+  Until it is fixed, POPs are only checked every 15 minutes (by the SLA cron) or when you press <em>Check now</em>. See docs/noc-pop-monitor.md → “If the cron stops”.
+</div><?php endif; ?>
 
 <div class="row g-3 mb-3">
   <?php foreach ([['Online', $counts['up'] ?? 0, 'success'], ['Degraded', $counts['degraded'] ?? 0, 'warning'], ['Down', $counts['down'] ?? 0, 'danger'], ['Not checked / off', ($counts['unknown'] ?? 0) + ($counts['disabled'] ?? 0), 'secondary']] as [$l, $n, $c]): ?>
