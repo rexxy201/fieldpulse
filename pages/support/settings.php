@@ -65,6 +65,27 @@ if (method() === 'POST') {
             }
         }
         auditLog('update', 'support_voice_settings', '', 'Call routing saved');
+    } elseif ($action === 'inbox') {
+        $email = strtolower(trim((string)($_POST['supportEmailAddress'] ?? '')));
+        $notifyOn = !empty($_POST['ticketNotifyEnabled']);
+        $v = [
+            'smsEnabled'          => !empty($_POST['smsEnabled']) ? '1' : '0',
+            'atSmsSender'         => mb_substr(preg_replace('/[^A-Za-z0-9 +]/', '', (string)($_POST['atSmsSender'] ?? '')), 0, 15),
+            'smsAutoReply'        => mb_substr(trim((string)($_POST['smsAutoReply'] ?? '')), 0, 459),
+            'emailInboxEnabled'   => !empty($_POST['emailInboxEnabled']) ? '1' : '0',
+            'supportEmailAddress' => filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : '',
+            'ticketNotifyEnabled' => $notifyOn ? '1' : '0',
+            'ticketNotifyChannel' => ($_POST['ticketNotifyChannel'] ?? '') === 'whatsapp_first' ? 'whatsapp_first' : 'sms',
+            'ticketNotifyEvents'  => implode(',', array_intersect(array_keys(CS_NOTICE_RANK), (array)($_POST['ticketNotifyEvents'] ?? []))),
+        ];
+        foreach (array_keys(CS_NOTICE_DEFAULTS) as $ev) $v['ticketNotice' . ucfirst($ev)] = mb_substr(trim((string)($_POST['ticketNotice' . ucfirst($ev)] ?? '')), 0, 459);
+        // Switching updates on starts from now: tickets logged before never get a message.
+        if ($notifyOn && (($vcfgNow = getAppConfig())['ticketNotifyEnabled'] ?? '0') !== '1') $v['ticketNotifyEnabledAt'] = date('Y-m-d H:i:s');
+        dbUpsertConfigs($v);
+        auditLog('update', 'support_inbox_settings', '', 'SMS, email and customer update settings saved');
+    } elseif ($action === 'sms_secret') {
+        dbUpsertConfig('smsWebhookSecret', bin2hex(random_bytes(20)));
+        auditLog('update', 'support_inbox_settings', '', 'SMS callback secret regenerated');
     } elseif ($action === 'hours') {
         $hours = [];
         foreach (CS_WEEKDAYS as $d => $_) {
@@ -110,6 +131,7 @@ foreach (dbFetchAll("SELECT wrap_code_id, COUNT(*) AS n FROM cs_interactions GRO
 
 $voice     = csVoiceSettings();
 $wa        = csWaSettings();
+$inbox     = csInboxSettings();
 $vcfg      = getAppConfig();
 $assignees = dbFetchAll("SELECT DISTINCT u.id, u.name FROM users u JOIN role_permissions rp ON rp.role = u.role
                          WHERE rp.permission = 'support.view' OR u.role = 'admin' ORDER BY u.name");
@@ -271,6 +293,75 @@ require __DIR__ . '/../../includes/header.php';
     </div>
     <div class="mt-3 d-flex justify-content-end"><button class="btn btn-sm btn-primary">Save call routing</button></div>
   </form>
+</div>
+
+<div class="card-section mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-envelope me-1 text-primary"></i>SMS, email &amp; customer updates</span>
+    <span>
+      <span class="badge bg-<?= csSmsEnabled($inbox) ? 'success' : 'secondary' ?>">SMS <?= csSmsEnabled($inbox) ? 'on' : 'off' ?></span>
+      <span class="badge bg-<?= $inbox['email_enabled'] && $inbox['email_address'] !== '' ? 'success' : 'secondary' ?>">Email <?= $inbox['email_enabled'] && $inbox['email_address'] !== '' ? 'on' : 'off' ?></span>
+      <span class="badge bg-<?= $inbox['notify_enabled'] ? 'success' : 'secondary' ?>">Ticket updates <?= $inbox['notify_enabled'] ? 'on' : 'off' ?></span>
+    </span>
+  </div>
+  <form method="POST" class="p-3">
+    <?= csrfField() ?>
+    <input type="hidden" name="_action" value="inbox">
+    <div class="fw-semibold small mb-1">SMS <span class="text-muted fw-normal">— uses the Africa's Talking username and API key from Telephony</span></div>
+    <div class="row g-2 mb-3">
+      <div class="col-sm-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="smsEnabled" id="smsOn" value="1" <?= $inbox['sms_enabled'] ? 'checked' : '' ?>><label class="form-check-label small" for="smsOn">Send and receive SMS</label></div></div>
+      <div class="col-sm-3">
+        <label class="form-label small fw-semibold mb-1">Sender ID or shortcode <span class="text-muted fw-normal">(blank = provider default)</span></label>
+        <input type="text" name="atSmsSender" value="<?= $h($inbox['sms_sender']) ?>" maxlength="15" class="form-control form-control-sm" placeholder="MANGONET">
+      </div>
+      <div class="col-sm-6">
+        <label class="form-label small fw-semibold mb-1">Automatic reply to a new SMS conversation <span class="text-muted fw-normal">(blank = none)</span></label>
+        <input type="text" name="smsAutoReply" value="<?= $h($inbox['sms_auto_reply']) ?>" maxlength="459" class="form-control form-control-sm" placeholder="Thanks for your message. An agent will reply shortly.">
+      </div>
+    </div>
+    <div class="fw-semibold small mb-1">Email</div>
+    <div class="row g-2 mb-3">
+      <div class="col-sm-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="emailInboxEnabled" id="mailOn" value="1" <?= $inbox['email_enabled'] ? 'checked' : '' ?>><label class="form-check-label small" for="mailOn">Email inbox</label></div></div>
+      <div class="col-sm-4">
+        <label class="form-label small fw-semibold mb-1">Support address</label>
+        <input type="email" name="supportEmailAddress" value="<?= $h($inbox['email_address']) ?>" class="form-control form-control-sm" placeholder="support@mangonetonline.com">
+      </div>
+      <div class="col-sm-5 small text-muted d-flex align-items-end">Replies go out through Admin → Email Settings (SMTP) with this address as Reply-To. To receive mail, pipe the address to the inbox — see below.</div>
+    </div>
+    <div class="fw-semibold small mb-1">Ticket updates to customers</div>
+    <div class="row g-2">
+      <div class="col-sm-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="ticketNotifyEnabled" id="tnOn" value="1" <?= $inbox['notify_enabled'] ? 'checked' : '' ?>><label class="form-check-label small" for="tnOn">Text customers about their fault reports</label></div></div>
+      <div class="col-sm-4">
+        <label class="form-label small fw-semibold mb-1">Send by</label>
+        <select name="ticketNotifyChannel" class="form-select form-select-sm">
+          <option value="sms">SMS</option>
+          <option value="whatsapp_first" <?= $inbox['notify_channel'] === 'whatsapp_first' ? 'selected' : '' ?>>WhatsApp if they've chatted in the last 24h, else SMS</option>
+        </select>
+      </div>
+      <div class="col-sm-4 small text-muted d-flex align-items-end">Sent between 07:00 and 21:00; overnight changes go out in the morning. Only tickets logged after you switch this on.</div>
+      <?php foreach (['created' => 'When the ticket is logged', 'assigned' => 'When an engineer is assigned', 'resolved' => 'When it is resolved'] as $ev => $label): $key = 'ticketNotice' . ucfirst($ev); ?>
+      <div class="col-sm-4">
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="ticketNotifyEvents[]" value="<?= $ev ?>" id="tn<?= $ev ?>" <?= in_array($ev, $inbox['notify_events'], true) ? 'checked' : '' ?>><label class="form-check-label small fw-semibold" for="tn<?= $ev ?>"><?= $label ?></label></div>
+        <textarea name="<?= $key ?>" rows="3" maxlength="459" class="form-control form-control-sm" placeholder="<?= $h(CS_NOTICE_DEFAULTS[$ev]) ?>"><?= $h($vcfg[$key] ?? '') ?></textarea>
+      </div>
+      <?php endforeach; ?>
+      <div class="col-12 small text-muted">Placeholders: <code>{name}</code> (first name), <code>{ticket}</code> (ticket number), <code>{engineer}</code>. Blank = the default shown.</div>
+    </div>
+    <div class="mt-3 d-flex justify-content-end"><button class="btn btn-sm btn-primary">Save SMS, email &amp; updates</button></div>
+  </form>
+  <div class="px-3 pb-3 small">
+    <div class="fw-semibold">SMS callback URL <span class="text-muted fw-normal">— set as both the incoming-messages and delivery-reports callback for your SMS shortcode in Africa's Talking</span></div>
+    <div class="d-flex gap-2 align-items-center mt-1">
+      <code class="flex-grow-1 text-break user-select-all p-2 bg-light border rounded"><?= $h(csSmsWebhookUrl($inbox)) ?></code>
+      <form method="POST" onsubmit="return confirm('Regenerate the secret? Incoming SMS stop arriving until you paste the new URL into Africa\'s Talking.')">
+        <?= csrfField() ?><input type="hidden" name="_action" value="sms_secret">
+        <button class="btn btn-sm btn-outline-secondary">Regenerate</button>
+      </form>
+    </div>
+    <div class="fw-semibold mt-2">Receiving email</div>
+    <div class="text-muted">cPanel → Email → Forwarders → Add Forwarder for the support address → <em>Pipe to a Program</em>:
+      <code class="user-select-all"><?= $h(basename(dirname(__DIR__, 2)) . '/scripts/email-inbound.php') ?></code>. See docs/support-inbox.md.</div>
+  </div>
 </div>
 
 <div class="card-section mb-3">

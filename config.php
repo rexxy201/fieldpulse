@@ -1055,7 +1055,14 @@ function notifyPaymentRequestOriginator(array $pr, string $title, string $headli
  * Returns true on success, throws \Exception with a message on failure.
  * Requires PHPMailer (installed via Composer).
  */
-function sendEmail(string $toEmail, string $toName, string $subject, string $htmlBody, string $textBody = ''): bool {
+/**
+ * $opts (optional): replyTo, messageId (<…>), inReplyTo, references — used by
+ * the support email inbox so customer replies thread and come back to it.
+ */
+function sendEmail(string $toEmail, string $toName, string $subject, string $htmlBody, string $textBody = '', array $opts = []): bool {
+    if (isset($GLOBALS['sendEmailFake']) && is_callable($GLOBALS['sendEmailFake'])) {   // tests
+        return (bool)($GLOBALS['sendEmailFake'])($toEmail, $toName, $subject, $htmlBody, $textBody, $opts);
+    }
     if (!class_exists('\PHPMailer\PHPMailer\PHPMailer')) {
         throw new \Exception('PHPMailer not available — run: composer require phpmailer/phpmailer');
     }
@@ -1101,6 +1108,10 @@ function sendEmail(string $toEmail, string $toName, string $subject, string $htm
 
     $mail->setFrom($fromEmail, $fromName);
     $mail->addAddress($toEmail, $toName);
+    if (!empty($opts['replyTo']))    $mail->addReplyTo($opts['replyTo'], $fromName);
+    if (!empty($opts['messageId']))  $mail->MessageID = $opts['messageId'];
+    if (!empty($opts['inReplyTo']))  $mail->addCustomHeader('In-Reply-To', $opts['inReplyTo']);
+    if (!empty($opts['references'])) $mail->addCustomHeader('References', $opts['references']);
     $mail->Subject  = $subject;
     $mail->isHTML(true);
     $mail->Body     = $htmlBody;
@@ -4314,6 +4325,90 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v55_migrated'")) 
     } catch (\Throwable $e) {
         error_log('Schema v55 migration error: ' . $e->getMessage());
     }
+}
+
+// schema_v56: SMS and email inbox (one thread per customer number or address,
+// like WhatsApp), raw inbound SMS/email for troubleshooting, and the log of
+// automatic ticket updates sent to customers.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v56_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_txt = $_my ? 'MEDIUMTEXT' : 'TEXT';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_threads (
+            id              VARCHAR(36)  NOT NULL PRIMARY KEY,
+            channel         VARCHAR(10)  NOT NULL,
+            address         VARCHAR(190) NOT NULL,
+            contact_name    VARCHAR(150) NOT NULL DEFAULT '',
+            customer_id     VARCHAR(36)  DEFAULT NULL,
+            subject         VARCHAR(255) NOT NULL DEFAULT '',
+            status          VARCHAR(10)  NOT NULL DEFAULT 'open',
+            assigned_to     VARCHAR(36)  DEFAULT NULL,
+            unread          INT          NOT NULL DEFAULT 0,
+            last_inbound_at $_dt         DEFAULT NULL,
+            last_message_at $_dt         NOT NULL,
+            created_at      $_dt         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_thread_messages (
+            id                  VARCHAR(36)  NOT NULL PRIMARY KEY,
+            thread_id           VARCHAR(36)  NOT NULL,
+            direction           VARCHAR(3)   NOT NULL,
+            provider_message_id VARCHAR(255) DEFAULT NULL,
+            subject             VARCHAR(255) NOT NULL DEFAULT '',
+            body                $_txt,
+            status              VARCHAR(12)  NOT NULL DEFAULT 'received',
+            error               VARCHAR(255) DEFAULT NULL,
+            agent_id            VARCHAR(36)  DEFAULT NULL,
+            agent_name          VARCHAR(150) DEFAULT NULL,
+            created_at          $_dt         NOT NULL
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_inbound_events (
+            id         VARCHAR(36) NOT NULL PRIMARY KEY,
+            channel    VARCHAR(10) NOT NULL,
+            payload    $_txt,
+            created_at $_dt        NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )$_end");
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_ticket_notices (
+            id         VARCHAR(36)  NOT NULL PRIMARY KEY,
+            ticket_id  VARCHAR(36)  NOT NULL,
+            event      VARCHAR(12)  NOT NULL,
+            channel    VARCHAR(10)  NOT NULL,
+            to_address VARCHAR(190) NOT NULL DEFAULT '',
+            body       TEXT,
+            status     VARCHAR(10)  NOT NULL,
+            error      VARCHAR(255) DEFAULT NULL,
+            created_at $_dt         NOT NULL
+        )$_end");
+        foreach (['uq_cst_addr ON cs_threads (channel, address)', 'idx_cst_customer ON cs_threads (customer_id)', 'idx_cst_last ON cs_threads (status, last_message_at)',
+                  'idx_cstm_thread ON cs_thread_messages (thread_id, created_at)', 'idx_cstm_provider ON cs_thread_messages (provider_message_id)',
+                  'idx_csie_created ON cs_inbound_events (created_at)', 'idx_csn_ticket ON cs_ticket_notices (ticket_id)'] as $_ix) {
+            $_uq = str_starts_with($_ix, 'uq_') ? 'UNIQUE ' : '';
+            try { db()->exec("CREATE {$_uq}INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . $_ix); } catch (\Throwable $e) { /* exists */ }
+        }
+        if (empty(getAppConfig()['smsWebhookSecret'])) dbUpsertConfig('smsWebhookSecret', bin2hex(random_bytes(20)));
+        dbFetch("SELECT 1 FROM cs_thread_messages, cs_ticket_notices LIMIT 1");
+        dbUpsertConfig('schema_v56_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v56 migration error: ' . $e->getMessage());
+    }
+}
+require_once __DIR__ . '/includes/support-inbox.php';
+
+// Ticket updates to customers: after any web request that may have saved a
+// ticket, send whatever update is now due (see csTicketNoticeSweep). Runs
+// after the response is sent so the SMS call never slows the page.
+if (!defined('CLI_MODE') && in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['POST', 'PUT', 'PATCH'], true)) {
+    register_shutdown_function(function () {
+        try {
+            if (!csInboxSettings()['notify_enabled']) return;
+            if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+            if (function_exists('fastcgi_finish_request')) fastcgi_finish_request();
+            elseif (function_exists('litespeed_finish_request')) litespeed_finish_request();
+            csTicketNoticeSweep(null, 1);
+        } catch (\Throwable $e) { error_log('Ticket notice sweep failed: ' . $e->getMessage()); }
+    });
 }
 
 // schema_v52: payment request sign-off by department.

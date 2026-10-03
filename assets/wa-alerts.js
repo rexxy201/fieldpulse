@@ -49,6 +49,20 @@
       }).catch(function () {});
   }
 
-  poll();
-  setInterval(poll, 20000);
+  // SMS & email inbox badge (no sound: these are less urgent than chats).
+  var inboxBadge = document.getElementById('inboxNavBadge');
+  function pollInbox() {
+    if (!inboxBadge) return;
+    fetch('/api/support-inbox?action=latest', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) return;
+        var n = d.unread || 0;
+        inboxBadge.textContent = n > 99 ? '99+' : String(n);
+        inboxBadge.classList.toggle('d-none', n === 0);
+      }).catch(function () {});
+  }
+
+  poll(); pollInbox();
+  setInterval(function () { poll(); pollInbox(); }, 20000);
 })();
