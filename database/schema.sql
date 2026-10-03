@@ -522,7 +522,14 @@ CREATE TABLE IF NOT EXISTS `cs_agent_status` (
   `user_id`    varchar(36) NOT NULL,
   `status`     varchar(12) NOT NULL DEFAULT 'offline',
   `changed_at` datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `busy_until` datetime    DEFAULT NULL,
   PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_queue_members` (
+  `digit`   varchar(1)  NOT NULL,
+  `user_id` varchar(36) NOT NULL,
+  PRIMARY KEY (`digit`, `user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `cs_calls` (
@@ -545,10 +552,15 @@ CREATE TABLE IF NOT EXISTS `cs_calls` (
   `hangup_cause`         varchar(60)  DEFAULT NULL,
   `cost`                 varchar(20)  DEFAULT NULL,
   `currency`             varchar(5)   DEFAULT NULL,
+  `queue_digit`          varchar(1)   DEFAULT NULL,
+  `queued_at`            datetime     DEFAULT NULL,
+  `callback_requested`   smallint     NOT NULL DEFAULT 0,
+  `transferred_to`       varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_csc_session` (`session_id`),
   KEY `idx_csc_started` (`started_at`),
-  KEY `idx_csc_agent` (`agent_id`)
+  KEY `idx_csc_agent` (`agent_id`),
+  KEY `idx_csc_status` (`status`, `queued_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `cs_call_events` (

@@ -4082,7 +4082,9 @@ function csLogInteraction(array $in, array $agent): array {
 function csSetAgentStatus(string $userId, string $status): bool {
     if (!isset(CS_AGENT_STATUSES[$status])) return false;
     if (dbFetch("SELECT user_id FROM cs_agent_status WHERE user_id = ?", [$userId])) {
-        dbRun("UPDATE cs_agent_status SET status = ?, changed_at = ? WHERE user_id = ?", [$status, date('Y-m-d H:i:s'), $userId]);
+        // A status the agent chose ends any post-call wrap-up window.
+        try { dbRun("UPDATE cs_agent_status SET status = ?, changed_at = ?, busy_until = NULL WHERE user_id = ?", [$status, date('Y-m-d H:i:s'), $userId]); }
+        catch (\Throwable $e) { dbRun("UPDATE cs_agent_status SET status = ?, changed_at = ? WHERE user_id = ?", [$status, date('Y-m-d H:i:s'), $userId]); }
     } else {
         dbRun("INSERT INTO cs_agent_status (user_id,status,changed_at) VALUES (?,?,?)", [$userId, $status, date('Y-m-d H:i:s')]);
     }
@@ -4286,6 +4288,33 @@ if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v54_migrated'")) 
     }
 }
 require_once __DIR__ . '/includes/noc-pops.php';
+
+// schema_v55: call routing — which agents take each IVR menu option
+// (cs_queue_members, keyed by the menu digit), the hold queue and callback
+// fields on calls, and a short wrap-up window after each call.
+$_k = dbKey();
+if (!dbFetch("SELECT value FROM app_config WHERE $_k = 'schema_v55_migrated'")) {
+    try {
+        $_my  = DB_TYPE === 'mysql';
+        $_dt  = $_my ? 'DATETIME' : 'TIMESTAMP';
+        $_end = $_my ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=' . tableCollation('customers') : '';
+        db()->exec("CREATE TABLE IF NOT EXISTS cs_queue_members (
+            digit   VARCHAR(1)  NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            PRIMARY KEY (digit, user_id)
+        )$_end");
+        foreach (["cs_calls ADD COLUMN queue_digit VARCHAR(1) DEFAULT NULL", "cs_calls ADD COLUMN queued_at $_dt DEFAULT NULL",
+                  "cs_calls ADD COLUMN callback_requested SMALLINT NOT NULL DEFAULT 0", "cs_calls ADD COLUMN transferred_to VARCHAR(100) DEFAULT NULL",
+                  "cs_agent_status ADD COLUMN busy_until $_dt DEFAULT NULL"] as $_col) {
+            try { db()->exec("ALTER TABLE $_col"); } catch (\Throwable $e) { /* exists */ }
+        }
+        try { db()->exec("CREATE INDEX " . ($_my ? '' : 'IF NOT EXISTS ') . "idx_csc_status ON cs_calls (status, queued_at)"); } catch (\Throwable $e) { /* exists */ }
+        dbFetch("SELECT queue_digit, busy_until FROM cs_calls, cs_agent_status LIMIT 1");
+        dbUpsertConfig('schema_v55_migrated', 'true');
+    } catch (\Throwable $e) {
+        error_log('Schema v55 migration error: ' . $e->getMessage());
+    }
+}
 
 // schema_v52: payment request sign-off by department.
 //  - Authorize: the fiber and NOC supervisors and the CX Manager (not the CX

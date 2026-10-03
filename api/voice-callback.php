@@ -13,7 +13,7 @@ $s = csVoiceSettings();
 if ($s['webhook_secret'] === '' || !is_string($_GET['k'] ?? null) || !hash_equals($s['webhook_secret'], $_GET['k'])) {
     http_response_code(403); exit('Forbidden');
 }
-$step = in_array($_GET['step'] ?? 'answer', ['answer', 'menu', 'voicemail'], true) ? ($_GET['step'] ?? 'answer') : 'answer';
+$step = in_array($_GET['step'] ?? 'answer', ['answer', 'menu', 'hold', 'hold_key', 'voicemail'], true) ? ($_GET['step'] ?? 'answer') : 'answer';
 
 $post = $_POST ?: (json_decode((string)file_get_contents('php://input'), true) ?: []);
 try {

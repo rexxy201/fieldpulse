@@ -11,6 +11,7 @@
       <div class="small text-muted">Incoming call</div>
       <div class="fw-bold" id="spInFrom"></div>
       <div class="small" id="spInCustomer"></div>
+      <div class="softphone-context small" id="spInContext"></div>
       <div class="d-flex gap-2 mt-2">
         <button type="button" class="btn btn-sm btn-success flex-grow-1" id="spAnswer"><i class="bi bi-telephone-inbound"></i> Answer</button>
         <button type="button" class="btn btn-sm btn-outline-danger" id="spDecline">Decline</button>
@@ -19,14 +20,23 @@
     <div id="spActive" hidden>
       <div class="d-flex justify-content-between"><span class="fw-bold" id="spWith"></span><span class="font-monospace" id="spTimer">0:00</span></div>
       <div class="small" id="spActiveCustomer"></div>
+      <div class="softphone-context small" id="spActContext"></div>
       <div class="d-flex flex-wrap gap-1 mt-2">
         <button type="button" class="btn btn-sm btn-outline-secondary" id="spMute">Mute</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" id="spHold">Hold</button>
         <button type="button" class="btn btn-sm btn-outline-secondary" id="spKeys">Keypad</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="spXfer" hidden>Transfer</button>
         <button type="button" class="btn btn-sm btn-danger ms-auto" id="spHangup"><i class="bi bi-telephone-x"></i> End</button>
       </div>
       <div id="spKeypad" class="softphone-keypad mt-2" hidden>
         <?php foreach (['1','2','3','4','5','6','7','8','9','*','0','#'] as $k): ?><button type="button" class="btn btn-sm btn-light border" data-dtmf="<?= $k ?>"><?= $k ?></button><?php endforeach; ?>
+      </div>
+      <div id="spXferBox" class="mt-2" hidden>
+        <select class="form-select form-select-sm mb-1" id="spXferAgent" aria-label="Transfer to agent"><option value="">Free agent…</option></select>
+        <div class="d-flex gap-1">
+          <input type="tel" class="form-control form-control-sm" id="spXferNumber" placeholder="…or a phone number" autocomplete="off">
+          <button type="button" class="btn btn-sm btn-primary" id="spXferGo">Transfer</button>
+        </div>
       </div>
       <div class="small text-muted mt-2">Keep this tab open until the call ends; open customer pages in a new tab.</div>
     </div>

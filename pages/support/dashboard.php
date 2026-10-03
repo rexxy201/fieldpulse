@@ -19,11 +19,12 @@ $calls = dbFetch("SELECT
         SUM(CASE WHEN direction='inbound' AND status='completed' THEN 1 ELSE 0 END) AS answered,
         SUM(CASE WHEN direction='inbound' AND status='missed' THEN 1 ELSE 0 END) AS missed,
         SUM(CASE WHEN direction='inbound' AND status='voicemail' THEN 1 ELSE 0 END) AS voicemail,
+        SUM(CASE WHEN direction='inbound' AND status='callback' THEN 1 ELSE 0 END) AS callback,
         SUM(CASE WHEN direction='outbound' THEN 1 ELSE 0 END) AS outbound,
         AVG(CASE WHEN status='completed' THEN duration_sec END) AS avg_talk
     FROM cs_calls WHERE started_at >= ?", [$since]);
 $inbound    = (int)$calls['inbound'];
-$unanswered = (int)$calls['missed'] + (int)$calls['voicemail'];
+$unanswered = (int)$calls['missed'] + (int)$calls['voicemail'] + (int)$calls['callback'];
 $missRate   = $inbound ? round(100 * $unanswered / $inbound) : null;
 
 $wa       = csWaResponseTimes($since);
@@ -52,7 +53,16 @@ $aLogged   = $per("SELECT agent_id AS k, COUNT(*) AS n FROM cs_interactions WHER
 $aWaOpen   = $per("SELECT assigned_to AS k, COUNT(*) AS n FROM cs_wa_conversations WHERE status = 'open' AND assigned_to IS NOT NULL GROUP BY assigned_to");
 $aFollow   = $per("SELECT assigned_to AS k, COUNT(*) AS n FROM cs_followups WHERE status = 'open' AND due_at < ? GROUP BY assigned_to", [date('Y-m-d H:i:s')]);
 $statusColors = ['available' => 'success', 'on_call' => 'danger', 'wrap_up' => 'warning', 'break' => 'secondary', 'offline' => 'dark'];
-$hours    = csVoiceSettings()['hours'];
+$voiceCfg = csVoiceSettings();
+$hours    = $voiceCfg['hours'];
+// Live hold queue and today's calls per menu option.
+$queueNow = csQueueSnapshot();
+$teams    = csQueueMembers();
+$free     = csFreeAgentIds();
+$byChoice = [];
+foreach (dbFetchAll("SELECT COALESCE(queue_digit, '') AS d, COUNT(*) AS n, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS answered
+                     FROM cs_calls WHERE direction = 'inbound' AND started_at >= ? GROUP BY COALESCE(queue_digit, '')", [$since]) as $r) $byChoice[$r['d']] = $r;
+$queueRows = ['' => 'No menu choice'] + $voiceCfg['ivr_options'];
 
 $pageTitle = 'Supervisor Dashboard';
 require __DIR__ . '/../../includes/header.php';
@@ -74,7 +84,7 @@ require __DIR__ . '/../../includes/header.php';
 <div class="row g-3 mb-3">
   <?php foreach ([
       ['Inbound calls', $inbound, "{$calls['outbound']} outbound", '/support/calls'],
-      ['Missed + voicemail', $unanswered, $missRate === null ? 'no calls' : "$missRate% of inbound", '/support/calls?status=missed'],
+      ['Missed, voicemail, callback', $unanswered, $missRate === null ? 'no calls' : "$missRate% of inbound", '/support/calls?status=missed'],
       ['Avg talk time', $mmss($calls['avg_talk'] === null ? null : (int)round($calls['avg_talk'])), (int)$calls['answered'] . ' answered', null],
       ['WhatsApp first reply', $dur($waMedian), $waTimes ? 'median of ' . count($waTimes) . ' · worst ' . $dur(max($waTimes)) : 'no replies yet', '/support/whatsapp'],
       ['WhatsApp waiting', (int)$waQueue['unassigned'], (int)$waQueue['open'] . ' open' . ($waQueue['oldest'] ? ' · oldest unread ' . $dur(time() - strtotime($waQueue['oldest'])) : ''), '/support/whatsapp'],
@@ -120,6 +130,25 @@ require __DIR__ . '/../../includes/header.php';
     </div>
   </div>
   <div class="col-lg-4">
+    <div class="card-section mb-3">
+      <div class="card-header"><i class="bi bi-hourglass-split me-1 text-primary"></i>Call queues</div>
+      <table class="table table-sm align-middle mb-0 small">
+        <thead><tr><th class="ps-3">Menu option</th><th class="text-end">On hold</th><th class="text-end">Longest</th><th class="text-end">Free</th><th class="text-end pe-3">Answered</th></tr></thead>
+        <tbody>
+        <?php foreach ($queueRows as $d => $label): $q = $queueNow[$d] ?? null; $c = $byChoice[$d] ?? null;
+              if ($d === '' && !$q && !$c) continue;
+              $team = $teams[$d] ?? []; $freeHere = $team ? count(array_intersect($free, $team)) : count($free); ?>
+          <tr>
+            <td class="ps-3"><?= $h($d !== '' ? "$d · $label" : $label) ?></td>
+            <td class="text-end <?= $q ? 'text-danger fw-semibold' : '' ?>"><?= (int)($q['waiting'] ?? 0) ?></td>
+            <td class="text-end"><?= $q ? $mmss($q['longest']) : '—' ?></td>
+            <td class="text-end"><?= $freeHere ?></td>
+            <td class="text-end pe-3"><?= $c ? (int)$c['answered'] . '/' . (int)$c['n'] : '—' ?></td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
     <div class="card-section">
       <div class="card-header"><i class="bi bi-bar-chart me-1 text-primary"></i>Contacts by channel</div>
       <div class="p-3">
