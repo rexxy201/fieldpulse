@@ -81,7 +81,7 @@ if (!empty($_GET['customer'])) {
 }
 $newCaller = !$customer && !empty($_GET['new']);
 
-$tickets = $installations = $history = $custFollowups = [];
+$tickets = $installations = $history = $custFollowups = $timeline = [];
 if ($customer) {
     $tickets = dbFetchAll(
         "SELECT id, ticket_number, description, status, priority, created_at FROM tickets WHERE customer_id = ?
@@ -98,6 +98,7 @@ if ($customer) {
          FROM cs_interactions i LEFT JOIN cs_wrap_codes w ON w.id = i.wrap_code_id LEFT JOIN tickets t ON t.id = i.ticket_id
          LEFT JOIN cs_calls cc ON cc.id = i.call_id
          WHERE i.customer_id = ? ORDER BY i.created_at DESC LIMIT 20", [$customer['id']]);
+    $timeline = csCustomerTimeline($customer['id'], 60);
     $custFollowups = dbFetchAll(
         "SELECT f.*, u.name AS assigned_name FROM cs_followups f LEFT JOIN users u ON u.id = f.assigned_to
          WHERE f.customer_id = ? AND f.status = 'open' ORDER BY f.due_at", [$customer['id']]);
@@ -426,6 +427,32 @@ require __DIR__ . '/../../includes/header.php';
                 <span class="text-muted"><?= $h(date('d M Y H:i', strtotime($i['created_at']))) ?> · <?= $h($i['agent_name']) ?></span>
               </div>
               <div><?= nl2br($h($i['summary'])) ?></div>
+            </div>
+            <?php endforeach; ?>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="card-section">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-list-ul me-1 text-primary"></i>Timeline <span class="text-muted small fw-normal">— every call, message, ticket and note, newest first</span></span>
+            <span class="d-flex gap-1">
+              <?php if ($customer['phone']): ?><a href="/support/inbox?compose=1&amp;to=<?= $h(urlencode($customer['phone'])) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chat-dots"></i> SMS</a><?php endif; ?>
+              <?php if ($customer['email']): ?><a href="/support/inbox?compose=1&amp;to=<?= $h(urlencode($customer['email'])) ?>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-envelope"></i> Email</a><?php endif; ?>
+            </span>
+          </div>
+          <div class="p-2 small" style="max-height:32rem;overflow-y:auto">
+            <?php if (!$timeline): ?><div class="text-muted p-2">Nothing yet.</div><?php endif; ?>
+            <?php foreach ($timeline as $e): ?>
+            <div class="d-flex gap-2 border-bottom p-2">
+              <i class="bi <?= $h($e['icon']) ?> text-primary mt-1"></i>
+              <div class="flex-grow-1" style="min-width:0">
+                <div class="d-flex justify-content-between gap-2 flex-wrap">
+                  <span class="fw-semibold"><?php if ($e['link']): ?><a href="<?= $h($e['link']) ?>" class="text-reset"><?= $h($e['title']) ?></a><?php else: ?><?= $h($e['title']) ?><?php endif; ?></span>
+                  <span class="text-muted text-nowrap"><?= $h(date('d M Y H:i', strtotime($e['at']))) ?></span>
+                </div>
+                <?php if ($e['body'] !== ''): ?><div class="text-break"><?= nl2br($h(mb_strimwidth($e['body'], 0, 400, '…'))) ?></div><?php endif; ?>
+              </div>
             </div>
             <?php endforeach; ?>
           </div>

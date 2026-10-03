@@ -563,6 +563,65 @@ CREATE TABLE IF NOT EXISTS `cs_calls` (
   KEY `idx_csc_status` (`status`, `queued_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `cs_threads` (
+  `id`              varchar(36)  NOT NULL,
+  `channel`         varchar(10)  NOT NULL,
+  `address`         varchar(190) NOT NULL,
+  `contact_name`    varchar(150) NOT NULL DEFAULT '',
+  `customer_id`     varchar(36)  DEFAULT NULL,
+  `subject`         varchar(255) NOT NULL DEFAULT '',
+  `status`          varchar(10)  NOT NULL DEFAULT 'open',
+  `assigned_to`     varchar(36)  DEFAULT NULL,
+  `unread`          int          NOT NULL DEFAULT 0,
+  `last_inbound_at` datetime     DEFAULT NULL,
+  `last_message_at` datetime     NOT NULL,
+  `created_at`      datetime     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cst_addr` (`channel`, `address`),
+  KEY `idx_cst_customer` (`customer_id`),
+  KEY `idx_cst_last` (`status`, `last_message_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_thread_messages` (
+  `id`                  varchar(36)  NOT NULL,
+  `thread_id`           varchar(36)  NOT NULL,
+  `direction`           varchar(3)   NOT NULL,
+  `provider_message_id` varchar(255) DEFAULT NULL,
+  `subject`             varchar(255) NOT NULL DEFAULT '',
+  `body`                mediumtext,
+  `status`              varchar(12)  NOT NULL DEFAULT 'received',
+  `error`               varchar(255) DEFAULT NULL,
+  `agent_id`            varchar(36)  DEFAULT NULL,
+  `agent_name`          varchar(150) DEFAULT NULL,
+  `created_at`          datetime     NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_cstm_thread` (`thread_id`, `created_at`),
+  KEY `idx_cstm_provider` (`provider_message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_inbound_events` (
+  `id`         varchar(36) NOT NULL,
+  `channel`    varchar(10) NOT NULL,
+  `payload`    mediumtext,
+  `created_at` datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_csie_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `cs_ticket_notices` (
+  `id`         varchar(36)  NOT NULL,
+  `ticket_id`  varchar(36)  NOT NULL,
+  `event`      varchar(12)  NOT NULL,
+  `channel`    varchar(10)  NOT NULL,
+  `to_address` varchar(190) NOT NULL DEFAULT '',
+  `body`       text,
+  `status`     varchar(10)  NOT NULL,
+  `error`      varchar(255) DEFAULT NULL,
+  `created_at` datetime     NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_csn_ticket` (`ticket_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `cs_call_events` (
   `id`         varchar(36)  NOT NULL,
   `session_id` varchar(100) NOT NULL DEFAULT '',

@@ -8,10 +8,13 @@ slower than the "slow above" setting, show as **Degraded**.
 Down and recovery alerts go to NOC supervisors and admins, in-app and by email.
 
 ## Setup (cPanel)
-1. Add the cron job, under **cPanel → Cron Jobs**, every minute:
+1. Add the cron job, under **cPanel → Cron Jobs**, every 5 minutes (this host refuses
+   anything more frequent):
    ```
-   * * * * * php $HOME/fieldpulse.mangonetonline.com/scripts/pop-check.php >> $HOME/logs/fieldpulse-cron.log 2>&1
+   */5 * * * * php -q $HOME/fieldpulse.mangonetonline.com/scripts/pop-check.php >> $HOME/logs/fieldpulse-cron.log 2>&1
    ```
+   Each run keeps going for about five minutes and checks once a minute, so POPs are still
+   checked every minute. `-q` stops cPanel's PHP from writing HTTP headers into the log.
    It prints only when a POP goes down or recovers, so the log stays quiet when nothing
    changes.
 2. Add each POP: give it a name and the router's **public** IP, and link it to its hub.
@@ -32,11 +35,11 @@ works if the SLA cron is set up.
 
 To find the cause, open **cPanel → Terminal**:
 ```bash
-crontab -l | grep pop-check        # is the line there, with five * * * * *?
+crontab -l | grep pop-check        # is the line there, starting */5 * * * *?
 ls -ld ~/logs                      # must exist, or the ">>" redirect stops the job running at all
 tail -20 ~/logs/fieldpulse-cron.log
 php -v                             # must say PHP 8.x; if not, use the full path below
-php ~/fieldpulse.mangonetonline.com/scripts/pop-check.php; echo "exit: $?"   # expect only "exit: 0"
+php -q ~/fieldpulse.mangonetonline.com/scripts/pop-check.php; echo "exit: $?"   # takes ~4 minutes; expect only "exit: 0"
 ```
 If plain `php` is an older version, put the full path in the cron line, e.g.
 `/usr/local/bin/ea-php82 $HOME/fieldpulse.mangonetonline.com/scripts/pop-check.php`

@@ -81,11 +81,13 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
   $_navItem = fn(string $href, string $icon, string $label, bool $active, bool $show = true, string $badgeId = '', int $badge = 0): array
       => ['href' => $href, 'icon' => $icon, 'label' => $label, 'active' => $active, 'show' => $show, 'badgeId' => $badgeId, 'badge' => $badge];
   // WhatsApp conversations waiting on me or on anyone (footer JS keeps this live).
-  $_waUnread = 0;
+  $_waUnread = $_inboxUnread = 0;
   if (hasPermission('support.view')) {
       try {
           $_waUnread = (int)(dbFetch("SELECT COUNT(*) AS n FROM cs_wa_conversations WHERE status = 'open' AND unread > 0 AND (assigned_to IS NULL OR assigned_to = ?)",
                                      [currentUser()['id']])['n'] ?? 0);
+          $_inboxUnread = (int)(dbFetch("SELECT COUNT(*) AS n FROM cs_threads WHERE status = 'open' AND unread > 0 AND (assigned_to IS NULL OR assigned_to = ?)",
+                                        [currentUser()['id']])['n'] ?? 0);
       } catch (\Throwable $e) { /* table not migrated yet */ }
   }
   $_navBadge = fn(array $it) => $it['badgeId'] === '' ? ''
@@ -102,6 +104,7 @@ $activePath = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
       $_navItem('/support/interactions', 'bi-chat-left-text',    'Interactions',    $activePath === 'support/interactions', hasPermission('support.view')),
       $_navItem('/support/calls',        'bi-telephone',         'Calls',           $activePath === 'support/calls',        hasPermission('support.view')),
       $_navItem('/support/whatsapp',     'bi-whatsapp',          'WhatsApp',        $activePath === 'support/whatsapp',     hasPermission('support.view'), 'waNavBadge', $_waUnread),
+      $_navItem('/support/inbox',        'bi-envelope',          'SMS & Email',     $activePath === 'support/inbox',        hasPermission('support.view'), 'inboxNavBadge', $_inboxUnread),
       $_navItem('/support/followups',    'bi-alarm',             'Follow-ups',      $activePath === 'support/followups',    hasPermission('support.view')),
       $_navItem('/support/settings',     'bi-sliders',           'Support Settings', $activePath === 'support/settings',    hasPermission('support.manage')),
     ]],
